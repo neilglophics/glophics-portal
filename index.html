@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Server Management</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <div class="topbar-title">
+      <div class="eyebrow">Dev Infrastructure</div>
+      <h1>Server Management</h1>
+    </div>
+    <div class="topbar-right">
+      <span class="sync-status sync-offline" id="sync-status"></span>
+      <div class="clock" id="clock"></div>
+      <nav class="tabs" id="nav-tabs">
+        <button class="tab-btn active" data-view="dashboard">Dashboard</button>
+        <button class="tab-btn" data-view="settings">Settings</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="content">
+
+    <!-- DASHBOARD VIEW -->
+    <section id="view-dashboard" class="view active">
+
+      <section class="kpi-row" id="kpi-row"></section>
+
+      <section class="sync-bar" id="sync-bar">
+        <div class="sync-bar-actions">
+          <button type="button" class="btn btn-ghost btn-sm" id="jira-sync-refresh">Refresh</button>
+          <span class="sync-age" id="jira-sync-age"></span>
+        </div>
+        <button type="button" class="sync-auto-pill" id="jira-autosync-toggle" role="switch"></button>
+        <p class="sync-bar-hint" id="jira-sync-explain"></p>
+        <div class="skipped-panel" id="skipped-panel" hidden>
+          <div class="skipped-title" id="skipped-title"></div>
+          <ul class="skipped-list" id="skipped-list"></ul>
+        </div>
+      </section>
+
+      <section class="toolbar">
+        <div class="search-box">
+          <input type="text" id="search-input" placeholder="Search environment, person, ticket&hellip;" />
+        </div>
+        <div class="filters" id="filters">
+          <select id="filter-account">
+            <option value="all">All accounts</option>
+          </select>
+          <select id="filter-status">
+            <option value="all">Any status</option>
+            <option value="free">Fully free</option>
+            <option value="partial">Partly free</option>
+            <option value="inuse">Fully in use</option>
+            <option value="issue">Has offline server</option>
+          </select>
+          <select id="filter-user">
+            <option value="all">Anyone</option>
+          </select>
+          <button class="btn btn-ghost" id="clear-filters">Clear</button>
+        </div>
+        <nav class="tabs" id="view-tabs">
+          <button class="tab-btn active" data-mode="table">Table</button>
+          <button class="tab-btn" data-mode="board">Board</button>
+        </nav>
+      </section>
+
+      <section class="table-wrap" id="view-table">
+        <div class="grid-table" id="grid-table"></div>
+        <p class="empty-state" id="empty-state" hidden>No environments match these filters.</p>
+      </section>
+
+      <section class="board-wrap" id="view-board" hidden></section>
+
+    </section>
+
+    <!-- SETTINGS VIEW -->
+    <section id="view-settings" class="view">
+      <div class="settings-grid">
+
+        <div class="panel">
+          <h2>Jira integration</h2>
+          <p class="panel-hint">Link bookings to tickets so the board fills itself in. Leave off to keep typing ticket keys by hand.</p>
+
+          <div class="jira-toggle-row">
+            <div>
+              <div class="jira-toggle-label">Enable Jira</div>
+              <div class="jira-toggle-state" id="jira-state-label"></div>
+            </div>
+            <button type="button" class="toggle-switch" id="jira-toggle" role="switch">
+              <span class="toggle-knob"></span>
+            </button>
+          </div>
+
+          <form id="form-jira" class="jira-form">
+            <div class="field-grid">
+              <label class="field">
+                <span>Site URL</span>
+                <input type="text" id="jira-base-url" placeholder="https://company.atlassian.net" />
+              </label>
+              <label class="field">
+                <span>Email</span>
+                <input type="text" id="jira-email" placeholder="you@company.com" />
+              </label>
+              <label class="field">
+                <span>API token</span>
+                <input type="password" id="jira-token" placeholder="Leave blank to keep current token" />
+              </label>
+              <label class="field">
+                <span>Ticket key format</span>
+                <input type="text" id="jira-ticket-format" placeholder="GLOP-####" disabled />
+              </label>
+            </div>
+
+            <div class="status-rules">
+              <div class="status-rules-title">Status rules</div>
+              <p class="status-rules-hint">Tickets are matched by Account Name + Branch + Repository. A ticket only shows up here while its status is in the first list, and it frees the repository when it reaches the second. Any other status leaves an active claim as-is.</p>
+              <div class="status-rules-grid">
+                <label class="field">
+                  <span>Occupies a server</span>
+                  <select id="jira-occupying-statuses" multiple size="6"></select>
+                </label>
+                <label class="field">
+                  <span>Frees the server</span>
+                  <select id="jira-releasing-statuses" multiple size="6"></select>
+                </label>
+              </div>
+              <label class="rule-row">
+                <span>Poll interval</span>
+                <select id="jira-poll-interval">
+                  <option value="1">Every 1 minute</option>
+                  <option value="5">Every 5 minutes</option>
+                  <option value="15">Every 15 minutes</option>
+                  <option value="30">Every 30 minutes</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="checkbox-list" id="jira-options"></div>
+
+            <div class="jira-actions">
+              <button type="submit" class="btn btn-primary">Save integration</button>
+              <button type="button" class="btn btn-ghost" id="jira-test">Test connection</button>
+              <span class="jira-test-result" id="jira-test-result"></span>
+            </div>
+          </form>
+
+        </div>
+
+        <div class="settings-col">
+          <div class="panel">
+            <h2>Booking rules</h2>
+            <div class="rules-list">
+              <label class="rule-row">
+                <span>Default booking length</span>
+                <select id="rule-booking-length">
+                  <option value="4">4 hours</option>
+                  <option value="8">8 hours</option>
+                  <option value="24">24 hours</option>
+                  <option value="48">48 hours</option>
+                </select>
+              </label>
+              <label class="rule-row">
+                <span>When time runs out</span>
+                <select id="rule-on-expiry">
+                  <option value="remind">Remind the holder</option>
+                  <option value="remind-flag">Remind and flag the row</option>
+                  <option value="auto-release">Auto-release</option>
+                </select>
+              </label>
+              <label class="rule-row">
+                <span>Assign whole environment at once</span>
+                <input type="checkbox" id="rule-assign-whole-env" />
+              </label>
+            </div>
+          </div>
+
+          <div class="panel">
+            <nav class="tabs settings-tabs" id="settings-tabs">
+              <button class="tab-btn active" data-tab="accounts">Accounts</button>
+              <button class="tab-btn" data-tab="users">Users</button>
+              <button class="tab-btn" data-tab="servers">Servers</button>
+            </nav>
+
+            <div class="settings-tab-body" data-tab-panel="accounts">
+              <form class="inline-form" id="form-add-account">
+                <input type="text" name="name" placeholder="Account id e.g. newaccount" required />
+                <input type="text" name="displayName" placeholder="Display name" required />
+                <input type="text" name="repositories" placeholder="Repositories (comma separated)" required />
+                <button type="submit" class="btn btn-primary">Add</button>
+              </form>
+              <ul class="config-list" id="list-accounts"></ul>
+            </div>
+
+            <div class="settings-tab-body" data-tab-panel="users" hidden>
+              <form class="inline-form" id="form-add-user">
+                <input type="text" name="name" placeholder="Display name e.g. [BE]_Sem" required />
+                <input type="text" name="role" placeholder="Role e.g. Backend" required />
+                <button type="submit" class="btn btn-primary">Add</button>
+              </form>
+              <ul class="config-list" id="list-users"></ul>
+            </div>
+
+            <div class="settings-tab-body" data-tab-panel="servers" hidden>
+              <form class="inline-form" id="form-add-server">
+                <select id="form-add-server-account" name="accountId" required></select>
+                <input type="text" name="name" placeholder="Environment name e.g. hotfix-4" required />
+                <div class="repo-url-inputs" id="form-add-server-repo-urls"></div>
+                <button type="submit" class="btn btn-primary">Add environment</button>
+              </form>
+              <ul class="config-list" id="list-servers"></ul>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ASSIGN / EDIT MODAL -->
+<div class="modal-overlay" id="assign-modal-overlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-header">
+      <h2 id="assign-modal-title">Book Environment</h2>
+      <button class="modal-close" id="assign-modal-close" aria-label="Close">&times;</button>
+    </div>
+    <form id="assign-form" class="modal-body">
+      <input type="hidden" id="assign-server-id" />
+
+      <label class="field">
+        <span>Account</span>
+        <input type="text" id="assign-account-name" disabled />
+      </label>
+
+      <label class="field">
+        <span>Environment</span>
+        <input type="text" id="assign-server-name" disabled />
+      </label>
+
+      <div class="field">
+        <span>Claim which repos</span>
+        <div class="repo-checkbox-group" id="assign-repo-group"></div>
+      </div>
+
+      <div class="field">
+        <span>Assigned to</span>
+        <div class="dropdown-checkbox" id="assign-user-dropdown">
+          <button type="button" class="dropdown-trigger" id="assign-user-trigger">
+            <span id="assign-user-trigger-label">Select people</span>
+            <span class="dropdown-caret">▾</span>
+          </button>
+          <div class="checkbox-group" id="assign-user-group" hidden></div>
+        </div>
+      </div>
+
+      <label class="field">
+        <span>Jira Ticket</span>
+        <input type="text" id="assign-jira" placeholder="PROJ-1234 or a Jira link" />
+      </label>
+      <div class="jira-info" id="assign-jira-info" hidden></div>
+
+      <label class="field">
+        <span>Note</span>
+        <textarea id="assign-note" rows="2" placeholder="What's happening in this booking? (optional)"></textarea>
+      </label>
+
+      <div class="field-row">
+        <label class="field">
+          <span>Start Time</span>
+          <input type="datetime-local" id="assign-start" required />
+        </label>
+        <label class="field">
+          <span>End Time</span>
+          <input type="datetime-local" id="assign-end" required />
+        </label>
+      </div>
+
+      <p class="form-error" id="assign-form-error" hidden></p>
+
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="assign-cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="assign-submit">Book Environment</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- CONFIRM MODAL -->
+<div class="modal-overlay" id="confirm-modal-overlay" hidden>
+  <div class="modal modal-sm" role="dialog" aria-modal="true">
+    <div class="modal-header">
+      <h2 id="confirm-modal-title">Confirm</h2>
+      <button class="modal-close" id="confirm-modal-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p id="confirm-modal-message"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="confirm-cancel">Cancel</button>
+        <button type="button" class="btn btn-danger" id="confirm-ok">Confirm</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="js/data.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/state.js"></script>
+<script src="js/format.js"></script>
+<script src="js/ui-state.js"></script>
+<script src="js/rerender.js"></script>
+<script src="js/jira-lookup.js"></script>
+<script src="js/components/topbar.js"></script>
+<script src="js/components/kpi-row.js"></script>
+<script src="js/components/sync-bar.js"></script>
+<script src="js/components/toolbar.js"></script>
+<script src="js/components/claims-actions.js"></script>
+<script src="js/components/repo-claims.js"></script>
+<script src="js/components/env-table.js"></script>
+<script src="js/components/env-board.js"></script>
+<script src="js/components/assign-modal.js"></script>
+<script src="js/components/confirm-modal.js"></script>
+<script src="js/components/settings-jira.js"></script>
+<script src="js/components/settings-rules.js"></script>
+<script src="js/components/settings-config.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
