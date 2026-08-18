@@ -13,6 +13,11 @@
  * AUTH_ROLES in js/data.js). Credentials live in auth.json, which is not
  * part of `state` and is never sent to a browser tab.
  *
+ * Ahead of all of that sits the IP allowlist (ip-allowlist.js): when
+ * ALLOWED_IPS or allowed-ips.json names any address, every request from
+ * anywhere else — static files and the sign-in screen included — is a bare
+ * 403, so a stranger never reaches the parts that hold data.
+ *
  * Also proxies Jira (GET /api/jira/:key ticket lookups, POST /api/jira/comment,
  * GET/POST /api/jira-config, POST /api/jira-config/test) so the browser
  * never needs an API token — credentials live server-side in
@@ -34,6 +39,7 @@ const fs = require("fs");
 const path = require("path");
 const { buildDefaultAppData, migrateAppData, matchRepositoriesToKeys, matchUserIdsByLabels, findServerForTicket, JIRA_TERMINAL_STATUSES } = require("./js/data.js");
 const Auth = require("./auth-store.js");
+const IpAllowlist = require("./ip-allowlist.js");
 
 const PORT = process.env.PORT || 4000;
 const ROOT = __dirname;
@@ -95,7 +101,18 @@ function persist() {
 
 function broadcast() {
   const payload = `data: ${JSON.stringify(state)}\n\n`;
-  for (const res of sseClients) res.write(payload);
+  for (const res of sseClients) {
+    // An SSE stream is opened once and then lives for hours, so it would
+    // otherwise keep feeding live state to an address that was taken off
+    // the allowlist an hour ago. Re-check on the way out; the tab sees a
+    // dropped connection and its reconnect is refused at the gate.
+    if (!IpAllowlist.allows(res.req)) {
+      sseClients.delete(res);
+      res.end();
+      continue;
+    }
+    res.write(payload);
+  }
 }
 
 function sendJson(res, statusCode, body) {
@@ -862,6 +879,16 @@ function handleApi(req, res, url, user) {
 }
 
 const server = http.createServer((req, res) => {
+  // Ahead of routing, sessions and even the sign-in screen: an address that
+  // isn't on the allowlist gets one answer for every path. The body says
+  // nothing about what runs here — a refusal shouldn't confirm there's a
+  // portal worth coming back for. See ip-allowlist.js.
+  if (!IpAllowlist.allows(req)) {
+    res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("Forbidden");
+    return;
+  }
+
   const url = req.url.split("?")[0];
 
   // The sign-in handshake is the only part of the API a stranger reaches.
@@ -910,6 +937,19 @@ server.listen(PORT, () => {
     console.log("  └────────────────────────────────────────────────────────");
   }
 
+  if (IpAllowlist.isOpen()) {
+    console.log("");
+    console.log("  ┌─ No IP allowlist: every address that can reach this port ─");
+    console.log("  │  may load the sign-in screen. Set ALLOWED_IPS, or fill in");
+    console.log("  │  allowed-ips.json (copy allowed-ips.example.json), to let");
+    console.log("  │  only your office/VPN addresses through.");
+    console.log("  └───────────────────────────────────────────────────────────");
+  } else {
+    console.log(`IP allowlist on — ${IpAllowlist.describe()}.`);
+  }
+
   console.log("");
   console.log("Share this port via VS Code Live Share (Shared Servers) so other viewers stay in sync.");
+  console.log("Note: Live Share tunnels guests through the host, so they all arrive as loopback —");
+  console.log("the allowlist can't tell them apart. It gates direct network access, not Live Share.");
 });

@@ -1,0 +1,10 @@
+{
+  "_comment": "Copy to allowed-ips.json. Every address not matched here gets a 403 before the sign-in screen. Entries can be a plain IPv4/IPv6 address, a CIDR block, or the aliases 'lan' / 'loopback'. An empty list leaves the gate open. Editing this file takes effect without a restart.",
+  "allowed": [
+    "203.0.113.7",
+    "198.51.100.0/24",
+    "lan"
+  ],
+  "allowLoopback": true,
+  "trustProxy": 0
+}

@@ -1,0 +1,342 @@
+{
+  "users": [
+    {
+      "id": "sem",
+      "name": "[BE]_Sem",
+      "role": "Backend"
+    },
+    {
+      "id": "jerome",
+      "name": "[QA]_Jerome",
+      "role": "QA"
+    },
+    {
+      "id": "neil",
+      "name": "[FE]_Neil",
+      "role": "Frontend"
+    }
+  ],
+  "accounts": [
+    {
+      "id": "singaprinting",
+      "displayName": "Singapore Printing",
+      "repositories": [
+        "storefront",
+        "backend",
+        "admin"
+      ]
+    },
+    {
+      "id": "allstickerprinting",
+      "displayName": "All Sticker Printing",
+      "repositories": [
+        "storefront",
+        "backend",
+        "admin"
+      ]
+    },
+    {
+      "id": "ozstickerprinting",
+      "displayName": "Oz Sticker Printing",
+      "repositories": [
+        "storefront",
+        "backend",
+        "admin"
+      ]
+    },
+    {
+      "id": "stickerdot",
+      "displayName": "Sticker Dot",
+      "repositories": [
+        "storefront",
+        "backend",
+        "admin"
+      ]
+    },
+    {
+      "id": "stickermarket",
+      "displayName": "Sticker Market",
+      "repositories": [
+        "storefront",
+        "backend",
+        "admin"
+      ]
+    },
+    {
+      "id": "stickercanada",
+      "displayName": "Sticker Canada",
+      "repositories": [
+        "storefront",
+        "backend",
+        "admin"
+      ]
+    },
+    {
+      "id": "stickerjapan",
+      "displayName": "Sticker Japan",
+      "repositories": [
+        "storefront",
+        "backend",
+        "admin"
+      ]
+    },
+    {
+      "id": "musticker",
+      "displayName": "Musticker",
+      "repositories": [
+        "storefront",
+        "backend",
+        "admin"
+      ]
+    }
+  ],
+  "servers": [
+    {
+      "id": "server-01",
+      "name": "Server 01",
+      "accountId": "ozstickerprinting",
+      "repos": {
+        "storefront": {
+          "url": "https://storefront.srv-01.internal",
+          "health": "offline"
+        },
+        "backend": {
+          "url": "https://backend.srv-01.internal",
+          "health": "offline"
+        },
+        "admin": {
+          "url": "https://admin.srv-01.internal",
+          "health": "offline"
+        }
+      }
+    },
+    {
+      "id": "server-02",
+      "name": "Server 02",
+      "accountId": "singaprinting",
+      "repos": {
+        "storefront": {
+          "url": "https://storefront.srv-02.internal",
+          "health": "offline"
+        },
+        "backend": {
+          "url": "https://backend.srv-02.internal",
+          "health": "offline"
+        },
+        "admin": {
+          "url": "https://admin.srv-02.internal",
+          "health": "offline"
+        }
+      }
+    },
+    {
+      "id": "server-03",
+      "name": "Server 03",
+      "accountId": "stickermarket",
+      "repos": {
+        "storefront": {
+          "url": "https://storefront.srv-03.internal",
+          "health": "offline"
+        },
+        "backend": {
+          "url": "https://backend.srv-03.internal",
+          "health": "offline"
+        },
+        "admin": {
+          "url": "https://admin.srv-03.internal",
+          "health": "offline"
+        }
+      }
+    },
+    {
+      "id": "server-04",
+      "name": "Server 04",
+      "accountId": "stickerdot",
+      "repos": {
+        "storefront": {
+          "url": "https://storefront.srv-04.internal",
+          "health": "offline"
+        },
+        "backend": {
+          "url": "https://backend.srv-04.internal",
+          "health": "offline"
+        },
+        "admin": {
+          "url": "https://admin.srv-04.internal",
+          "health": "offline"
+        }
+      }
+    },
+    {
+      "id": "server-05",
+      "name": "Server 05",
+      "accountId": "stickercanada",
+      "repos": {
+        "storefront": {
+          "url": "https://storefront.srv-05.internal",
+          "health": "offline"
+        },
+        "backend": {
+          "url": "https://backend.srv-05.internal",
+          "health": "offline"
+        },
+        "admin": {
+          "url": "https://admin.srv-05.internal",
+          "health": "offline"
+        }
+      }
+    },
+    {
+      "id": "server-06",
+      "name": "Server 06",
+      "accountId": "allstickerprinting",
+      "repos": {
+        "storefront": {
+          "url": "https://storefront.srv-06.internal",
+          "health": "offline"
+        },
+        "backend": {
+          "url": "https://backend.srv-06.internal",
+          "health": "offline"
+        },
+        "admin": {
+          "url": "https://admin.srv-06.internal",
+          "health": "offline"
+        }
+      }
+    },
+    {
+      "id": "server-07",
+      "name": "Server 07",
+      "accountId": "stickerjapan",
+      "repos": {
+        "storefront": {
+          "url": "https://storefront.srv-07.internal",
+          "health": "offline"
+        },
+        "backend": {
+          "url": "https://backend.srv-07.internal",
+          "health": "offline"
+        },
+        "admin": {
+          "url": "https://admin.srv-07.internal",
+          "health": "offline"
+        }
+      }
+    },
+    {
+      "id": "server-08",
+      "name": "Server 08",
+      "accountId": "musticker",
+      "repos": {
+        "storefront": {
+          "url": "https://storefront.srv-08.internal",
+          "health": "offline"
+        },
+        "backend": {
+          "url": "https://backend.srv-08.internal",
+          "health": "offline"
+        },
+        "admin": {
+          "url": "https://admin.srv-08.internal",
+          "health": "offline"
+        }
+      }
+    }
+  ],
+  "tickets": [
+    {
+      "id": "manual-seed-1",
+      "source": "manual",
+      "serverId": "server-02",
+      "accountName": "Singapore Printing",
+      "branch": "Server 02",
+      "repos": [
+        "storefront",
+        "backend",
+        "admin"
+      ],
+      "userIds": [
+        "sem"
+      ],
+      "rawAssignees": [],
+      "status": "Manual",
+      "summary": null,
+      "note": "Checkout regression pass.",
+      "startTime": "2026-08-18T01:00:00.000Z",
+      "endTime": "2026-08-18T09:00:00.000Z",
+      "claimedAt": "2026-08-18T01:00:00.000Z",
+      "lastSyncedAt": null
+    },
+    {
+      "id": "manual-seed-2",
+      "source": "manual",
+      "serverId": "server-03",
+      "accountName": "Sticker Market",
+      "branch": "Server 03",
+      "repos": [
+        "storefront",
+        "backend",
+        "admin"
+      ],
+      "userIds": [
+        "jerome"
+      ],
+      "rawAssignees": [],
+      "status": "Manual",
+      "summary": null,
+      "note": null,
+      "startTime": "2026-08-18T00:30:00.000Z",
+      "endTime": "2026-08-18T04:30:00.000Z",
+      "claimedAt": "2026-08-18T00:30:00.000Z",
+      "lastSyncedAt": null
+    },
+    {
+      "id": "manual-seed-3",
+      "source": "manual",
+      "serverId": "server-06",
+      "accountName": "All Sticker Printing",
+      "branch": "Server 06",
+      "repos": [
+        "storefront",
+        "backend",
+        "admin"
+      ],
+      "userIds": [
+        "neil"
+      ],
+      "rawAssignees": [],
+      "status": "Manual",
+      "summary": null,
+      "note": "PDP layout QA.",
+      "startTime": "2026-08-18T02:15:00.000Z",
+      "endTime": "2026-08-18T10:30:00.000Z",
+      "claimedAt": "2026-08-18T02:15:00.000Z",
+      "lastSyncedAt": null
+    }
+  ],
+  "notes": {},
+  "jiraSkipped": [],
+  "jiraWaiting": [],
+  "settings": {
+    "defaultBookingHours": 4,
+    "onExpiry": "remind",
+    "assignWholeEnv": true,
+    "jira": {
+      "enabled": false,
+      "requireTicket": true,
+      "pullTicketInfo": true,
+      "commentOnRelease": false,
+      "occupyingStatuses": [
+        "QA TESTING (DEV)",
+        "QA TESTING (STG)"
+      ],
+      "releasingStatuses": [
+        "FINAL CHECKING",
+        "DONE"
+      ],
+      "pollIntervalMinutes": 1,
+      "autoSync": true
+    }
+  }
+}

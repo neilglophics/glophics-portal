@@ -61,6 +61,54 @@ cookie is `HttpOnly` and `SameSite=Lax`, and deliberately not `Secure`,
 since this server speaks plain http on a LAN — add that flag if you put it
 behind TLS.
 
+## Restricting it to your own IP addresses
+
+Sign-in decides *who* gets in; the allowlist decides *from where*. Name any
+address and every request from anywhere else — the sign-in screen and the
+static files included — is a bare `403 Forbidden`, so a stranger never gets
+as far as a password prompt.
+
+Either source works, and the two are merged:
+
+```bash
+ALLOWED_IPS="203.0.113.7, 198.51.100.0/24" node server.js
+```
+
+```bash
+cp allowed-ips.example.json allowed-ips.json   # gitignored, edit the list
+```
+
+An entry is a plain IPv4/IPv6 address, a CIDR block, or one of the aliases
+`lan` (the private ranges) and `loopback`. Find the address to put in it
+from the network you want to allow — `curl ifconfig.me`, or any "what is my
+IP" page. If your ISP hands out a dynamic address, allow the whole block
+your office sits in (`198.51.100.0/24`) or put the portal behind a VPN and
+allow the VPN's exit address instead.
+
+Editing `allowed-ips.json` takes effect within a couple of seconds, no
+restart — a typo that locks everyone out is undone by fixing the file.
+
+Three things worth knowing:
+
+- **An empty list means "not configured", not "nobody".** With nothing set
+  the gate stays open and startup prints a warning, so a missing env var on
+  a deploy can't lock the whole team out of a running portal.
+- **Loopback is always allowed**, whatever the list says — otherwise the
+  host can't reach its own portal. `ALLOW_LOOPBACK=false` turns that off if
+  the machine has local users or SSH tunnels you don't trust.
+- **Behind a proxy, set `TRUST_PROXY`.** Behind nginx, Cloudflare, ngrok or
+  a PaaS router, the socket peer is the proxy and *every* request looks like
+  one address — set `TRUST_PROXY` to the number of proxies in front of the
+  server and the client is read from `X-Forwarded-For` instead. It is off by
+  default on purpose: that header is client-writable, so trusting it with no
+  proxy in front lets anyone claim any address.
+
+**It does not gate VS Code Live Share.** Live Share tunnels a guest's
+traffic through the host machine, so every guest arrives as loopback and
+the allowlist cannot tell them from you. Who joins the session is what
+limits access there — the allowlist covers direct network access, i.e. a
+deployment or a port opened on the LAN.
+
 ## Connecting Jira
 
 ```bash
@@ -114,6 +162,7 @@ js/
     page-*.js       one file per page
   app.js            boot: the sign-in gate, then State changes → render
 auth-store.js       credentials and sessions (auth.json), server-side only
+ip-allowlist.js     which addresses may reach the server at all
 server.js           static files, shared state, SSE, Jira + health polling
 ```
 

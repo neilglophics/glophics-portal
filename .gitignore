@@ -3,6 +3,10 @@
 .env
 jira-config.json
 
+# Who may reach the portal at all. Real office/VPN addresses, and a list
+# that differs per deployment — copy allowed-ips.example.json instead.
+allowed-ips.json
+
 # Sign-in credentials and live sessions. server.js seeds a super admin into
 # this on first run and prints the password once; password hashes and
 # session tokens live here, so it never belongs in the repo.
