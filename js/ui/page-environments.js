@@ -1,18 +1,26 @@
-/** Every environment, its repositories, who holds it and until when. */
+/**
+ * Every environment, free or held. Clicking a row expands it into the
+ * per-repository breakdown — which repos are free, and which ticket holds
+ * each of the others — rendered by EnvDetail, the same component In use uses.
+ */
 
 Router.register("environments", {
   label: "Environments",
+
+  expandableIds() { return Model.filteredEnvRows().map((row) => row.id); },
 
   render() {
     const all = Model.envRows();
     const rows = Model.filteredEnvRows();
     const filters = State.getFilters();
+    const accounts = State.getAccounts();
     const counts = { free: 0, partial: 0, inuse: 0, issue: 0 };
     all.forEach((r) => counts[r.state]++);
     const filtered = rows.length !== all.length;
+    const anyOpen = EnvDetail.openCount("environments") > 0;
 
     const statusChip = (key, label, count) => {
-      const on = filters.status === key;
+      const on = (filters.status || "all") === key;
       return `<button data-action="filter-status" data-status="${key}"
         class="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[11px] font-semibold transition ${
           on ? "bg-slate-900 text-white" : "bg-white text-slate-500 ring-1 ring-slate-200 hover:text-slate-800"}">
@@ -21,7 +29,8 @@ Router.register("environments", {
 
     return H.page(`
       ${H.pageHead("Environments",
-        `${all.length} environment${all.length === 1 ? "" : "s"} across ${State.getAccounts().length} account${State.getAccounts().length === 1 ? "" : "s"}`,
+        `${all.length} environment${all.length === 1 ? "" : "s"} across ${accounts.length} account${accounts.length === 1 ? "" : "s"}`,
+        (rows.length ? H.btn(anyOpen ? "Collapse all" : "Expand all", { data: { "data-action": "toggle-all-envs" } }) : "") +
         H.btn("Add environment", { variant: "dark", data: { "data-action": "goto-settings" } }))}
 
       <div class="flex flex-wrap items-center gap-2 pb-5">
@@ -42,9 +51,11 @@ Router.register("environments", {
   row(row) {
     const token = Tokens.ENV_STATE[row.state];
     const minutes = row.soonest ? Model.minutesLeft(row.soonest) : null;
+    const open = EnvDetail.isOpen("environments", row.id);
 
-    return H.tr(
+    const summary = H.tr(
       H.td(`<div class="flex items-center gap-3">
+              ${EnvDetail.caret(open)}
               <span class="h-7 w-1 shrink-0 rounded-full ${token.dot}"></span>
               <div class="min-w-0">
                 <p class="truncate text-sm font-bold">${H.esc(row.name)}</p>
@@ -68,8 +79,12 @@ Router.register("environments", {
       H.td(row.freeRepos.length
         ? H.btn("Assign", { variant: "dark", size: "sm", data: { "data-action": "assign", "data-id": row.id } })
         : H.btn("Force free", { variant: "danger", size: "sm", data: { "data-action": "force-free-server", "data-id": row.id } }),
-        "text-right")
+        "text-right"),
+      { "data-action": "toggle-env", "data-id": row.id },
+      "cursor-pointer"
     );
+
+    return open ? summary + EnvDetail.detailRow(row, 7) : summary;
   }
 });
 

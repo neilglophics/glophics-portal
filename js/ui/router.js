@@ -11,6 +11,8 @@ const Router = (() => {
 
   function register(id, page) { pages[id] = page; }
 
+  function page(id) { return pages[id] || null; }
+
   function currentId() {
     const id = (location.hash || "").replace(/^#/, "");
     return pages[id] ? id : FALLBACK;
@@ -86,5 +88,5 @@ const Router = (() => {
     render();
   }
 
-  return { register, currentId, render, go, start };
+  return { register, page, currentId, render, go, start };
 })();

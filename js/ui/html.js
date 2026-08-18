@@ -129,7 +129,8 @@ const H = (() => {
 
   const th = (label, extra = "") => `<th class="px-5 py-3 font-bold ${extra}">${esc(label)}</th>`;
   const td = (content, extra = "") => `<td class="px-5 py-3.5 ${extra}">${content}</td>`;
-  const tr = (cells, data) => `<tr ${attrs(data)} class="transition hover:bg-slate-50/60">${cells}</tr>`;
+  const tr = (cells, data, extraClass = "") =>
+    `<tr ${attrs(data)} class="transition hover:bg-slate-50/60 ${extraClass}">${cells}</tr>`;
 
   const table = (head, rows, emptyMessage) => rows.length ? `
     <div class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-100">

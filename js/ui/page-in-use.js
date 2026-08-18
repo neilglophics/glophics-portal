@@ -1,55 +1,83 @@
 /**
- * One row per repository actually held, soonest to free at the top — the
- * question people ask here is "when can I have one?".
+ * What is held, grouped by environment.
+ *
+ * A flat row per (claim × repository) repeated the environment, ticket and
+ * holders on every line. The environment is the row; expanding it shows the
+ * per-repository breakdown, which EnvDetail renders for both this page and
+ * Environments.
+ *
+ * Soonest to free sorts first: the question here is "when can I have one?".
  */
 
-Router.register("in-use", {
+const PAGE_ID = "in-use";
+
+Router.register(PAGE_ID, {
   label: "In use",
 
+  rows() {
+    return Model.envRows()
+      .filter((row) => row.claims.length)
+      .map((row) => ({ row, minutes: row.soonest ? Model.minutesLeft(row.soonest) : null }))
+      .sort((a, b) => (a.minutes === null ? Infinity : a.minutes) - (b.minutes === null ? Infinity : b.minutes));
+  },
+
+  expandableIds() { return this.rows().map(({ row }) => row.id); },
+
   render() {
-    const rows = Model.claimRepoRows();
+    const rows = this.rows();
     const s = Model.summary();
-    const envCount = new Set(rows.map((r) => r.server.id)).size;
+    const repoCount = Model.claimRepoRows().length;
+    const anyOpen = EnvDetail.openCount(PAGE_ID) > 0;
 
     return H.page(`
       ${H.pageHead("In use",
         rows.length
-          ? `${rows.length} repositor${rows.length === 1 ? "y" : "ies"} held by ${s.claims} ticket${s.claims === 1 ? "" : "s"} across ${envCount} environment${envCount === 1 ? "" : "s"}`
+          ? `${repoCount} repositor${repoCount === 1 ? "y" : "ies"} held across ${rows.length} environment${rows.length === 1 ? "" : "s"}`
           : "Nothing is held right now",
-        "")}
+        rows.length ? H.btn(anyOpen ? "Collapse all" : "Expand all", { data: { "data-action": "toggle-all-envs" } }) : "")}
 
       <section class="grid grid-cols-1 gap-4 pb-5 md:grid-cols-3">
-        ${H.statTile("amber", "Repositories held", rows.length, `of ${s.repoTotal} total`, "clock")}
+        ${H.statTile("amber", "Repositories held", repoCount, `of ${s.repoTotal} total`, "clock")}
         ${H.statTile("brand", "People holding", s.people, "across all accounts", "check")}
         ${H.statTile("rose", "Freeing within 2h", s.soon, "plan the next booking", "alert")}
       </section>
 
       ${H.table(
-        H.th("Repository") + H.th("Environment") + H.th("Ticket") + H.th("Jira status") +
-        H.th("Holders") + H.th("Held since") + H.th("Frees in") + H.th(""),
-        rows.map((r) => this.row(r)),
+        H.th("Environment") + H.th("Repositories") + H.th("Status") + H.th("Holders") +
+        H.th("Tickets") + H.th("Frees in") + H.th(""),
+        rows.map(({ row, minutes }) => this.envRow(row, minutes)),
         "Every repository is free."
       )}`);
   },
 
-  row({ claim, repo, env, accountName, minutesLeft }) {
-    const urgent = Model.isUrgent(minutesLeft);
-    return H.tr(
-      H.td(`<div class="flex items-center gap-2.5">
-              <span class="w-9 rounded-md bg-amber-500/85 py-0.5 text-center text-[9px] font-bold text-white">${H.esc(Tokens.shortRepo(repo))}</span>
-              <span class="text-xs font-semibold capitalize text-slate-600">${H.esc(repo)}</span>
+  envRow(row, minutes) {
+    const token = Tokens.ENV_STATE[row.state];
+    const open = EnvDetail.isOpen(PAGE_ID, row.id);
+    const urgent = Model.isUrgent(minutes);
+
+    const summary = H.tr(
+      H.td(`<div class="flex items-center gap-3">
+              ${EnvDetail.caret(open)}
+              <span class="h-7 w-1 shrink-0 rounded-full ${token.dot}"></span>
+              <div class="min-w-0">
+                <p class="truncate text-sm font-bold">${H.esc(row.name)}</p>
+                <p class="truncate text-[11px] text-slate-400">${H.esc(row.accountName)}</p>
+              </div>
             </div>`) +
-      H.td(`<p class="text-sm font-semibold">${H.esc(env)}</p>
-            <p class="text-[11px] text-slate-400">${H.esc(accountName)}</p>`) +
-      H.td(`<button data-action="open-ticket" data-ticket="${H.esc(claim.id)}"
-              class="text-xs font-semibold text-brand-600 hover:underline">${H.esc(claim.id)}</button>
-            <p class="max-w-[200px] truncate text-[11px] text-slate-400">${H.esc(claim.summary || claim.note || "")}</p>`) +
-      H.td(H.jiraChip(claim.status)) +
-      H.td(H.avatarStack(Model.peopleOf([claim]))) +
-      H.td(`<span class="text-xs text-slate-500">${H.esc(claim.startTime ? Format.formatDateTime(claim.startTime) : "—")}</span>`) +
-      H.td(`<p class="text-sm font-semibold ${urgent ? "text-amber-600" : "text-slate-600"}">${H.esc(Model.leftText(minutesLeft))}</p>
-            ${claim.endTime ? `<div class="mt-1.5 w-20">${H.bar(Model.progress(claim), urgent ? "bg-amber-500" : "bg-brand-500")}</div>` : ""}`) +
-      H.td(H.btn("Force free", { variant: "danger", size: "sm", data: { "data-action": "force-free-ticket", "data-ticket": claim.id } }), "text-right")
+      H.td(H.repoStrip(row)) +
+      H.td(H.dotChip(token)) +
+      H.td(H.avatarStack(row.people)) +
+      H.td(row.ticketIds.length === 1
+        ? `<span class="text-xs font-semibold text-brand-600">${H.esc(row.ticketIds[0])}</span>`
+        : `<span class="text-xs font-semibold text-slate-600">${row.ticketIds.length} tickets</span>`) +
+      H.td(`<p class="text-sm font-semibold ${urgent ? "text-amber-600" : "text-slate-600"}">${H.esc(Model.leftText(minutes))}</p>
+            ${row.soonest ? `<div class="mt-1.5 w-20">${H.bar(Model.progress(row.soonest), urgent ? "bg-amber-500" : "bg-brand-500")}</div>` : ""}`) +
+      H.td(H.btn("Force free", { variant: "danger", size: "sm",
+        data: { "data-action": "force-free-server", "data-id": row.id } }), "text-right"),
+      { "data-action": "toggle-env", "data-id": row.id },
+      "cursor-pointer"
     );
+
+    return open ? summary + EnvDetail.detailRow(row, 7) : summary;
   }
 });
