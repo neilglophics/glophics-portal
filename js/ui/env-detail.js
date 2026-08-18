@@ -31,25 +31,25 @@ const EnvDetail = (() => {
 
   // The twisty in the first cell of an expandable row.
   const caret = (open) => `
-    <span class="grid h-5 w-5 shrink-0 place-items-center rounded-md text-slate-400 transition ${
-      open ? "rotate-90 bg-slate-100 text-slate-600" : ""}">${H.icon("chevron", "h-3 w-3")}</span>`;
+    <span class="grid h-5 w-5 shrink-0 place-items-center rounded-md text-faint transition ${
+      open ? "rotate-90 bg-subtle-2 text-body" : ""}">${H.icon("chevron", "h-3 w-3")}</span>`;
 
   const repoLabel = (repoName, repo, held) => `
     <div class="flex w-40 shrink-0 items-center gap-2.5">
       <span class="w-9 shrink-0 rounded-md py-0.5 text-center text-[9px] font-bold ${
         repo.health === "offline" ? "bg-rose-500/85 text-white"
-        : !repo.url ? "bg-slate-200 text-slate-500"
+        : !repo.url ? "bg-line-2 text-muted"
         : held ? "bg-amber-500/85 text-white" : "bg-emerald-500/85 text-white"}">${H.esc(Tokens.shortRepo(repoName))}</span>
-      <span class="truncate text-xs font-semibold capitalize text-slate-600">${H.esc(repoName)}</span>
+      <span class="truncate text-xs font-semibold capitalize text-body">${H.esc(repoName)}</span>
     </div>`;
 
   // A repository nobody is holding — still shown, so it is obvious what is
   // bookable on an environment that is only partly held.
   function freeBlock(row, repoName, repo) {
     const offline = repo.health === "offline";
-    return `<div class="flex flex-wrap items-center gap-3 rounded-xl bg-white px-3 py-2.5 ring-1 ring-slate-100">
+    return `<div class="flex flex-wrap items-center gap-3 rounded-xl bg-surface px-3 py-2.5 ring-1 ring-line">
       ${repoLabel(repoName, repo, false)}
-      <span class="text-xs ${offline ? "font-medium text-rose-600" : !repo.url ? "text-slate-400" : "text-emerald-600"}">
+      <span class="text-xs ${offline ? "font-medium text-bad" : !repo.url ? "text-faint" : "text-ok"}">
         ${offline ? "Offline — not bookable until it responds"
           : !repo.url ? "No URL configured" : "Available"}</span>
       <div class="ml-auto flex gap-2">
@@ -63,18 +63,18 @@ const EnvDetail = (() => {
   function claimBlock(row, repoName, repo, claim, index) {
     const minutes = Model.minutesLeft(claim);
     const urgent = Model.isUrgent(minutes);
-    return `<div class="flex flex-wrap items-center gap-3 rounded-xl bg-white px-3 py-2.5 ring-1 ring-slate-100">
+    return `<div class="flex flex-wrap items-center gap-3 rounded-xl bg-surface px-3 py-2.5 ring-1 ring-line">
       ${index === 0 ? repoLabel(repoName, repo, true)
-        : `<div class="w-40 shrink-0 pl-11 text-[10px] font-semibold text-amber-600">also shared with</div>`}
+        : `<div class="w-40 shrink-0 pl-11 text-[10px] font-semibold text-warn">also shared with</div>`}
       <button data-action="open-ticket" data-ticket="${H.esc(claim.id)}"
-        class="w-24 shrink-0 text-left text-xs font-semibold text-brand-600 hover:underline">${H.esc(claim.id)}</button>
+        class="w-24 shrink-0 text-left text-xs font-semibold text-brand-fg hover:underline">${H.esc(claim.id)}</button>
       <div class="w-36 shrink-0">${H.jiraChip(claim.status)}</div>
       <div class="w-24 shrink-0">${H.avatarStack(Model.peopleOf([claim]), 2)}</div>
       <div class="min-w-0 flex-1">
-        <p class="truncate text-xs text-slate-500">${H.esc(claim.summary || claim.note || "—")}</p>
-        <p class="text-[10px] text-slate-400">Held since ${H.esc(claim.startTime ? Format.formatDateTime(claim.startTime) : "—")}</p>
+        <p class="truncate text-xs text-muted">${H.esc(claim.summary || claim.note || "—")}</p>
+        <p class="text-[10px] text-faint">Held since ${H.esc(claim.startTime ? Format.formatDateTime(claim.startTime) : "—")}</p>
       </div>
-      <span class="w-20 shrink-0 text-xs font-semibold ${urgent ? "text-amber-600" : "text-slate-500"}">${H.esc(Model.leftText(minutes))}</span>
+      <span class="w-20 shrink-0 text-xs font-semibold ${urgent ? "text-warn" : "text-muted"}">${H.esc(Model.leftText(minutes))}</span>
       ${H.btn("Force free", { variant: "danger", size: "sm",
         data: { "data-action": "force-free-ticket", "data-ticket": claim.id } })}
     </div>`;
@@ -95,7 +95,7 @@ const EnvDetail = (() => {
   function waitingNote(row) {
     if (!row.waiting.length) return "";
     const n = row.waiting.length;
-    return `<p class="px-1 pt-3 text-[11px] text-slate-400">
+    return `<p class="px-1 pt-3 text-[11px] text-faint">
       ${n} more ticket${n === 1 ? " is" : "s are"} on this branch but not at an occupying status,
       so ${n === 1 ? "it holds" : "they hold"} nothing:
       ${row.waiting.map((w) => H.esc(w.key)).join(", ")}.</p>`;
@@ -103,7 +103,7 @@ const EnvDetail = (() => {
 
   // The full-width row that follows an expanded environment.
   function detailRow(row, colspan) {
-    return `<tr class="bg-slate-50/60">
+    return `<tr class="bg-subtle/60">
       <td colspan="${colspan}" class="px-5 pb-5 pt-1">
         <div class="ml-8 space-y-2">${repoBlocks(row)}</div>
         ${waitingNote(row)}

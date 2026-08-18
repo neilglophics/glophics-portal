@@ -10,44 +10,44 @@ const Tokens = (() => {
 
   // Derived environment status, from State.getDisplayStatus().
   const ENV_STATE = {
-    free:    { label: "Free",        chip: "bg-emerald-50 text-emerald-700", dot: "bg-emerald-500", bar: "bg-emerald-500", tone: "emerald" },
-    partial: { label: "Partly free", chip: "bg-brand-50 text-brand-600",     dot: "bg-brand-500",   bar: "bg-brand-500",   tone: "brand"   },
-    inuse:   { label: "In use",      chip: "bg-amber-50 text-amber-700",     dot: "bg-amber-500",   bar: "bg-amber-500",   tone: "amber"   },
-    issue:   { label: "Server down", chip: "bg-rose-50 text-rose-700",       dot: "bg-rose-500",    bar: "bg-rose-500",    tone: "rose"    }
+    free:    { label: "Free",        chip: "bg-ok-soft text-ok", dot: "bg-emerald-500", bar: "bg-emerald-500", tone: "ok" },
+    partial: { label: "Partly free", chip: "bg-brand-soft text-brand-fg",     dot: "bg-brand-500",   bar: "bg-brand-500",   tone: "brand"   },
+    inuse:   { label: "In use",      chip: "bg-warn-soft text-warn",     dot: "bg-amber-500",   bar: "bg-amber-500",   tone: "warn"   },
+    issue:   { label: "Server down", chip: "bg-bad-soft text-bad",       dot: "bg-rose-500",    bar: "bg-rose-500",    tone: "bad"    }
   };
 
   // Per-repo reachability, from server.repos[name].health.
   const HEALTH = {
-    online:       { label: "Online",         chip: "bg-emerald-50 text-emerald-700", dot: "bg-emerald-500" },
-    offline:      { label: "Offline",        chip: "bg-rose-50 text-rose-700",       dot: "bg-rose-500"    },
-    checking:     { label: "Checking",       chip: "bg-slate-100 text-slate-500",    dot: "bg-slate-400"   },
-    unconfigured: { label: "No URL set",     chip: "bg-slate-100 text-slate-500",    dot: "bg-slate-300"   }
+    online:       { label: "Online",         chip: "bg-ok-soft text-ok", dot: "bg-emerald-500" },
+    offline:      { label: "Offline",        chip: "bg-bad-soft text-bad",       dot: "bg-rose-500"    },
+    checking:     { label: "Checking",       chip: "bg-subtle-2 text-muted",    dot: "bg-faint"   },
+    unconfigured: { label: "No URL set",     chip: "bg-subtle-2 text-muted",    dot: "bg-faintest"   }
   };
 
   // Jira workflow statuses arrive in Jira's own casing ("QA Testing (Stg)"),
   // so matching is case-insensitive and anything unknown gets a neutral chip.
   const JIRA_CHIPS = {
-    "qa testing (dev)": "bg-blue-50 text-blue-700",
-    "qa testing (stg)": "bg-violet-50 text-violet-700",
-    "qa testing (live)": "bg-teal-50 text-teal-700",
-    "final checking":   "bg-emerald-50 text-emerald-700",
-    "done":             "bg-emerald-50 text-emerald-700",
-    "qa failed":        "bg-rose-50 text-rose-700"
+    "qa testing (dev)": "bg-info-soft text-info",
+    "qa testing (stg)": "bg-alt-soft text-alt",
+    "qa testing (live)": "bg-ok-soft text-ok",
+    "final checking":   "bg-ok-soft text-ok",
+    "done":             "bg-ok-soft text-ok",
+    "qa failed":        "bg-bad-soft text-bad"
   };
 
   function jiraChip(status) {
-    return JIRA_CHIPS[String(status || "").trim().toLowerCase()] || "bg-slate-100 text-slate-500";
+    return JIRA_CHIPS[String(status || "").trim().toLowerCase()] || "bg-subtle-2 text-muted";
   }
 
   // Avatar colour is derived from the user id so a person keeps the same
   // colour everywhere, across reloads, without storing anything.
   const AVATAR_TONES = [
-    "bg-violet-100 text-violet-700",
-    "bg-blue-100 text-blue-700",
-    "bg-emerald-100 text-emerald-700",
-    "bg-amber-100 text-amber-700",
-    "bg-rose-100 text-rose-700",
-    "bg-teal-100 text-teal-700"
+    "bg-violet-100 text-alt",
+    "bg-blue-100 text-info",
+    "bg-ok-soft text-ok",
+    "bg-warn-soft text-warn",
+    "bg-bad-soft text-bad",
+    "bg-teal-100 text-ok"
   ];
 
   function avatarTone(key) {

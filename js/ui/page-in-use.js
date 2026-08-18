@@ -37,9 +37,9 @@ Router.register(PAGE_ID, {
         rows.length ? H.btn(anyOpen ? "Collapse all" : "Expand all", { data: { "data-action": "toggle-all-envs" } }) : "")}
 
       <section class="grid grid-cols-1 gap-4 pb-5 md:grid-cols-3">
-        ${H.statTile("amber", "Repositories held", repoCount, `of ${s.repoTotal} total`, "clock")}
+        ${H.statTile("warn", "Repositories held", repoCount, `of ${s.repoTotal} total`, "clock")}
         ${H.statTile("brand", "People holding", s.people, "across all accounts", "check")}
-        ${H.statTile("rose", "Freeing within 2h", s.soon, "plan the next booking", "alert")}
+        ${H.statTile("bad", "Freeing within 2h", s.soon, "plan the next booking", "alert")}
       </section>
 
       ${H.table(
@@ -61,16 +61,16 @@ Router.register(PAGE_ID, {
               <span class="h-7 w-1 shrink-0 rounded-full ${token.dot}"></span>
               <div class="min-w-0">
                 <p class="truncate text-sm font-bold">${H.esc(row.name)}</p>
-                <p class="truncate text-[11px] text-slate-400">${H.esc(row.accountName)}</p>
+                <p class="truncate text-[11px] text-faint">${H.esc(row.accountName)}</p>
               </div>
             </div>`) +
       H.td(H.repoStrip(row)) +
       H.td(H.dotChip(token)) +
       H.td(H.avatarStack(row.people)) +
       H.td(row.ticketIds.length === 1
-        ? `<span class="text-xs font-semibold text-brand-600">${H.esc(row.ticketIds[0])}</span>`
-        : `<span class="text-xs font-semibold text-slate-600">${row.ticketIds.length} tickets</span>`) +
-      H.td(`<p class="text-sm font-semibold ${urgent ? "text-amber-600" : "text-slate-600"}">${H.esc(Model.leftText(minutes))}</p>
+        ? `<span class="text-xs font-semibold text-brand-fg">${H.esc(row.ticketIds[0])}</span>`
+        : `<span class="text-xs font-semibold text-body">${row.ticketIds.length} tickets</span>`) +
+      H.td(`<p class="text-sm font-semibold ${urgent ? "text-warn" : "text-body"}">${H.esc(Model.leftText(minutes))}</p>
             ${row.soonest ? `<div class="mt-1.5 w-20">${H.bar(Model.progress(row.soonest), urgent ? "bg-amber-500" : "bg-brand-500")}</div>` : ""}`) +
       H.td(H.btn("Force free", { variant: "danger", size: "sm",
         data: { "data-action": "force-free-server", "data-id": row.id } }), "text-right"),

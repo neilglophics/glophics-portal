@@ -23,7 +23,7 @@ Router.register("environments", {
       const on = (filters.status || "all") === key;
       return `<button data-action="filter-status" data-status="${key}"
         class="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[11px] font-semibold transition ${
-          on ? "bg-slate-900 text-white" : "bg-white text-slate-500 ring-1 ring-slate-200 hover:text-slate-800"}">
+          on ? "bg-accent text-on-accent" : "bg-surface text-muted ring-1 ring-line-2 hover:text-ink"}">
         ${key === "all" ? "" : `<span class="h-1.5 w-1.5 rounded-full ${Tokens.ENV_STATE[key].dot}"></span>`}${H.esc(label)} ${count}</button>`;
     };
 
@@ -37,7 +37,7 @@ Router.register("environments", {
         ${statusChip("all", "All", all.length)}
         ${Object.keys(counts).map((k) => statusChip(k, Tokens.ENV_STATE[k].label, counts[k])).join("")}
         ${filtered ? `<button data-action="clear-filters"
-            class="ml-1 text-[11px] font-semibold text-brand-600 hover:underline">Clear filters</button>` : ""}
+            class="ml-1 text-[11px] font-semibold text-brand-fg hover:underline">Clear filters</button>` : ""}
       </div>
 
       ${H.table(
@@ -59,7 +59,7 @@ Router.register("environments", {
               <span class="h-7 w-1 shrink-0 rounded-full ${token.dot}"></span>
               <div class="min-w-0">
                 <p class="truncate text-sm font-bold">${H.esc(row.name)}</p>
-                <p class="truncate text-[11px] text-slate-400">${H.esc(row.accountName)}</p>
+                <p class="truncate text-[11px] text-faint">${H.esc(row.accountName)}</p>
               </div>
             </div>`) +
       H.td(H.repoStrip(row)) +
@@ -67,15 +67,15 @@ Router.register("environments", {
       H.td(row.people.length ? H.avatarStack(row.people) : H.dash) +
       H.td(row.ticketIds.length
         ? `<button data-action="open-ticket" data-ticket="${H.esc(row.ticketIds[0])}"
-             class="text-xs font-semibold text-brand-600 hover:underline">${H.esc(row.ticketIds[0])}</button>` +
-          (row.ticketIds.length > 1 ? `<span class="ml-1 text-[11px] text-slate-400">+${row.ticketIds.length - 1}</span>` : "")
+             class="text-xs font-semibold text-brand-fg hover:underline">${H.esc(row.ticketIds[0])}</button>` +
+          (row.ticketIds.length > 1 ? `<span class="ml-1 text-[11px] text-faint">+${row.ticketIds.length - 1}</span>` : "")
         : H.dash) +
       H.td(row.soonest
-        ? `<p class="text-sm ${Model.isUrgent(minutes) ? "font-semibold text-amber-600" : "text-slate-600"}">${H.esc(Model.leftText(minutes))}</p>
+        ? `<p class="text-sm ${Model.isUrgent(minutes) ? "font-semibold text-warn" : "text-body"}">${H.esc(Model.leftText(minutes))}</p>
            <div class="mt-1.5 w-24">${H.bar(Model.progress(row.soonest), token.bar)}</div>`
         : row.claims.length
-          ? `<span class="text-xs text-slate-400">No end time</span>`
-          : `<span class="text-sm font-medium text-emerald-600">Ready to book</span>`) +
+          ? `<span class="text-xs text-faint">No end time</span>`
+          : `<span class="text-sm font-medium text-ok">Ready to book</span>`) +
       H.td(row.freeRepos.length
         ? H.btn("Assign", { variant: "dark", size: "sm", data: { "data-action": "assign", "data-id": row.id } })
         : H.btn("Force free", { variant: "danger", size: "sm", data: { "data-action": "force-free-server", "data-id": row.id } }),

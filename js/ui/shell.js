@@ -23,9 +23,9 @@ const Shell = (() => {
   ];
 
   const BADGE_TONES = {
-    rose:  "bg-rose-100 text-rose-700",
-    amber: "bg-amber-100 text-amber-700",
-    plain: "bg-slate-100 text-slate-500"
+    rose:  "bg-bad-soft text-bad",
+    amber: "bg-warn-soft text-warn",
+    plain: "bg-subtle-2 text-muted"
   };
 
   function navLink(item, active, summary) {
@@ -34,7 +34,7 @@ const Shell = (() => {
     const tone = BADGE_TONES[item.tone || "plain"];
     return `<a href="#${item.id}"
       class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
-        on ? "bg-brand-50 font-semibold text-brand-600" : "font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900"}">
+        on ? "bg-brand-soft font-semibold text-brand-fg" : "font-medium text-muted hover:bg-subtle hover:text-ink"}">
       ${H.icon(item.icon, "h-4.5 w-4.5 shrink-0")}
       <span class="flex-1">${H.esc(item.label)}</span>
       ${count ? `<span class="rounded-full ${tone} px-2 py-0.5 text-[11px] font-bold">${count}</span>` : ""}
@@ -45,7 +45,7 @@ const Shell = (() => {
     const accounts = State.getAccounts();
     const host = document.getElementById("nav-accounts");
     if (!accounts.length) {
-      host.innerHTML = `<p class="px-3 py-2 text-xs text-slate-400">No accounts yet.</p>`;
+      host.innerHTML = `<p class="px-3 py-2 text-xs text-faint">No accounts yet.</p>`;
       return;
     }
     host.innerHTML = accounts.map((account) => {
@@ -55,10 +55,10 @@ const Shell = (() => {
       const free = rows.filter((s) => s === "free").length;
       const dot = rows.includes("issue") ? "bg-rose-500" : free ? "bg-emerald-500" : "bg-amber-500";
       return `<a href="#environments" data-action="filter-account" data-id="${H.esc(account.id)}"
-        class="flex items-center gap-3 rounded-xl px-3 py-2 transition hover:bg-slate-50">
+        class="flex items-center gap-3 rounded-xl px-3 py-2 transition hover:bg-subtle">
         <span class="h-2 w-2 shrink-0 rounded-full ${dot}"></span>
-        <span class="flex-1 truncate text-sm font-medium text-slate-700">${H.esc(account.displayName)}</span>
-        <span class="text-[11px] font-semibold text-slate-400">${free}/${rows.length}</span>
+        <span class="flex-1 truncate text-sm font-medium text-ink-2">${H.esc(account.displayName)}</span>
+        <span class="text-[11px] font-semibold text-faint">${free}/${rows.length}</span>
       </a>`;
     }).join("");
   }
@@ -73,7 +73,7 @@ const Shell = (() => {
       : last ? `Synced ${Format.agoText(last)} ago`
       : "Not synced yet";
     el.innerHTML = `
-      <span class="h-2 w-2 shrink-0 rounded-full ${connected ? "bg-emerald-500" : "bg-slate-300"}"></span>
+      <span class="h-2 w-2 shrink-0 rounded-full ${connected ? "bg-emerald-500" : "bg-faintest"}"></span>
       <span class="hidden truncate sm:inline">${H.esc(connected ? label : "Local only")}</span>`;
     el.title = connected ? "Live — changes sync to everyone" : "No server connection; changes stay in this browser";
   }

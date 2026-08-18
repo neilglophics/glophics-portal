@@ -18,12 +18,12 @@ Router.register("health", {
         H.btn("Recheck all", { data: { "data-action": "check-health" } }))}
 
       <section class="grid grid-cols-1 gap-4 pb-5 md:grid-cols-3">
-        ${H.statTile("emerald", "Responding", s.repoOnline, `of ${s.repoTotal} endpoints`, "check")}
-        ${H.statTile("rose", "Unreachable", s.repoOffline, "needs attention", "alert")}
-        ${H.statTile("slate", "No URL set", s.repoUnconfigured, "never checked", "plug")}
+        ${H.statTile("ok", "Responding", s.repoOnline, `of ${s.repoTotal} endpoints`, "check")}
+        ${H.statTile("bad", "Unreachable", s.repoOffline, "needs attention", "alert")}
+        ${H.statTile("neutral", "No URL set", s.repoUnconfigured, "never checked", "plug")}
       </section>
 
-      ${offline.length ? H.notice("rose",
+      ${offline.length ? H.notice("bad",
         `${offline.length} endpoint${offline.length === 1 ? "" : "s"} not responding`,
         `${offline.map((r) => `${H.esc(r.accountName)} ${H.esc(r.env)} · ${H.esc(r.repo)}`).join(" — ")}.
          Their environments read as <strong>Server down</strong> until a check succeeds.`) : ""}
@@ -35,7 +35,7 @@ Router.register("health", {
         "No repositories configured yet."
       )}
 
-      <p class="pt-4 text-center text-[11px] text-slate-400">
+      <p class="pt-4 text-center text-[11px] text-faint">
         Checked automatically about every ${interval} minute${interval === 1 ? "" : "s"} while the server is running.
       </p>`);
   },
@@ -45,18 +45,18 @@ Router.register("health", {
     return H.tr(
       H.td(r.url
         ? `<a href="${H.esc(r.url)}" target="_blank" rel="noopener"
-             class="text-xs font-medium text-slate-600 hover:text-brand-600 hover:underline">${H.esc(r.url.replace(/^https?:\/\//, ""))}</a>`
-        : `<span class="text-xs italic text-slate-300">no URL configured</span>`) +
+             class="text-xs font-medium text-body hover:text-brand-fg hover:underline">${H.esc(r.url.replace(/^https?:\/\//, ""))}</a>`
+        : `<span class="text-xs italic text-faintest">no URL configured</span>`) +
       H.td(`<p class="text-sm font-semibold">${H.esc(r.env)}</p>
-            <p class="text-[11px] text-slate-400">${H.esc(r.accountName)}</p>`) +
-      H.td(`<span class="text-xs font-semibold capitalize text-slate-500">${H.esc(r.repo)}</span>`) +
+            <p class="text-[11px] text-faint">${H.esc(r.accountName)}</p>`) +
+      H.td(`<span class="text-xs font-semibold capitalize text-muted">${H.esc(r.repo)}</span>`) +
       H.td(H.dotChip(token)) +
       H.td(r.claims.length
         ? H.avatarStack(Model.peopleOf(r.claims))
-        : `<span class="text-xs text-slate-300">free</span>`) +
+        : `<span class="text-xs text-faintest">free</span>`) +
       H.td(r.note
-        ? `<span title="${H.esc(r.note)}" class="line-clamp-1 block max-w-[220px] text-xs text-slate-500">${H.esc(r.note)}</span>`
-        : `<span class="text-xs text-slate-300">—</span>`) +
+        ? `<span title="${H.esc(r.note)}" class="line-clamp-1 block max-w-[220px] text-xs text-muted">${H.esc(r.note)}</span>`
+        : `<span class="text-xs text-faintest">—</span>`) +
       H.td(`<div class="flex justify-end gap-2">
               ${H.iconBtn("note", r.note ? "Edit note" : "Add note", { "data-action": "edit-note", "data-id": r.serverId, "data-repo": r.repo })}
               ${r.url

@@ -45,9 +45,9 @@ Router.register("settings", (() => {
           meta: `${account ? account.displayName : "—"} · ${configured}/${repoNames.length} URLs set`,
           fields:
             `<label class="block">
-               <span class="text-[11px] font-semibold text-slate-500">Account</span>
+               <span class="text-[11px] font-semibold text-muted">Account</span>
                <select data-field="accountId"
-                 class="mt-1.5 w-full rounded-xl bg-white px-3 py-2.5 text-sm text-slate-700 ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-300">
+                 class="mt-1.5 w-full rounded-xl bg-surface px-3 py-2.5 text-sm text-ink-2 ring-1 ring-line-2 focus:outline-none focus:ring-2 focus:ring-brand-soft">
                  ${State.getAccounts().map((a) =>
                    `<option value="${H.esc(a.id)}" ${a.id === s.accountId ? "selected" : ""}>${H.esc(a.displayName)}</option>`).join("")}
                </select>
@@ -82,27 +82,27 @@ Router.register("settings", (() => {
             ${row.leading || ""}
             <div class="min-w-0">
               <p class="truncate text-sm font-semibold">${H.esc(row.title)}</p>
-              <p class="truncate text-[11px] text-slate-400">${H.esc(row.meta)}</p>
+              <p class="truncate text-[11px] text-faint">${H.esc(row.meta)}</p>
             </div>
           </div>
           <div class="flex shrink-0 gap-2">
             <button data-action="dir-edit" data-key="${H.esc(row.key)}"
               class="rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${
-                open ? "bg-brand-50 text-brand-600 ring-1 ring-brand-200"
-                     : "text-slate-500 ring-1 ring-slate-200 hover:bg-brand-50 hover:text-brand-600 hover:ring-brand-200"}">Edit</button>
+                open ? "bg-brand-soft text-brand-fg ring-1 ring-brand-soft"
+                     : "text-muted ring-1 ring-line-2 hover:bg-brand-soft hover:text-brand-fg hover:ring-brand-soft"}">Edit</button>
             <button data-action="dir-remove" data-key="${H.esc(row.key)}"
-              class="rounded-full px-3 py-1.5 text-[11px] font-semibold text-slate-500 ring-1 ring-slate-200 transition hover:bg-rose-50 hover:text-rose-600 hover:ring-rose-200">Remove</button>
+              class="rounded-full px-3 py-1.5 text-[11px] font-semibold text-muted ring-1 ring-line-2 transition hover:bg-bad-soft hover:text-bad hover:ring-bad-soft">Remove</button>
           </div>
         </div>
         ${open ? `
-          <div class="mt-3 rounded-xl bg-slate-50 p-3">
+          <div class="mt-3 rounded-xl bg-subtle p-3">
             <div class="grid gap-2.5 sm:grid-cols-2">${row.fields}</div>
-            ${ui.error ? `<p class="mt-2.5 rounded-lg bg-rose-50 px-3 py-2 text-[11px] font-medium text-rose-700">${H.esc(ui.error)}</p>` : ""}
+            ${ui.error ? `<p class="mt-2.5 rounded-lg bg-bad-soft px-3 py-2 text-[11px] font-medium text-bad">${H.esc(ui.error)}</p>` : ""}
             <div class="mt-3 flex justify-end gap-2">
               <button data-action="dir-cancel"
-                class="rounded-full bg-white px-3.5 py-1.5 text-[11px] font-semibold text-slate-500 ring-1 ring-slate-200 transition hover:text-slate-700">Cancel</button>
+                class="rounded-full bg-surface px-3.5 py-1.5 text-[11px] font-semibold text-muted ring-1 ring-line-2 transition hover:text-ink-2">Cancel</button>
               <button data-action="dir-save" data-key="${H.esc(row.key)}"
-                class="rounded-full bg-slate-900 px-3.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-slate-800">Save</button>
+                class="rounded-full bg-accent px-3.5 py-1.5 text-[11px] font-semibold text-on-accent transition hover:bg-accent-2">Save</button>
             </div>
           </div>` : ""}
       </div>`;
@@ -112,34 +112,34 @@ Router.register("settings", (() => {
     if (ui.tab === "servers") {
       return `<div class="mt-4 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
         <select data-add="accountId"
-          class="rounded-xl bg-slate-50 px-3 py-2.5 text-sm text-slate-700 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-200">
+          class="rounded-xl bg-subtle px-3 py-2.5 text-sm text-ink-2 focus:bg-surface focus:outline-none focus:ring-2 focus:ring-brand-soft">
           ${State.getAccounts().map((a) => `<option value="${H.esc(a.id)}">${H.esc(a.displayName)}</option>`).join("")}
         </select>
         <input type="text" data-add="name" placeholder="Environment name e.g. hotfix-4"
-          class="rounded-xl bg-slate-50 px-3.5 py-2.5 text-sm placeholder:text-slate-300 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
-        <button data-action="dir-add" class="rounded-xl bg-slate-900 px-4 text-xs font-semibold text-white transition hover:bg-slate-800">Add</button>
+          class="rounded-xl bg-subtle px-3.5 py-2.5 text-sm placeholder:text-faintest focus:bg-surface focus:outline-none focus:ring-2 focus:ring-brand-soft" />
+        <button data-action="dir-add" class="rounded-xl bg-accent px-4 text-xs font-semibold text-on-accent transition hover:bg-accent-2">Add</button>
       </div>`;
     }
     const placeholder = ui.tab === "users" ? "Display name e.g. [BE]_Sem" : "Account name e.g. Northgate";
     return `<div class="mt-4 flex gap-2">
       <input type="text" data-add="name" placeholder="${placeholder}"
-        class="flex-1 rounded-xl bg-slate-50 px-3.5 py-2.5 text-sm placeholder:text-slate-300 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
-      <button data-action="dir-add" class="rounded-xl bg-slate-900 px-4 text-xs font-semibold text-white transition hover:bg-slate-800">Add</button>
+        class="flex-1 rounded-xl bg-subtle px-3.5 py-2.5 text-sm placeholder:text-faintest focus:bg-surface focus:outline-none focus:ring-2 focus:ring-brand-soft" />
+      <button data-action="dir-add" class="rounded-xl bg-accent px-4 text-xs font-semibold text-on-accent transition hover:bg-accent-2">Add</button>
     </div>`;
   }
 
   function directories() {
     const rows = directoryRows();
     return `
-      <div class="flex gap-1 rounded-xl bg-slate-100 p-1">
+      <div class="flex gap-1 rounded-xl bg-subtle-2 p-1">
         ${TABS.map(([key, label]) => `
           <button data-action="dir-tab" data-tab="${key}"
             class="flex-1 rounded-lg px-3 py-1.5 text-xs transition ${
-              ui.tab === key ? "bg-white font-semibold text-slate-900 shadow-sm" : "font-medium text-slate-500 hover:text-slate-700"}">${label}</button>`).join("")}
+              ui.tab === key ? "bg-surface font-semibold text-ink shadow-sm" : "font-medium text-muted hover:text-ink-2"}">${label}</button>`).join("")}
       </div>
       ${addForm()}
-      <div class="mt-3 max-h-[420px] divide-y divide-slate-50 overflow-y-auto no-scrollbar">
-        ${rows.length ? rows.map(directoryRow).join("") : `<p class="py-6 text-center text-xs text-slate-400">Nothing here yet.</p>`}
+      <div class="mt-3 max-h-[420px] divide-y divide-line-soft overflow-y-auto no-scrollbar">
+        ${rows.length ? rows.map(directoryRow).join("") : `<p class="py-6 text-center text-xs text-faint">Nothing here yet.</p>`}
       </div>`;
   }
 
@@ -156,10 +156,10 @@ Router.register("settings", (() => {
     ];
 
     return H.card("Jira integration", "Link bookings to tickets so the board fills itself in.", `
-      <div class="flex items-center justify-between gap-4 rounded-xl bg-slate-50 p-4">
+      <div class="flex items-center justify-between gap-4 rounded-xl bg-subtle p-4">
         <div class="min-w-0">
           <p class="text-sm font-bold">Enable Jira</p>
-          <p class="truncate text-xs text-slate-400">${H.esc(
+          <p class="truncate text-xs text-faint">${H.esc(
             !jira.enabled ? "Off — ticket keys entered by hand"
             : jiraConfig && jiraConfig.baseUrl ? `Connected to ${jiraConfig.baseUrl.replace(/^https?:\/\//, "")}`
             : "On — add your site URL and token below")}</p>
@@ -167,7 +167,7 @@ Router.register("settings", (() => {
         ${H.toggle(jira.enabled, { "data-action": "jira-enabled" })}
       </div>
 
-      ${managed ? `<p class="mt-4 rounded-xl bg-brand-50 px-3.5 py-2.5 text-[11px] font-medium text-brand-700">
+      ${managed ? `<p class="mt-4 rounded-xl bg-brand-soft px-3.5 py-2.5 text-[11px] font-medium text-brand-fg">
         Credentials come from this deployment's environment variables, so they are read-only here.</p>` : ""}
 
       <div class="mt-4 grid gap-3 sm:grid-cols-2">
@@ -193,14 +193,14 @@ Router.register("settings", (() => {
   function statusRulesCard() {
     const jira = State.getSettings().jira;
     const list = (selected, kind) => `
-      <div class="max-h-44 space-y-1 overflow-y-auto rounded-xl bg-slate-50 p-2 no-scrollbar">
+      <div class="max-h-44 space-y-1 overflow-y-auto rounded-xl bg-subtle p-2 no-scrollbar">
         ${JIRA_STATUS_VOCABULARY.map((status) => {
           const on = selected.includes(status);
-          return `<label class="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 transition hover:bg-white">
+          return `<label class="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 transition hover:bg-surface">
             <input type="checkbox" ${on ? "checked" : ""}
                    data-change="status-rule" data-kind="${kind}" data-status="${H.esc(status)}"
                    class="h-3.5 w-3.5 rounded accent-brand-500" />
-            <span class="text-[11px] font-medium ${on ? "text-slate-800" : "text-slate-500"}">${H.esc(status)}</span>
+            <span class="text-[11px] font-medium ${on ? "text-ink" : "text-muted"}">${H.esc(status)}</span>
           </label>`;
         }).join("")}
       </div>`;
@@ -209,11 +209,11 @@ Router.register("settings", (() => {
       "A ticket claims its repositories on reaching a status on the left, and frees them on the right. Any other status leaves an active claim alone.", `
       <div class="grid gap-4 sm:grid-cols-2">
         <div>
-          <p class="pb-2 text-[11px] font-semibold text-slate-500">Occupies a server</p>
+          <p class="pb-2 text-[11px] font-semibold text-muted">Occupies a server</p>
           ${list(jira.occupyingStatuses || [], "occupying")}
         </div>
         <div>
-          <p class="pb-2 text-[11px] font-semibold text-slate-500">Frees the server</p>
+          <p class="pb-2 text-[11px] font-semibold text-muted">Frees the server</p>
           ${list(jira.releasingStatuses || [], "releasing")}
         </div>
       </div>
@@ -235,7 +235,7 @@ Router.register("settings", (() => {
             { value: "auto-release", label: "Auto-release" }
           ], { value: s.onExpiry || "remind", data: { "data-change": "on-expiry" } })}
         <label class="flex items-center justify-between gap-4">
-          <span class="text-sm text-slate-600">Assign whole environment at once</span>
+          <span class="text-sm text-body">Assign whole environment at once</span>
           ${H.toggle(s.assignWholeEnv !== false, { "data-action": "toggle-assign-whole" })}
         </label>
       </div>`);
@@ -403,7 +403,7 @@ Router.register("settings", (() => {
     const el = document.getElementById("jira-result");
     if (el) {
       el.textContent = message;
-      el.className = `self-center text-xs font-medium ${ok ? "text-emerald-600" : "text-rose-600"}`;
+      el.className = `self-center text-xs font-medium ${ok ? "text-ok" : "text-bad"}`;
     }
   }
 

@@ -20,6 +20,7 @@
     State.subscribeStatus(() => Shell.renderSyncStatus());
 
     Actions.bind(document.getElementById("app"));
+    Theme.init();
     Modals.bind();
     bindSearch();
 

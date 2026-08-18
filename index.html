@@ -12,7 +12,14 @@
 -->
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
 <style type="text/tailwindcss">
+  /*
+    The palette is semantic, not literal: components ask for `bg-surface` and
+    `text-muted`, never `bg-surface` or `text-muted`. Dark mode is then a
+    single set of variable overrides below — no `dark:` variant on any
+    component, and nothing to keep in sync when a colour changes.
+  */
   @theme {
+    /* brand — fixed in both themes, it is the identity */
     --color-brand-50:  #f1efff;
     --color-brand-100: #e6e2ff;
     --color-brand-200: #d3ccff;
@@ -20,8 +27,40 @@
     --color-brand-500: #6d5be7;
     --color-brand-600: #5b48d8;
     --color-brand-700: #4b3ac0;
-    --color-canvas:    #eceef4;
-    --color-panel:     #f7f8fc;
+
+    /* surfaces */
+    --color-canvas:    #eceef4;   /* behind the shell */
+    --color-surface:   #ffffff;   /* cards, table bodies */
+    --color-panel:     #f7f8fc;   /* the main content area */
+    --color-subtle:    #f8fafc;   /* inputs, inset blocks */
+    --color-subtle-2:  #f1f5f9;   /* tab strips, quiet badges */
+
+    /* lines */
+    --color-line:      #f1f5f9;
+    --color-line-2:    #e2e8f0;
+    --color-line-soft: #f1f5f9;
+
+    /* type */
+    --color-ink:       #0f172a;
+    --color-ink-2:     #334155;
+    --color-body:      #475569;
+    --color-muted:     #64748b;
+    --color-faint:     #94a3b8;
+    --color-faintest:  #cbd5e1;
+
+    /* the high-contrast action colour (dark pill buttons) */
+    --color-accent:    #0f172a;
+    --color-accent-2:  #1e293b;
+    --color-on-accent: #ffffff;
+
+    /* status — `-soft` is the chip background, the bare name is the text */
+    --color-ok:        #047857;  --color-ok-soft:      #ecfdf5;
+    --color-warn:      #b45309;  --color-warn-soft:    #fffbeb;
+    --color-bad:       #be123c;  --color-bad-soft:     #fff1f2;
+    --color-info:      #1d4ed8;  --color-info-soft:    #eff6ff;
+    --color-alt:       #6d28d9;  --color-alt-soft:     #f5f3ff;
+    --color-brand-fg:  #5b48d8;  --color-brand-soft:   #f1efff;
+    --color-neutral:   #64748b;  --color-neutral-soft: #f1f5f9;
   }
 </style>
 
@@ -32,18 +71,71 @@
   body { font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif; }
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+  /* Dark mode: only the variables change. `html.dark` outranks the `:root`
+     the theme block emits, whichever order the CDN injects its stylesheet. */
+  html.dark {
+    --color-canvas:    #090b10;
+    --color-surface:   #14161d;
+    --color-panel:     #0f1117;
+    --color-subtle:    #1a1d26;
+    --color-subtle-2:  #232733;
+
+    --color-line:      #232733;
+    --color-line-2:    #2e3342;
+    --color-line-soft: #1c1f28;
+
+    --color-ink:       #e8eaf2;
+    --color-ink-2:     #c8cddb;
+    --color-body:      #a8b0c2;
+    --color-muted:     #8b93a7;
+    --color-faint:     #6b7386;
+    --color-faintest:  #4a5162;
+
+    --color-accent:    #e8eaf2;
+    --color-accent-2:  #cdd3e0;
+    --color-on-accent: #0b0d12;
+
+    --color-ok:        #4ade80;  --color-ok-soft:      #10291d;
+    --color-warn:      #fbbf24;  --color-warn-soft:    #2a2010;
+    --color-bad:       #fb7185;  --color-bad-soft:     #2c1218;
+    --color-info:      #7aa5f0;  --color-info-soft:    #131f36;
+    --color-alt:       #b39ef5;  --color-alt-soft:     #1e1832;
+    --color-brand-fg:  #a99bf5;  --color-brand-soft:   #1c1836;
+    --color-neutral:   #8b93a7;  --color-neutral-soft: #232733;
+
+    --color-brand-50:  #1c1836;
+    --color-brand-100: #262046;
+    --color-brand-200: #332a5e;
+  }
+
+  /* The shell's drop shadow reads as grime on a dark canvas. */
+  .app-shell { box-shadow: 0 20px 60px -20px rgba(15, 23, 42, 0.25); }
+  html.dark .app-shell { box-shadow: 0 20px 60px -24px rgba(0, 0, 0, 0.7); }
+
+  /* Applied before first paint by the inline script below. */
+  html.dark { color-scheme: dark; }
 </style>
+
+<script>
+  // Runs before the body renders so a dark-mode user never sees a white flash.
+  try {
+    var saved = localStorage.getItem("serverManager.theme");
+    var dark = saved ? saved === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    if (dark) document.documentElement.classList.add("dark");
+  } catch (e) { /* storage blocked — light is a fine default */ }
+</script>
 </head>
 
 <!-- overflow-hidden guarantees only the sidebar and main pane scroll, never
      the document, so the shell can never be pushed off-screen. -->
-<body class="h-full overflow-hidden bg-canvas text-slate-900 antialiased">
+<body class="h-full overflow-hidden bg-canvas text-ink antialiased">
 
 <div id="app" class="h-full p-2 sm:p-3 lg:p-5">
-  <div class="flex h-full w-full overflow-hidden rounded-2xl bg-white shadow-[0_20px_60px_-20px_rgba(15,23,42,0.25)] lg:rounded-[28px]">
+  <div class="flex h-full w-full overflow-hidden rounded-2xl bg-surface app-shell lg:rounded-[28px]">
 
     <!-- ═══ SIDEBAR ═══ -->
-    <aside class="no-scrollbar flex w-60 shrink-0 flex-col overflow-y-auto border-r border-slate-100 px-5 py-6">
+    <aside class="no-scrollbar flex w-60 shrink-0 flex-col overflow-y-auto border-r border-line px-5 py-6">
       <a href="#dashboard" class="flex items-center gap-2.5 px-1">
         <span class="grid h-9 w-9 place-items-center rounded-xl bg-brand-500 text-white shadow-lg shadow-brand-500/30">
           <svg class="h-4.5 w-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
@@ -55,22 +147,22 @@
       </a>
 
       <nav class="mt-8">
-        <p class="px-3 pb-2 text-[10px] font-bold tracking-[0.14em] text-slate-400">OVERVIEW</p>
+        <p class="px-3 pb-2 text-[10px] font-bold tracking-[0.14em] text-faint">OVERVIEW</p>
         <div class="space-y-1" data-nav-group="overview"></div>
       </nav>
 
       <nav class="mt-7">
-        <p class="px-3 pb-2 text-[10px] font-bold tracking-[0.14em] text-slate-400">ACTIVITY</p>
+        <p class="px-3 pb-2 text-[10px] font-bold tracking-[0.14em] text-faint">ACTIVITY</p>
         <div class="space-y-1" data-nav-group="activity"></div>
       </nav>
 
       <div class="mt-7">
-        <p class="px-3 pb-2 text-[10px] font-bold tracking-[0.14em] text-slate-400">ACCOUNTS</p>
+        <p class="px-3 pb-2 text-[10px] font-bold tracking-[0.14em] text-faint">ACCOUNTS</p>
         <div class="space-y-0.5" id="nav-accounts"></div>
       </div>
 
       <div class="mt-auto space-y-1 pt-7">
-        <p class="px-3 pb-2 text-[10px] font-bold tracking-[0.14em] text-slate-400">SETTINGS</p>
+        <p class="px-3 pb-2 text-[10px] font-bold tracking-[0.14em] text-faint">SETTINGS</p>
         <div class="space-y-1" data-nav-group="settings"></div>
       </div>
     </aside>
@@ -78,27 +170,30 @@
     <!-- ═══ MAIN ═══ -->
     <div class="flex min-w-0 flex-1 flex-col bg-panel">
       <header class="flex shrink-0 items-center gap-3 px-4 py-4 sm:gap-5 sm:px-6 lg:px-7 lg:py-5">
-        <label class="flex h-11 flex-1 items-center gap-3 rounded-full bg-white px-5 shadow-sm ring-1 ring-slate-100">
-          <svg class="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <label class="flex h-11 flex-1 items-center gap-3 rounded-full bg-surface px-5 shadow-sm ring-1 ring-line">
+          <svg class="h-4 w-4 shrink-0 text-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="10.5" cy="10.5" r="6.5"></circle><path d="M15.5 15.5L21 21"></path>
           </svg>
           <input id="search-input" type="text" placeholder="Search environment, person, ticket…"
-                 class="w-full bg-transparent text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none" />
+                 class="w-full bg-transparent text-sm text-ink-2 placeholder:text-faint focus:outline-none" />
         </label>
 
-        <div id="sync-indicator" class="hidden max-w-[160px] shrink-0 items-center gap-2 text-xs font-medium text-slate-500 md:flex"></div>
+        <div id="sync-indicator" class="hidden max-w-[160px] shrink-0 items-center gap-2 text-xs font-medium text-muted md:flex"></div>
 
         <button data-action="sync-jira" title="Sync Jira now"
-                class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white text-slate-500 shadow-sm ring-1 ring-slate-100 transition hover:text-brand-600">
+                class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-surface text-muted shadow-sm ring-1 ring-line transition hover:text-brand-fg">
           <svg class="h-4.5 w-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
             <path d="M20 11a8 8 0 10-2.3 5.6"></path><path d="M20 4.5V11h-6.5"></path>
           </svg>
         </button>
 
-        <div class="h-8 w-px shrink-0 bg-slate-200"></div>
+        <button id="theme-toggle" data-action="toggle-theme"
+                class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-surface text-muted shadow-sm ring-1 ring-line transition hover:text-brand-fg"></button>
+
+        <div class="h-8 w-px shrink-0 bg-line-2"></div>
 
         <a href="#settings" class="flex shrink-0 items-center gap-3">
-          <span class="grid h-10 w-10 place-items-center rounded-full bg-brand-100 text-sm font-bold text-brand-600">RM</span>
+          <span class="grid h-10 w-10 place-items-center rounded-full bg-brand-100 text-sm font-bold text-brand-fg">RM</span>
           <span class="hidden text-sm font-semibold lg:inline">Rome M.</span>
         </a>
       </header>
@@ -123,6 +218,7 @@
 <script src="js/ui/html.js"></script>
 <script src="js/ui/router.js"></script>
 <script src="js/ui/actions.js"></script>
+<script src="js/ui/theme.js"></script>
 <script src="js/ui/modals.js"></script>
 <script src="js/ui/shell.js"></script>
 <script src="js/ui/env-detail.js"></script>
