@@ -890,6 +890,23 @@ button.claim-ticket:hover { text-decoration: underline; }
 .config-item-main { font-size: 13px; }
 .config-item-main strong { display: block; font-weight: 500; }
 .config-item-main span { color: var(--muted-2); font-size: 12px; }
+.config-item-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+.config-list li.config-item-editing { display: block; }
+.config-edit-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.config-edit-fields { display: flex; flex: 1; min-width: 220px; gap: 8px; flex-wrap: wrap; }
+.config-edit-fields input, .config-edit-fields select {
+  flex: 1;
+  min-width: 120px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--surface);
+}
+.config-edit-actions { display: flex; gap: 6px; }
+.config-edit-error { width: 100%; margin: 0; font-size: 12px; color: var(--danger); }
+.config-edit-hint { width: 100%; margin: 0; font-size: 12px; color: var(--muted-2); }
 
 /* ---------- Responsive ---------- */
 
