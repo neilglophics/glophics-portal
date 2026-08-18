@@ -619,6 +619,13 @@ const server = http.createServer((req, res) => {
     handleJiraComment(req, res);
     return;
   }
+  if (req.url === "/api/health/check-now" && req.method === "POST") {
+    runHealthChecks()
+      .then(() => sendJson(res, 200, { ok: true }))
+      .catch(() => sendJson(res, 200, { ok: false, error: "Health check failed." }));
+    return;
+  }
+
   if (req.url === "/api/jira/sync-now" && req.method === "POST") {
     runJiraSync(true).then((result) => sendJson(res, 200, result)).catch(() => sendJson(res, 200, { ok: false, reason: "error" }));
     return;

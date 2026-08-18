@@ -1,39 +1,50 @@
 /**
- * Boot sequence only. Every component owns its own rendering and event
- * wiring (see js/components/*.js) — this file just starts State, tells
- * each component to render once and bind its events, and re-runs the full
- * render whenever State says something changed.
+ * Boot. Everything else is either the data layer (State/Storage/data.js) or
+ * the UI layer (js/ui/*). This file only wires the two together:
+ *
+ *   State change  → Router.render()      repaint the active page + shell
+ *   sync status   → Shell.renderSyncStatus()
+ *   hash change   → Router.render()      handled inside Router.start()
+ *
+ * Load order matters and is fixed in index.html: data layer, then tokens →
+ * model → html → router → pages → shell/actions/modals, then this.
  */
 
 (() => {
-  function renderAll() {
-    KpiRow.render();
-    SyncBar.render();
-    Toolbar.renderFilterOptions();
-    EnvTable.render();
-    EnvBoard.render();
-    SettingsConfig.render();
-    SettingsRules.render();
-    SettingsJira.render();
-  }
-
   async function init() {
     await State.init();
-    State.subscribe(renderAll);
-    State.subscribeStatus(Topbar.renderSyncStatus);
-    renderAll();
-    Topbar.renderSyncStatus(State.getSyncStatus());
 
-    Topbar.bindEvents();
-    Toolbar.bindEvents();
-    SyncBar.bindEvents();
-    EnvTable.bindEvents();
-    EnvBoard.bindEvents();
-    AssignModal.bindEvents();
-    ConfirmModal.bindEvents();
-    SettingsJira.bindEvents();
-    SettingsRules.bindEvents();
-    SettingsConfig.bindEvents();
+    // Any change to app data — local edit or an update pushed from another
+    // viewer over SSE — repaints whatever page is open.
+    State.subscribe(() => Router.render());
+    State.subscribeStatus(() => Shell.renderSyncStatus());
+
+    Actions.bind(document.getElementById("app"));
+    Modals.bind();
+    bindSearch();
+
+    Router.start();
+
+    // "Frees in 40m" goes stale on its own, so the open page refreshes on a
+    // slow tick even when nothing changed. Skipped while a dialog is open so
+    // a repaint never yanks a half-filled form away.
+    setInterval(() => {
+      if (!Modals.isOpen()) Router.render();
+    }, 30000);
+  }
+
+  function bindSearch() {
+    const input = document.getElementById("search-input");
+    if (!input) return;
+    let timer = null;
+    input.addEventListener("input", (e) => {
+      clearTimeout(timer);
+      const value = e.target.value;
+      timer = setTimeout(() => {
+        State.setFilter("search", value);
+        if (Router.currentId() !== "environments" && value.trim()) Router.go("environments");
+      }, 200);
+    });
   }
 
   document.addEventListener("DOMContentLoaded", init);
