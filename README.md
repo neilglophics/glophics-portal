@@ -19,12 +19,47 @@ node server.js
 
 State lives in `shared-state.json` beside `server.js` and is pushed to every
 open tab over Server-Sent Events, so a booking appears live for everyone
-pointed at the same server. Opening `index.html` directly as a file also
-works — it falls back to per-browser `localStorage` with no sync.
+pointed at the same server. The server is now required: sign-in and every
+data route go through it, so opening `index.html` as a file only ever
+reaches the sign-in screen. (`localStorage` still caches the board so a
+server that drops mid-session does not blank the page.)
 
 For deploying, see [DEPLOY.md](DEPLOY.md). Short version: it needs a host
 that runs a persistent process (Render, Railway, Fly, a VPS), not a
 serverless one.
+
+## Signing in
+
+Everything behind the sign-in screen needs an account. The first time you
+run `node server.js` it creates one super admin and prints the password:
+
+```
+  ┌─ First run: a super admin account was created ─────────
+  │  username: admin
+  │  password: XpcVNoqWQ14-
+```
+
+That password is generated once and only the hash is kept, so save it then
+— or set `ADMIN_USERNAME` / `ADMIN_PASSWORD` before the first run and pick
+it yourself. Sign in, then hand out accounts under **Users**: a display
+name, a username, a password, and one role.
+
+| Role | Can |
+| --- | --- |
+| Super admin | Everything, plus creating credentials and handing out roles |
+| Admin | Everything except managing who can sign in |
+| Member | Claim and free environments, write notes |
+| Viewer | Read the board, change nothing |
+
+Sessions are a week long. Signing out, changing a password, changing
+someone's role, or deactivating them ends every session that person has —
+an open tab loses the access it had rather than keeping it until reload.
+
+Credentials live in `auth.json` beside `server.js` (gitignored, scrypt
+hashes, never part of the shared state and never pushed over SSE). The
+cookie is `HttpOnly` and `SameSite=Lax`, and deliberately not `Secure`,
+since this server speaks plain http on a LAN — add that flag if you put it
+behind TLS.
 
 ## Connecting Jira
 
@@ -62,9 +97,10 @@ data layer knows nothing about the UI.**
 ```
 index.html          shell markup + script order
 js/
-  data.js           seed data, migrations, ticket→environment matching
+  data.js           seed data, migrations, matching, the role list
   storage.js        persistence: server + SSE, localStorage fallback
   state.js          the single source of truth; every read and write
+  auth.js           who is signed in, and what they may do
   format.js         dates, durations, escaping
   ui/
     tokens.js       every colour, label and icon
@@ -72,10 +108,12 @@ js/
     html.js         presentational primitives (tables, chips, buttons…)
     router.js       hash routing + input-preserving re-render
     actions.js      one delegated listener, `data-action` dispatch
-    modals.js       assign / confirm / note dialogs
-    shell.js        sidebar, account list, sync indicator
+    modals.js       assign / confirm / note / credential dialogs
+    login-screen.js the sign-in gate, shown before the shell exists
+    shell.js        sidebar, account list, sync indicator, account menu
     page-*.js       one file per page
-  app.js            boot: wires State changes to Router.render()
+  app.js            boot: the sign-in gate, then State changes → render
+auth-store.js       credentials and sessions (auth.json), server-side only
 server.js           static files, shared state, SSE, Jira + health polling
 ```
 
@@ -117,6 +155,12 @@ someone is typing.
 - **Claims are sticky across status changes.** Only a *releasing* status
   frees a claim; every other status leaves it alone. That rule lives in
   `runJiraSync()` in `server.js` — the client only reads the result.
+- **Roles are enforced twice, from one list.** `AUTH_ROLES` in `js/data.js` is
+  read by the browser (to hide what you can't use) and by `server.js` (to refuse
+  it), so the two cannot drift. Hiding is courtesy; the server is the
+  boundary. A member's state write is accepted but stripped back to
+  tickets and notes rather than rejected — their copy of the config can be
+  a beat stale through no fault of theirs.
 - **Tailwind comes from a CDN.** The v4 browser build compiles in the page,
   including classes injected after load. That keeps the no-build-step
   property, but it is not a production setup — see the notes in

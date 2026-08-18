@@ -14,6 +14,66 @@ const Actions = (() => {
   function on(name, fn) { clicks[name] = fn; }
   function onChange(name, fn) { changes[name] = fn; }
 
+  /**
+   * The capability an action needs before it runs. Because every action in
+   * the app passes through the one listener below, this is the whole list —
+   * one place to read rather than a check scattered through seven pages.
+   *
+   * It is a courtesy, not the boundary: the same capability is checked
+   * again in server.js on whichever route the action ends up calling, with
+   * the same roleCan() from data.js. An action missing from this map is a
+   * UI slip that offers someone a button they will be refused — never a
+   * way past the server.
+   */
+  const REQUIRES = {
+    // claiming and freeing environments
+    "assign":              "claim",
+    "edit-note":           "claim",
+    "force-free-server":   "claim",
+    "force-free-ticket":   "claim",
+
+    // configuration: settings, the directories, Jira credentials
+    "set-repo-url":        "configure",
+    "goto-settings":       "configure",
+    "dir-add":             "configure",
+    "dir-edit":            "configure",
+    "dir-save":            "configure",
+    "dir-remove":          "configure",
+    "jira-enabled":        "configure",
+    "jira-save":           "configure",
+    "jira-test":           "configure",
+    "toggle-assign-whole": "configure",
+    "jira-option":         "configure",
+    "poll-interval":       "configure",
+    "booking-length":      "configure",
+    "on-expiry":           "configure",
+    "status-rule":         "configure",
+
+    // sign-in credentials
+    "auth-user-add":       "manage-users",
+    "auth-user-edit":      "manage-users",
+    "auth-user-password":  "manage-users",
+    "auth-user-remove":    "manage-users"
+  };
+
+  const CAPABILITY_REASON = {
+    "claim": "Claiming and freeing environments needs the member role or higher.",
+    "configure": "Changing settings, accounts and environments needs the admin role or higher.",
+    "manage-users": "Only a super admin can manage sign-in credentials."
+  };
+
+  // True when this action may run. When it may not, it says why — a button
+  // that silently does nothing reads as broken.
+  function permitted(name) {
+    const capability = REQUIRES[name];
+    if (!capability || Auth.can(capability)) return true;
+    Modals.info({
+      title: "You do not have access to that",
+      message: CAPABILITY_REASON[capability] + " You are signed in as " + Auth.roleName() + "."
+    });
+    return false;
+  }
+
   function bind(root) {
     root.addEventListener("click", (e) => {
       const el = e.target.closest("[data-action]");
@@ -21,6 +81,7 @@ const Actions = (() => {
       const fn = clicks[el.dataset.action];
       if (!fn) return;
       if (el.tagName !== "A" || el.getAttribute("href") === "#") e.preventDefault();
+      if (!permitted(el.dataset.action)) return;
       fn(el, e);
     });
 
@@ -28,7 +89,8 @@ const Actions = (() => {
       const el = e.target.closest("[data-change]");
       if (!el) return;
       const fn = changes[el.dataset.change];
-      if (fn) fn(el, e);
+      if (!fn || !permitted(el.dataset.change)) return;
+      fn(el, e);
     });
   }
 
@@ -111,5 +173,5 @@ const Actions = (() => {
   onChange("filter-account", (el) => State.setFilter("accountId", el.value));
   onChange("filter-user", (el) => State.setFilter("userId", el.value));
 
-  return { on, onChange, bind, withPending };
+  return { on, onChange, bind, withPending, REQUIRES };
 })();

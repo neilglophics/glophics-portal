@@ -275,19 +275,32 @@ const State = (() => {
 
   // ---------- config CRUD (settings) ----------
 
+  // Validated on the same rules as updateServer, so the add form and the
+  // edit form reject exactly the same input.
   function addServer({ name, accountId, repoUrls }) {
-    const repoNames = getRepositoriesForAccount(accountId);
+    const nextName = (name || "").trim();
+    const account = getAccount(accountId);
+
+    const errors = [];
+    if (!nextName) errors.push("Environment name is required.");
+    if (!account) errors.push("Pick an account for this environment.");
+    if (account && appData.servers.some((s) => s.accountId === account.id && s.name.trim().toLowerCase() === nextName.toLowerCase())) {
+      errors.push(`${account.displayName} already has an environment called "${nextName}".`);
+    }
+    if (errors.length) return { ok: false, errors };
+
     const repos = {};
-    repoNames.forEach((repoName) => {
-      const url = (repoUrls && repoUrls[repoName]) || "";
+    getRepositoriesForAccount(account.id).forEach((repoName) => {
+      const url = ((repoUrls && repoUrls[repoName]) || "").trim();
       repos[repoName] = { url, health: url ? "checking" : "unconfigured" };
     });
-    appData.servers.push({ id: uid("server"), name, accountId, repos });
+    appData.servers.push({ id: uid("server"), name: nextName, accountId: account.id, repos });
     notify();
     // A ticket for this exact account+environment may already be sitting in
     // Jira — nudge an immediate sync so it populates right away instead of
     // waiting for the next poll tick.
     if (Storage.nudgeJiraSync) Storage.nudgeJiraSync();
+    return { ok: true };
   }
 
   function removeServer(serverId) {
@@ -371,9 +384,24 @@ const State = (() => {
     return window.matchUserIdsByLabels(labels, appData.users);
   }
 
+  // Same rules as updateUser below — a new display name is what the next
+  // sync matches Jira's assignee labels against, so it has to be unique.
   function addUser({ name, role }) {
-    appData.users.push({ id: uid("user"), name, role });
+    const nextName = (name || "").trim();
+    const nextRole = (role || "").trim();
+
+    const errors = [];
+    if (!nextName) errors.push("Display name is required.");
+    if (!nextRole) errors.push("Role is required.");
+    if (appData.users.some((u) => u.name.trim().toLowerCase() === nextName.toLowerCase())) {
+      errors.push(`Another user is already called "${nextName}".`);
+    }
+    if (errors.length) return { ok: false, errors };
+
+    appData.users.push({ id: uid("user"), name: nextName, role: nextRole });
     notify();
+    if (Storage.nudgeJiraSync) Storage.nudgeJiraSync();
+    return { ok: true };
   }
 
   // A user's display name is what Jira's "Ticket Assignee" labels are
@@ -407,9 +435,31 @@ const State = (() => {
     notify();
   }
 
+  // The id is a slug of the display name unless one is passed explicitly,
+  // so callers only have to collect the name people actually type.
   function addAccount({ id, displayName, repositories }) {
-    appData.accounts.push({ id, displayName, repositories });
+    const nextName = (displayName || "").trim();
+    const nextId = (id || nextName).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+    const nextRepos = [...new Set((repositories || []).map((r) => r.trim()).filter(Boolean))];
+
+    const errors = [];
+    if (!nextName) errors.push("Display name is required.");
+    // The id is derived, so a blank one only ever means the name had no
+    // letters or digits to slug — say that instead of naming a hidden field.
+    if (nextName && !nextId) errors.push("Display name needs at least one letter or number.");
+    if (!nextRepos.length) errors.push("At least one repository is required.");
+    // A duplicate name almost always slugs to a duplicate id too — report
+    // the one the person actually typed, not both.
+    if (nextName && appData.accounts.some((a) => a.displayName.trim().toLowerCase() === nextName.toLowerCase())) {
+      errors.push(`Another account is already called "${nextName}".`);
+    } else if (nextId && appData.accounts.some((a) => a.id === nextId)) {
+      errors.push(`Account id "${nextId}" is already taken.`);
+    }
+    if (errors.length) return { ok: false, errors };
+
+    appData.accounts.push({ id: nextId, displayName: nextName, repositories: nextRepos });
     notify();
+    return { ok: true, id: nextId };
   }
 
   // Editing an account ripples outward: its displayName is what Jira

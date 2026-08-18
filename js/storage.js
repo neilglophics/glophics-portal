@@ -13,6 +13,12 @@
 const Storage = (() => {
   const LOCAL_KEY = "serverManager.appData.v1";
 
+  // A role without the `claim` capability may look but not touch. Their
+  // browser still keeps a local cache — filters and the like run through
+  // the same notify() — it just never pushes any of it back.
+  let readOnly = false;
+  function setReadOnly(value) { readOnly = !!value; }
+
   function cacheLocally(appData) {
     try {
       localStorage.setItem(LOCAL_KEY, JSON.stringify(appData));
@@ -41,7 +47,11 @@ const Storage = (() => {
 
   async function load() {
     try {
-      const res = await fetch("/api/state");
+      const res = await fetch("/api/state", { credentials: "same-origin" });
+      // The session ended between the auth check and this call. Falling
+      // back to the local cache would quietly show a stale board as if it
+      // were live; a reload lands on the sign-in screen instead.
+      if (res.status === 401) { location.reload(); return new Promise(() => {}); }
       if (!res.ok) throw new Error(`bad response: ${res.status}`);
       const data = await res.json();
       cacheLocally(data);
@@ -53,10 +63,14 @@ const Storage = (() => {
 
   function save(appData) {
     cacheLocally(appData);
+    if (readOnly) return;
     fetch("/api/state", {
       method: "POST",
+      credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(appData)
+    }).then((res) => {
+      if (res.status === 401) location.reload();
     }).catch(() => {
       // no server running — localStorage cache above is already the source of truth
     });
@@ -99,5 +113,5 @@ const Storage = (() => {
     };
   }
 
-  return { load, save, subscribeRemote, nudgeJiraSync };
+  return { load, save, setReadOnly, subscribeRemote, nudgeJiraSync };
 })();

@@ -39,6 +39,19 @@ const Tokens = (() => {
     return JIRA_CHIPS[String(status || "").trim().toLowerCase()] || "bg-subtle-2 text-muted";
   }
 
+  // Access roles, most privileged first — the tone ranks with the reach,
+  // so a super admin never reads the same as a viewer at a glance.
+  const ROLE_CHIPS = {
+    superadmin: "bg-alt-soft text-alt",
+    admin:      "bg-brand-soft text-brand-fg",
+    member:     "bg-info-soft text-info",
+    viewer:     "bg-neutral-soft text-neutral"
+  };
+
+  function roleChip(roleId) {
+    return ROLE_CHIPS[roleId] || "bg-subtle-2 text-muted";
+  }
+
   // Avatar colour is derived from the user id so a person keeps the same
   // colour everywhere, across reloads, without storing anything.
   const AVATAR_TONES = [
@@ -79,12 +92,14 @@ const Tokens = (() => {
     clock:    '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
     list:     '<path d="M4 6h16M4 12h16M4 18h10"/>',
     alert:    '<path d="M12 8v5M12 16.5v.01"/><circle cx="12" cy="12" r="8.5"/>',
+    users:    '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0113 0"/><path d="M16 5.2a3.5 3.5 0 010 5.6M18 14.3a6.5 6.5 0 013.5 5.7"/>',
     gear:     '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M21.5 12h-3M5.5 12h-3M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1M18.7 18.7l-2.1-2.1M7.4 7.4L5.3 5.3"/>',
     check:    '<path d="M4 12.5l5 5L20 6.5"/>',
     plug:     '<path d="M9 3v6M15 3v6M6 9h12v3a6 6 0 01-12 0z"/><path d="M12 18v3"/>',
     refresh:  '<path d="M20 11a8 8 0 10-2.3 5.6"/><path d="M20 4.5V11h-6.5"/>',
     search:   '<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/>',
     bell:     '<path d="M18 8.5a6 6 0 10-12 0c0 5-2 6.5-2 6.5h16s-2-1.5-2-6.5z"/><path d="M10.5 19a2 2 0 003 0"/>',
+    key:      '<circle cx="8" cy="15" r="4"/><path d="M10.9 12.1L20 3M17 6l2.5 2.5M14.5 8.5L17 11"/>',
     logout:   '<path d="M15 17l5-5-5-5M20 12H9M12 20H6a2 2 0 01-2-2V6a2 2 0 012-2h6"/>',
     external: '<path d="M7 17L17 7M9 7h8v8"/>',
     note:     '<path d="M4 4.5h16v11l-4 4H4z"/><path d="M20 15.5h-4v4"/>',
@@ -94,5 +109,5 @@ const Tokens = (() => {
     plus:     '<path d="M12 5v14M5 12h14"/>'
   };
 
-  return { ENV_STATE, HEALTH, jiraChip, avatarTone, shortRepo, initials, ICONS };
+  return { ENV_STATE, HEALTH, jiraChip, roleChip, avatarTone, shortRepo, initials, ICONS };
 })();

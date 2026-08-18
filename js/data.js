@@ -359,10 +359,65 @@ function findServerForTicket(ticketData, accounts, servers) {
   return { server };
 }
 
+// ---------- Access roles (shared by the browser and server.js) ----------
+// A role is a named set of capabilities. Both sides read this same list, so
+// what the UI hides and what the server refuses can never drift apart —
+// the UI hides on `roleCan()`, and every API route checks the same call.
+//
+//   view          read the board
+//   claim         assign, force free, edit notes  (writes to tickets/notes)
+//   configure     settings, Jira credentials, the directories
+//   manage-users  create sign-in credentials and hand out roles
+//
+// Ordered most-privileged first; the pickers render them in this order.
+const AUTH_ROLES = [
+  {
+    id: "superadmin", label: "Super admin",
+    description: "Full access, plus creating sign-in credentials and roles.",
+    capabilities: ["view", "claim", "configure", "manage-users"]
+  },
+  {
+    id: "admin", label: "Admin",
+    description: "Everything except managing who can sign in.",
+    capabilities: ["view", "claim", "configure"]
+  },
+  {
+    id: "member", label: "Member",
+    description: "Can claim and free environments, and write notes.",
+    capabilities: ["view", "claim"]
+  },
+  {
+    id: "viewer", label: "Viewer",
+    description: "Read-only. Sees the board, changes nothing.",
+    capabilities: ["view"]
+  }
+];
+
+function getRole(roleId) {
+  return AUTH_ROLES.find((r) => r.id === roleId) || null;
+}
+
+// An unknown role grants nothing rather than defaulting to something
+// permissive — a typo in a stored role must fail closed.
+function roleCan(roleId, capability) {
+  const role = getRole(roleId);
+  return !!role && role.capabilities.includes(capability);
+}
+
+function roleLabel(roleId) {
+  const role = getRole(roleId);
+  return role ? role.label : roleId || "Unknown";
+}
+
+function isValidRole(roleId) {
+  return !!getRole(roleId);
+}
+
 // Lets server.js reuse the same seed/migration/matching logic via require() — no-op in the browser.
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     buildDefaultAppData, migrateAppData, JIRA_STATUS_VOCABULARY, JIRA_TERMINAL_STATUSES,
-    matchRepositoriesToKeys, matchUserIdsByLabels, findServerForTicket
+    matchRepositoriesToKeys, matchUserIdsByLabels, findServerForTicket,
+    AUTH_ROLES, getRole, roleCan, roleLabel, isValidRole
   };
 }

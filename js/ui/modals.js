@@ -3,8 +3,8 @@
  * and closes the same way (backdrop, ✕, Escape), so nothing else in the UI
  * has to know a dialog is open.
  *
- * Validation is not duplicated here — the assign form hands its payload to
- * State.addClaim() and renders whatever errors come back.
+ * Validation is not duplicated here — a form hands its payload to the
+ * matching State.* mutator and renders whatever errors come back.
  */
 
 const Modals = (() => {
@@ -12,7 +12,7 @@ const Modals = (() => {
 
   function host() { return document.getElementById("modal-host"); }
 
-  function open({ title, subtitle, body, submitLabel, variant = "dark", onSubmit, wide }) {
+  function open({ title, subtitle, body, submitLabel, variant = "dark", onSubmit, onReady, wide }) {
     submitHandler = onSubmit || null;
     host().innerHTML = `
       <div class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 backdrop-blur-sm sm:p-8"
@@ -41,6 +41,8 @@ const Modals = (() => {
           </form>
         </div>
       </div>`;
+    // Bodies whose fields depend on one another wire themselves up here.
+    if (onReady) onReady(host());
     const first = host().querySelector("input:not([type=checkbox]), textarea, select");
     if (first) first.focus();
   }
@@ -66,6 +68,10 @@ const Modals = (() => {
       if (el.type === "checkbox") {
         if (!out[el.name]) out[el.name] = [];
         if (el.checked) out[el.name].push(el.value);
+      } else if (el.type === "radio") {
+        // Only the chosen one counts; every radio in the group would
+        // otherwise overwrite it in turn, leaving whichever came last.
+        if (el.checked) out[el.name] = el.value;
       } else {
         out[el.name] = el.value;
       }
@@ -211,6 +217,287 @@ const Modals = (() => {
     });
   }
 
+  // ---------- add a directory entry (Settings) ----------
+
+  // Each account carries its own repository list, so the URL fields on the
+  // environment form are rebuilt whenever the account picker changes.
+  function repoUrlFields(repoNames) {
+    if (!repoNames.length) {
+      return `<p class="rounded-xl bg-subtle px-3.5 py-2.5 text-xs text-faint">This account has no repositories yet.</p>`;
+    }
+    return `<div class="grid gap-3 sm:grid-cols-2">${repoNames.map((name) =>
+      H.field(`${name.charAt(0).toUpperCase() + name.slice(1)} URL`, {
+        data: { name: `url:${name}` }, placeholder: "https://…"
+      })).join("")}</div>`;
+  }
+
+  function collectRepoUrls(values) {
+    const urls = {};
+    Object.keys(values).forEach((key) => {
+      if (key.startsWith("url:")) urls[key.slice(4)] = values[key];
+    });
+    return urls;
+  }
+
+  function addAccount() {
+    open({
+      title: "Add account",
+      subtitle: "A client or brand. Its repositories become the slots every environment under it carries.",
+      submitLabel: "Add account",
+      body: `
+        <div class="space-y-4">
+          ${H.field("Display name", { data: { name: "displayName" }, placeholder: "e.g. Northgate" })}
+          ${H.field("Repositories", { data: { name: "repositories" }, value: "storefront, backend, admin" })}
+          <p class="text-[11px] leading-relaxed text-faint">
+            Comma separated. Jira matches tickets on the display name, so use the one your team writes on the board.</p>
+        </div>`,
+      onSubmit: () => {
+        const v = formValues();
+        const result = State.addAccount({
+          displayName: v.displayName,
+          repositories: (v.repositories || "").split(",")
+        });
+        if (!result.ok) { showError(result.errors); return; }
+        close();
+      }
+    });
+  }
+
+  function addUser() {
+    open({
+      title: "Add user",
+      subtitle: "Their display name is what Jira's assignee labels are matched against.",
+      submitLabel: "Add user",
+      body: `<div class="grid gap-3 sm:grid-cols-2">
+        ${H.field("Display name", { data: { name: "name" }, placeholder: "e.g. [BE]_Sem" })}
+        ${H.field("Role", { data: { name: "role" }, value: "Team", placeholder: "e.g. Backend" })}
+      </div>`,
+      onSubmit: () => {
+        const v = formValues();
+        const result = State.addUser({ name: v.name, role: v.role });
+        if (!result.ok) { showError(result.errors); return; }
+        close();
+      }
+    });
+  }
+
+  function addServer() {
+    const accounts = State.getAccounts();
+
+    // An environment cannot exist without an account to hang it on, so say
+    // so outright rather than opening a form that can only fail.
+    if (!accounts.length) {
+      open({
+        title: "Add environment",
+        submitLabel: "Got it",
+        body: `<p class="text-sm leading-relaxed text-body">
+          Add an account first — every environment belongs to one, and the account's repository list
+          decides which slots the environment carries.</p>`,
+        onSubmit: close
+      });
+      return;
+    }
+
+    open({
+      title: "Add environment",
+      subtitle: "Its name is the branch Jira matches on.",
+      submitLabel: "Add environment",
+      wide: true,
+      body: `
+        <div class="space-y-5">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="block">
+              <span class="text-[11px] font-semibold text-muted">Account</span>
+              <select name="accountId" data-account-picker
+                class="mt-1.5 w-full rounded-xl bg-subtle px-3.5 py-2.5 text-sm text-ink-2 focus:bg-surface focus:outline-none focus:ring-2 focus:ring-brand-soft">
+                ${accounts.map((a) => `<option value="${H.esc(a.id)}">${H.esc(a.displayName)}</option>`).join("")}
+              </select>
+            </label>
+            ${H.field("Environment name", { data: { name: "name" }, placeholder: "e.g. hotfix-4" })}
+          </div>
+          <div>
+            <p class="pb-2 text-[11px] font-semibold text-muted">
+              Repository URLs <span class="font-medium text-faint">— optional, health checks start once a URL is set</span></p>
+            <div data-repo-urls>${repoUrlFields(State.getRepositoriesForAccount(accounts[0].id))}</div>
+          </div>
+        </div>`,
+      onReady: (root) => {
+        const picker = root.querySelector("[data-account-picker]");
+        const slot = root.querySelector("[data-repo-urls]");
+        picker.addEventListener("change", () => {
+          slot.innerHTML = repoUrlFields(State.getRepositoriesForAccount(picker.value));
+        });
+      },
+      onSubmit: () => {
+        const v = formValues();
+        const result = State.addServer({ name: v.name, accountId: v.accountId, repoUrls: collectRepoUrls(v) });
+        if (!result.ok) { showError(result.errors); return; }
+        close();
+      }
+    });
+  }
+
+  // The three directory tabs share one Add button; this picks its form.
+  function directoryAdd(tab) {
+    if (tab === "users") addUser();
+    else if (tab === "servers") addServer();
+    else addAccount();
+  }
+
+  // ---------- sign-in credentials (super admin) ----------
+
+  // A role is picked from cards rather than a <select> so what each one
+  // actually allows is on screen at the moment it is handed out.
+  function roleChooser(selectedId) {
+    return `<div class="space-y-2">${Auth.roles().map((role) => `
+      <label class="flex cursor-pointer items-start gap-3 rounded-xl bg-subtle p-3 transition hover:bg-subtle-2">
+        <input type="radio" name="role" value="${H.esc(role.id)}"
+               ${role.id === selectedId ? "checked" : ""} class="mt-0.5 h-4 w-4 accent-brand-500" />
+        <span class="min-w-0">
+          <span class="block text-sm font-semibold text-ink-2">${H.esc(role.label)}</span>
+          <span class="block text-[11px] leading-relaxed text-faint">${H.esc(role.description)}</span>
+        </span>
+      </label>`).join("")}</div>`;
+  }
+
+  function passwordPair(labels) {
+    return `<div class="grid gap-3 sm:grid-cols-2">
+      ${H.field(labels[0], { type: "password", data: { name: "password", autocomplete: "new-password" }, placeholder: "At least 8 characters" })}
+      ${H.field(labels[1], { type: "password", data: { name: "confirm", autocomplete: "new-password" }, placeholder: "Type it again" })}
+    </div>`;
+  }
+
+  // Both password forms check the pair match here; everything else about a
+  // password (length, whether the current one is right) is the server's
+  // call, and its message is what gets shown.
+  function passwordsMatch(values) {
+    if (!values.password) { showError("Enter a password."); return false; }
+    if (values.password !== values.confirm) { showError("Those two passwords do not match."); return false; }
+    return true;
+  }
+
+  function authUserAdd(onDone) {
+    open({
+      title: "Add user",
+      subtitle: "Creates the credentials they sign in with, and the role that decides what they can do.",
+      submitLabel: "Create user",
+      wide: true,
+      body: `
+        <div class="space-y-5">
+          <div class="grid gap-3 sm:grid-cols-2">
+            ${H.field("Display name", { data: { name: "displayName" }, placeholder: "e.g. Jerome Cruz" })}
+            ${H.field("Username", { data: { name: "username", autocapitalize: "none", spellcheck: "false" }, placeholder: "e.g. jerome" })}
+          </div>
+          ${passwordPair(["Password", "Confirm password"])}
+          <div>
+            <p class="pb-2 text-[11px] font-semibold text-muted">Role</p>
+            ${roleChooser("member")}
+          </div>
+        </div>`,
+      onSubmit: async () => {
+        const v = formValues();
+        if (!passwordsMatch(v)) return;
+        const result = await Auth.createUser({
+          displayName: v.displayName, username: v.username,
+          role: v.role, password: v.password
+        });
+        if (!result.ok) { showError(result.errors || result.error || "Couldn't create that user."); return; }
+        close();
+        if (onDone) onDone();
+      }
+    });
+  }
+
+  function authUserEdit(user, onDone) {
+    open({
+      title: "Edit user",
+      subtitle: `@${user.username}`,
+      submitLabel: "Save changes",
+      wide: true,
+      body: `
+        <div class="space-y-5">
+          <div class="grid gap-3 sm:grid-cols-2">
+            ${H.field("Display name", { data: { name: "displayName" }, value: user.displayName })}
+            ${H.field("Username", { data: { name: "username", autocapitalize: "none", spellcheck: "false" }, value: user.username })}
+          </div>
+          <div>
+            <p class="pb-2 text-[11px] font-semibold text-muted">Role</p>
+            ${roleChooser(user.role)}
+          </div>
+          <div class="rounded-xl bg-subtle p-3">
+            ${H.checkbox("Account is active", "Turning this off signs them out and blocks them from signing back in.",
+              user.active !== false, { name: "active", value: "on" })}
+          </div>
+        </div>`,
+      onSubmit: async () => {
+        const v = formValues();
+        const result = await Auth.updateUser(user.id, {
+          displayName: v.displayName, username: v.username,
+          role: v.role, active: !!(v.active && v.active.length)
+        });
+        if (!result.ok) { showError(result.errors || result.error || "Couldn't save that user."); return; }
+        close();
+        if (onDone) onDone();
+      }
+    });
+  }
+
+  function authUserPassword(user, onDone) {
+    open({
+      title: "Reset password",
+      subtitle: `${user.displayName} · @${user.username}`,
+      submitLabel: "Set password",
+      body: `
+        <div class="space-y-4">
+          <p class="text-sm leading-relaxed text-body">
+            Sets a new password without needing the old one, and signs
+            ${H.esc(user.displayName)} out everywhere. Pass it on yourself — it is not shown again.
+          </p>
+          ${passwordPair(["New password", "Confirm password"])}
+        </div>`,
+      onSubmit: async () => {
+        const v = formValues();
+        if (!passwordsMatch(v)) return;
+        const result = await Auth.setPassword(user.id, v.password);
+        if (!result.ok) { showError(result.errors || result.error || "Couldn't set that password."); return; }
+        close();
+        if (onDone) onDone();
+      }
+    });
+  }
+
+  // Anyone changing their own password — the one credential action that
+  // isn't limited to a super admin.
+  function changeOwnPassword() {
+    open({
+      title: "Change password",
+      subtitle: `Signed in as @${Auth.user().username}`,
+      submitLabel: "Change password",
+      body: `
+        <div class="space-y-4">
+          ${H.field("Current password", { type: "password", data: { name: "currentPassword", autocomplete: "current-password" } })}
+          ${passwordPair(["New password", "Confirm new password"])}
+        </div>`,
+      onSubmit: async () => {
+        const v = formValues();
+        if (!passwordsMatch(v)) return;
+        const result = await Auth.changeOwnPassword(v.currentPassword, v.password);
+        if (!result.ok) { showError(result.errors || result.error || "Couldn't change your password."); return; }
+        close();
+      }
+    });
+  }
+
+  // A dead end with nothing to fill in — used when an action is refused.
+  function info({ title, message }) {
+    open({
+      title,
+      body: `<p class="text-sm leading-relaxed text-body">${H.esc(message)}</p>`,
+      submitLabel: "Got it",
+      onSubmit: close
+    });
+  }
+
   // ---------- wiring ----------
 
   function bind() {
@@ -227,5 +514,10 @@ const Modals = (() => {
     });
   }
 
-  return { open, close, isOpen, showError, confirm, assign, note, repoUrl, bind };
+  return {
+    open, close, isOpen, showError, confirm, info,
+    assign, note, repoUrl, directoryAdd,
+    authUserAdd, authUserEdit, authUserPassword, changeOwnPassword,
+    bind
+  };
 })();

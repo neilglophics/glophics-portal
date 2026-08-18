@@ -1,0 +1,25 @@
+{
+  "name": "server-manager",
+  "version": "1.0.0",
+  "description": "Tracks which QA/staging environments are free and which are held by a Jira ticket, so nobody has to ask in chat before deploying.",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/romemadeloo/server-management.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/romemadeloo/server-management/issues"
+  },
+  "homepage": "https://github.com/romemadeloo/server-management#readme",
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0"
+  }
+}

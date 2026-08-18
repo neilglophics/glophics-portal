@@ -2,8 +2,9 @@
  * Jira connection, the rules that claim and free a server, booking defaults,
  * and the three directories.
  *
- * Directory rows edit in place. All writes go through State.* — this file
- * never touches appData, and never persists anything itself.
+ * Directory rows edit in place; adding one opens a modal. All writes go
+ * through State.* — this file never touches appData, and never persists
+ * anything itself.
  */
 
 // Which directory tab is open, which row is being edited, and the last
@@ -108,36 +109,20 @@ Router.register("settings", (() => {
       </div>`;
   }
 
-  function addForm() {
-    if (ui.tab === "servers") {
-      return `<div class="mt-4 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-        <select data-add="accountId"
-          class="rounded-xl bg-subtle px-3 py-2.5 text-sm text-ink-2 focus:bg-surface focus:outline-none focus:ring-2 focus:ring-brand-soft">
-          ${State.getAccounts().map((a) => `<option value="${H.esc(a.id)}">${H.esc(a.displayName)}</option>`).join("")}
-        </select>
-        <input type="text" data-add="name" placeholder="Environment name e.g. hotfix-4"
-          class="rounded-xl bg-subtle px-3.5 py-2.5 text-sm placeholder:text-faintest focus:bg-surface focus:outline-none focus:ring-2 focus:ring-brand-soft" />
-        <button data-action="dir-add" class="rounded-xl bg-accent px-4 text-xs font-semibold text-on-accent transition hover:bg-accent-2">Add</button>
-      </div>`;
-    }
-    const placeholder = ui.tab === "users" ? "Display name e.g. [BE]_Sem" : "Account name e.g. Northgate";
-    return `<div class="mt-4 flex gap-2">
-      <input type="text" data-add="name" placeholder="${placeholder}"
-        class="flex-1 rounded-xl bg-subtle px-3.5 py-2.5 text-sm placeholder:text-faintest focus:bg-surface focus:outline-none focus:ring-2 focus:ring-brand-soft" />
-      <button data-action="dir-add" class="rounded-xl bg-accent px-4 text-xs font-semibold text-on-accent transition hover:bg-accent-2">Add</button>
-    </div>`;
-  }
+  const ADD_LABEL = { accounts: "Add account", users: "Add user", servers: "Add environment" };
 
   function directories() {
     const rows = directoryRows();
     return `
-      <div class="flex gap-1 rounded-xl bg-subtle-2 p-1">
-        ${TABS.map(([key, label]) => `
-          <button data-action="dir-tab" data-tab="${key}"
-            class="flex-1 rounded-lg px-3 py-1.5 text-xs transition ${
-              ui.tab === key ? "bg-surface font-semibold text-ink shadow-sm" : "font-medium text-muted hover:text-ink-2"}">${label}</button>`).join("")}
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="flex min-w-[220px] flex-1 gap-1 rounded-xl bg-subtle-2 p-1">
+          ${TABS.map(([key, label]) => `
+            <button data-action="dir-tab" data-tab="${key}"
+              class="flex-1 rounded-lg px-3 py-1.5 text-xs transition ${
+                ui.tab === key ? "bg-surface font-semibold text-ink shadow-sm" : "font-medium text-muted hover:text-ink-2"}">${label}</button>`).join("")}
+        </div>
+        ${H.btn(ADD_LABEL[ui.tab], { variant: "dark", size: "sm", data: { "data-action": "dir-add" } })}
       </div>
-      ${addForm()}
       <div class="mt-3 max-h-[420px] divide-y divide-line-soft overflow-y-auto no-scrollbar">
         ${rows.length ? rows.map(directoryRow).join("") : `<p class="py-6 text-center text-xs text-faint">Nothing here yet.</p>`}
       </div>`;
@@ -245,6 +230,14 @@ Router.register("settings", (() => {
     label: "Settings",
 
     render() {
+      // Reachable by typing the hash even with the nav entry hidden, so the
+      // page says no itself rather than painting controls that are refused.
+      if (!Auth.can("configure")) {
+        return H.page(
+          H.pageHead("Settings", "Jira connection, status rules and directories", "") +
+          H.empty("Your role can see the board but not change how it is set up. Ask an admin.")
+        );
+      }
       return H.page(`
         ${H.pageHead("Settings", "Jira connection, the rules that claim and free a server, and your directories", "")}
         <div class="grid grid-cols-1 items-start gap-5 xl:grid-cols-[1.15fr_1fr]">
@@ -255,7 +248,7 @@ Router.register("settings", (() => {
 
     // Credentials are server-side, so the first paint has no config yet.
     mount() {
-      if (jiraConfig || fetching) return;
+      if (jiraConfig || fetching || !Auth.can("configure")) return;
       fetching = true;
       fetch("/api/jira-config")
         .then((r) => r.json())
@@ -321,30 +314,12 @@ Router.register("settings", (() => {
     else setUi({ editing: null, error: null });
   });
 
+  // The form lives in a modal so every field an entry needs — an account's
+  // repositories, an environment's URLs — has room, and so a half-filled
+  // one is not wiped by the repaint another viewer's edit triggers.
   Actions.on("dir-add", () => {
-    const u = getUi();
-    const read = (name) => {
-      const node = document.querySelector(`[data-add="${name}"]`);
-      return node ? node.value.trim() : "";
-    };
-    const name = read("name");
-    if (!name) return;
-
-    if (u.tab === "users") {
-      State.addUser({ name, role: "Team" });
-    } else if (u.tab === "servers") {
-      const accountId = read("accountId") || (State.getAccounts()[0] || {}).id;
-      if (!accountId) { setUi({ error: "Add an account first." }); return; }
-      State.addServer({ name, accountId, repoUrls: {} });
-    } else {
-      const id = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-      if (State.getAccount(id)) { setUi({ error: `An account called "${name}" already exists.` }); return; }
-      State.addAccount({ id, displayName: name, repositories: ["storefront", "backend", "admin"] });
-    }
-    // Emptied before the repaint, or the router would helpfully restore it.
-    const node = document.querySelector('[data-add="name"]');
-    if (node) node.value = "";
-    setUi({ error: null });
+    Modals.directoryAdd(getUi().tab);
+    setUi({ editing: null, error: null });
   });
 
   // ---------- settings toggles ----------

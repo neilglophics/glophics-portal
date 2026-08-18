@@ -1,10 +1,16 @@
 /**
- * Boot. Everything else is either the data layer (State/Storage/data.js) or
- * the UI layer (js/ui/*). This file only wires the two together:
+ * Boot. Everything else is either the data layer (State/Storage/Auth/
+ * data.js) or the UI layer (js/ui/*). This file only wires the two
+ * together:
  *
+ *   sign in       → LoginScreen, then the shell
  *   State change  → Router.render()      repaint the active page + shell
  *   sync status   → Shell.renderSyncStatus()
  *   hash change   → Router.render()      handled inside Router.start()
+ *
+ * Nothing about the board is fetched until there is a session: State.init()
+ * is only reached past the gate, and every route it uses answers 401
+ * without one.
  *
  * Load order matters and is fixed in index.html: data layer, then tokens →
  * model → html → router → pages → shell/actions/modals, then this.
@@ -12,18 +18,37 @@
 
 (() => {
   async function init() {
+    // Bound before the gate so the sign-in screen and the account menu are
+    // live even though the app behind them hasn't started.
+    Actions.bind(document.getElementById("app"));
+    Modals.bind();
+    Shell.bind();
+    Theme.init();
+
+    LoginScreen.renderChecking();
+    await Auth.refresh();
+    if (!Auth.isSignedIn()) await LoginScreen.show();
+    LoginScreen.hide();
+
+    await start();
+  }
+
+  async function start() {
+    // A role that can't claim can't write anything either — say so once,
+    // here, instead of letting every save be refused by the server.
+    Storage.setReadOnly(!Auth.can("claim"));
+
     await State.init();
 
     // Any change to app data — local edit or an update pushed from another
     // viewer over SSE — repaints whatever page is open.
     State.subscribe(() => Router.render());
-    State.subscribeStatus(() => Shell.renderSyncStatus());
+    State.subscribeStatus(() => {
+      Shell.renderSyncStatus();
+      checkSessionOnDrop();
+    });
 
-    Actions.bind(document.getElementById("app"));
-    Theme.init();
-    Modals.bind();
     bindSearch();
-
     Router.start();
 
     // "Frees in 40m" goes stale on its own, so the open page refreshes on a
@@ -32,6 +57,19 @@
     setInterval(() => {
       if (!Modals.isOpen()) Router.render();
     }, 30000);
+  }
+
+  // The live stream dropping can mean the server went away, or it can mean
+  // this session ended — a super admin revoking access, or a week passing.
+  // Only the second one should send someone back to the sign-in screen, so
+  // ask before assuming, and ask only once per drop.
+  let checkingSession = false;
+  async function checkSessionOnDrop() {
+    if (checkingSession || State.getSyncStatus() === "connected") return;
+    checkingSession = true;
+    const user = await Auth.refresh();
+    checkingSession = false;
+    if (!user) location.reload();
   }
 
   function bindSearch() {
