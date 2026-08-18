@@ -33,9 +33,11 @@
 </style>
 </head>
 
-<body class="h-full bg-canvas text-slate-900 antialiased">
-<div class="h-full p-5">
-  <div class="mx-auto flex h-full max-w-[1600px] overflow-hidden rounded-[28px] bg-white shadow-[0_20px_60px_-20px_rgba(15,23,42,0.25)]">
+<!-- overflow-hidden on the page guarantees only the panes scroll, never the
+     document, so the shell can never be pushed off-screen. -->
+<body class="h-full overflow-hidden bg-canvas text-slate-900 antialiased">
+<div class="h-full p-2 sm:p-3 lg:p-5">
+  <div class="flex h-full w-full overflow-hidden rounded-2xl bg-white shadow-[0_20px_60px_-20px_rgba(15,23,42,0.25)] lg:rounded-[28px]">
 
     <!-- ══ SIDEBAR ══ -->
     <aside class="flex w-60 shrink-0 flex-col overflow-y-auto border-r border-slate-100 px-5 py-6 no-scrollbar">
@@ -76,7 +78,7 @@
 
     <!-- ══ MAIN ══ -->
     <div class="flex min-w-0 flex-1 flex-col bg-panel">
-      <header class="flex shrink-0 items-center gap-5 px-7 py-5">
+      <header class="flex shrink-0 items-center gap-3 px-4 py-4 sm:gap-5 sm:px-6 lg:px-7 lg:py-5">
         <label class="flex h-11 flex-1 items-center gap-3 rounded-full bg-white px-5 shadow-sm ring-1 ring-slate-100">
           <svg class="h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/></svg>
           <input type="text" placeholder="Search environment, person, ticket…" class="w-full bg-transparent text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none" />
@@ -407,7 +409,7 @@ views.dashboard = () => {
   const cards = envs.filter(e => e.state !== 'free').slice(0, 3);
 
   return `
-  <div class="px-7 pb-8">
+  <div class="px-4 pb-6 sm:px-6 lg:px-7 lg:pb-8">
     <section class="relative overflow-hidden rounded-3xl bg-gradient-to-br from-brand-500 to-brand-700 px-8 py-7 text-white">
       <svg class="pointer-events-none absolute -right-6 top-1/2 h-56 w-56 -translate-y-1/2 text-white/15" viewBox="0 0 100 100" fill="currentColor">
         <path d="M50 4c2 26 18 42 44 46-26 4-42 20-46 46-4-26-20-42-46-46 26-4 42-20 48-46z"/>
@@ -423,7 +425,7 @@ views.dashboard = () => {
       </button>
     </section>
 
-    <section class="mt-5 grid grid-cols-4 gap-4">
+    <section class="mt-5 grid grid-cols-2 gap-4 xl:grid-cols-4">
       ${statTile('emerald','Available now', free, 'of ' + envs.length + ' environments', I_CHECK)}
       ${statTile('amber','In use', held, CLAIMS.length + ' active claims', I_CLOCK)}
       ${statTile('rose','Needs attention', down, 'unreachable servers', I_ALERT)}
@@ -435,7 +437,7 @@ views.dashboard = () => {
         <h2 class="text-[17px] font-bold tracking-tight">Held right now</h2>
         <a href="#in-use" class="text-xs font-semibold text-brand-600 hover:underline">See all</a>
       </div>
-      <div class="mt-4 grid grid-cols-3 gap-4">
+      <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         ${cards.map(e => {
           const t = STATE[e.state];
           const soonest = e.claims.length ? e.claims.reduce((a,b) => a.mins < b.mins ? a : b) : null;
@@ -490,7 +492,7 @@ views.environments = () => {
   envs.forEach(e => counts[e.state]++);
 
   return `
-  <div class="px-7 pb-8">
+  <div class="px-4 pb-6 sm:px-6 lg:px-7 lg:pb-8">
     ${pageHead('Environments', envs.length + ' environments across ' + ACCOUNTS.length + ' accounts',
        btnGhost('Export CSV') + btnDark('Add environment'))}
 
@@ -555,11 +557,11 @@ views.health = () => {
   const bad = rows.filter(r => r.health !== 'online');
 
   return `
-  <div class="px-7 pb-8">
+  <div class="px-4 pb-6 sm:px-6 lg:px-7 lg:pb-8">
     ${pageHead('Server health', 'Reachability of all ' + rows.length + ' repositories, checked every minute · problems first',
        btnGhost('Recheck all'))}
 
-    <section class="grid grid-cols-3 gap-4 pb-5">
+    <section class="grid grid-cols-1 gap-4 pb-5 md:grid-cols-3">
       ${statTile('emerald','Responding', online, 'of ' + rows.length + ' endpoints', I_CHECK)}
       ${statTile('rose','Unreachable', offline, 'needs attention', I_ALERT)}
       ${statTile('slate','No URL set', unconf, 'never checked', I_PLUG)}
@@ -607,11 +609,11 @@ views['in-use'] = () => {
   const peopleCount = new Set(CLAIMS.flatMap(c => c.people)).size;
 
   return `
-  <div class="px-7 pb-8">
+  <div class="px-4 pb-6 sm:px-6 lg:px-7 lg:pb-8">
     ${pageHead('In use', rows.length + ' repositories held by ' + CLAIMS.length + ' tickets across ' + envCount + ' environments',
        btnGhost('Export CSV'))}
 
-    <section class="grid grid-cols-3 gap-4 pb-5">
+    <section class="grid grid-cols-1 gap-4 pb-5 md:grid-cols-3">
       ${statTile('amber','Repositories held', rows.length, 'of ' + (allEnvs().length * 3) + ' total', I_CLOCK)}
       ${statTile('brand','People holding', peopleCount, 'across all accounts', I_CHECK)}
       ${statTile('rose','Freeing within 2h', CLAIMS.filter(c=>c.mins<120).length, 'plan the next booking', I_ALERT)}
@@ -643,11 +645,11 @@ views.tickets = () => {
   const stg = CLAIMS.filter(c => c.status.includes('STG')).length;
 
   return `
-  <div class="px-7 pb-8">
+  <div class="px-4 pb-6 sm:px-6 lg:px-7 lg:pb-8">
     ${pageHead('Tickets', CLAIMS.length + ' tickets are holding a repository right now',
        btnGhost('Open in Jira'))}
 
-    <section class="grid grid-cols-3 gap-4 pb-5">
+    <section class="grid grid-cols-1 gap-4 pb-5 md:grid-cols-3">
       ${statTile('blue','QA Testing (DEV)', dev, 'tickets occupying', I_CHECK)}
       ${statTile('violet','QA Testing (STG)', stg, 'tickets occupying', I_CHECK)}
       ${statTile('slate','Not tracked', SKIPPED.length, 'could not be matched', I_ALERT)}
@@ -680,7 +682,7 @@ views['not-tracked'] = () => {
   SKIPPED.forEach(s => { byFix[s.fix] = (byFix[s.fix] || 0) + 1; });
 
   return `
-  <div class="px-7 pb-8">
+  <div class="px-4 pb-6 sm:px-6 lg:px-7 lg:pb-8">
     ${pageHead('Not tracked', SKIPPED.length + ' tickets are in a QA testing status but could not be matched to an environment',
        btnGhost('Re-run match'))}
 
@@ -695,7 +697,7 @@ views['not-tracked'] = () => {
       </p>
     </div>
 
-    <section class="grid grid-cols-3 gap-4 pb-5">
+    <section class="grid grid-cols-1 gap-4 pb-5 md:grid-cols-3">
       ${statTile('brand','Unknown account', byFix.account || 0, 'add it in Settings', I_PLUG)}
       ${statTile('brand','Unknown branch', byFix.env || 0, 'add the environment', I_PLUG)}
       ${statTile('amber','Incomplete ticket', byFix.ticket || 0, 'fix in Jira', I_ALERT)}
@@ -765,11 +767,11 @@ views.settings = () => {
     </label>`;
 
   return `
-  <div class="px-7 pb-8">
+  <div class="px-4 pb-6 sm:px-6 lg:px-7 lg:pb-8">
     ${pageHead('Settings', 'Jira connection, the rules that claim and free a server, and your directories',
        btnGhost('Test connection') + btnDark('Save changes'))}
 
-    <div class="grid grid-cols-[1.15fr_1fr] items-start gap-5">
+    <div class="grid grid-cols-1 items-start gap-5 xl:grid-cols-[1.15fr_1fr]">
       <div class="space-y-5">
         ${card('Jira integration', 'Link bookings to tickets so the board fills itself in.', `
           <div class="flex items-center justify-between gap-4 rounded-xl bg-slate-50 p-4">
