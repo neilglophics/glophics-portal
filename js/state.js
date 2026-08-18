@@ -297,6 +297,59 @@ const State = (() => {
     notify();
   }
 
+  // An environment's name is the "Branch" Jira matches on, and its account
+  // decides which repo slots it carries — so an edit ripples the same way
+  // an account edit does: claims recorded under the old name/account are
+  // rewritten, and repos the new account doesn't have take their urls,
+  // notes and claims with them.
+  function updateServer(serverId, { name, accountId, repoUrls }) {
+    const server = getServer(serverId);
+    if (!server) return { ok: false, errors: ["Environment not found."] };
+
+    const nextName = (name || "").trim();
+    const nextAccountId = accountId || server.accountId;
+    const account = getAccount(nextAccountId);
+
+    const errors = [];
+    if (!nextName) errors.push("Environment name is required.");
+    if (!account) errors.push("Pick an account for this environment.");
+    if (account && appData.servers.some((s) => s.id !== serverId && s.accountId === nextAccountId && s.name.trim().toLowerCase() === nextName.toLowerCase())) {
+      errors.push(`${account.displayName} already has an environment called "${nextName}".`);
+    }
+    if (errors.length) return { ok: false, errors };
+
+    const repoNames = account.repositories;
+    const removedRepos = Object.keys(server.repos).filter((r) => !repoNames.includes(r));
+
+    server.name = nextName;
+    server.accountId = nextAccountId;
+
+    repoNames.forEach((repoName) => {
+      const url = ((repoUrls && repoUrls[repoName]) || "").trim();
+      // An untouched url keeps the health server.js last measured for it —
+      // only a changed one goes back to "checking".
+      if (server.repos[repoName] && server.repos[repoName].url === url) return;
+      server.repos[repoName] = { url, health: url ? "checking" : "unconfigured" };
+    });
+    removedRepos.forEach((repoName) => {
+      delete server.repos[repoName];
+      delete appData.notes[getRepoNoteKey(serverId, repoName)];
+    });
+
+    appData.tickets = appData.tickets.filter((t) => {
+      if (t.serverId !== serverId) return true;
+      t.accountName = account.displayName;
+      t.branch = nextName;
+      t.repos = t.repos.filter((r) => repoNames.includes(r));
+      // A claim that held only dropped repos no longer occupies anything.
+      return t.repos.length > 0;
+    });
+
+    notify();
+    if (Storage.nudgeJiraSync) Storage.nudgeJiraSync();
+    return { ok: true };
+  }
+
   function updateServerRepoUrl(serverId, repoName, url) {
     const server = getServer(serverId);
     if (!server || !server.repos[repoName]) return;
@@ -323,6 +376,32 @@ const State = (() => {
     notify();
   }
 
+  // A user's display name is what Jira's "Ticket Assignee" labels are
+  // matched against (data.js matchUserIdsByLabels), so a rename changes who
+  // the next sync resolves a ticket to. Claims reference users by id, so
+  // the ones already on the board follow the rename on their own.
+  function updateUser(userId, { name, role }) {
+    const user = getUser(userId);
+    if (!user) return { ok: false, errors: ["User not found."] };
+
+    const nextName = (name || "").trim();
+    const nextRole = (role || "").trim();
+
+    const errors = [];
+    if (!nextName) errors.push("Display name is required.");
+    if (!nextRole) errors.push("Role is required.");
+    if (appData.users.some((u) => u.id !== userId && u.name.trim().toLowerCase() === nextName.toLowerCase())) {
+      errors.push(`Another user is already called "${nextName}".`);
+    }
+    if (errors.length) return { ok: false, errors };
+
+    user.name = nextName;
+    user.role = nextRole;
+    notify();
+    if (Storage.nudgeJiraSync) Storage.nudgeJiraSync();
+    return { ok: true };
+  }
+
   function removeUser(userId) {
     appData.users = appData.users.filter((u) => u.id !== userId);
     notify();
@@ -331,6 +410,68 @@ const State = (() => {
   function addAccount({ id, displayName, repositories }) {
     appData.accounts.push({ id, displayName, repositories });
     notify();
+  }
+
+  // Editing an account ripples outward: its displayName is what Jira
+  // tickets are matched on (data.js findServerForTicket) and what active
+  // claims recorded, and its repository list defines the per-repo slots
+  // every environment under it carries. Repos added here appear
+  // unconfigured on those environments; repos dropped here take their
+  // urls, notes and claims with them.
+  function updateAccount(accountId, { id, displayName, repositories }) {
+    const account = getAccount(accountId);
+    if (!account) return { ok: false, errors: ["Account not found."] };
+
+    const nextId = (id || accountId).trim().toLowerCase().replace(/\s+/g, "-");
+    const nextName = (displayName || "").trim();
+    const nextRepos = [...new Set((repositories || []).map((r) => r.trim()).filter(Boolean))];
+
+    const errors = [];
+    if (!nextId) errors.push("Account id is required.");
+    if (!nextName) errors.push("Display name is required.");
+    if (!nextRepos.length) errors.push("At least one repository is required.");
+    if (nextId !== accountId && appData.accounts.some((a) => a.id === nextId)) {
+      errors.push(`Account id "${nextId}" is already taken.`);
+    }
+    if (appData.accounts.some((a) => a.id !== accountId && a.displayName.trim().toLowerCase() === nextName.toLowerCase())) {
+      errors.push(`Another account is already called "${nextName}".`);
+    }
+    if (errors.length) return { ok: false, errors };
+
+    const servers = appData.servers.filter((s) => s.accountId === accountId);
+    const removedRepos = account.repositories.filter((r) => !nextRepos.includes(r));
+
+    account.id = nextId;
+    account.displayName = nextName;
+    account.repositories = nextRepos;
+
+    servers.forEach((server) => {
+      server.accountId = nextId;
+      nextRepos.forEach((repoName) => {
+        if (!server.repos[repoName]) server.repos[repoName] = { url: "", health: "unconfigured" };
+      });
+      removedRepos.forEach((repoName) => {
+        delete server.repos[repoName];
+        delete appData.notes[getRepoNoteKey(server.id, repoName)];
+      });
+    });
+
+    const serverIds = new Set(servers.map((s) => s.id));
+    appData.tickets = appData.tickets.filter((t) => {
+      if (!serverIds.has(t.serverId)) return true;
+      t.accountName = nextName;
+      t.repos = t.repos.filter((r) => nextRepos.includes(r));
+      // A claim that held only dropped repos no longer occupies anything.
+      return t.repos.length > 0;
+    });
+
+    if (filters.accountId === accountId) filters.accountId = nextId;
+
+    notify();
+    // A renamed account may match Jira tickets it didn't before — same
+    // reasoning as addServer(): sync now instead of at the next poll tick.
+    if (Storage.nudgeJiraSync) Storage.nudgeJiraSync();
+    return { ok: true };
   }
 
   function removeAccount(accountId) {
@@ -359,10 +500,10 @@ const State = (() => {
     getServerTickets, getRepoClaims, getTicket,
     getRepoNote, setRepoNote,
     addClaim, forceFreeTicket, forceFreeServer,
-    addServer, removeServer, updateServerRepoUrl,
+    addServer, updateServer, removeServer, updateServerRepoUrl,
     matchUserIdsByLabels, matchRepositoriesToKeys,
-    addUser, removeUser,
-    addAccount, removeAccount,
+    addUser, updateUser, removeUser,
+    addAccount, updateAccount, removeAccount,
     updateSettings, updateJiraOptions
   };
 })();
