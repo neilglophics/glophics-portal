@@ -79,6 +79,58 @@ const Modals = (() => {
     return out;
   }
 
+  // ---------- status chips ----------
+
+  /**
+   * Which status chips sit above the ticket tables.
+   *
+   * The Jira workflow is thirteen statuses and most weeks touch four, so
+   * the row is worth trimming — but trimming it changes only what is on
+   * screen, never what the table can be cut to. A status left unticked is
+   * still reachable the moment something is filtered to it.
+   *
+   * Per-browser, like the theme: nobody else's view moves.
+   */
+  function statusChips(options, isHidden, onSave) {
+    const box = (o) => `
+      <label class="flex cursor-pointer items-center gap-2.5 rounded-xl bg-subtle px-3 py-2.5">
+        <input type="checkbox" name="statuses" value="${H.esc(o.label)}" ${isHidden(o.label) ? "" : "checked"}
+               class="h-4 w-4 shrink-0 rounded accent-brand-500" />
+        <span class="truncate text-xs font-medium text-ink-2">${H.esc(o.label)}</span>
+        <span class="ml-auto shrink-0 text-[10px] font-bold ${o.count ? "text-brand-fg" : "text-faintest"}">${o.count}</span>
+      </label>`;
+
+    open({
+      title: "Status chips",
+      subtitle: "Which statuses to keep above the table — this browser only.",
+      wide: true,
+      submitLabel: "Save chips",
+      body: `
+        <div class="flex flex-wrap gap-2 pb-4">
+          ${H.btn("All", { size: "sm", variant: "quiet", data: { "data-chips": "all" } })}
+          ${H.btn("Only ones in use", { size: "sm", variant: "quiet", data: { "data-chips": "used" } })}
+          ${H.btn("None", { size: "sm", variant: "quiet", data: { "data-chips": "none" } })}
+        </div>
+        <div class="grid gap-2 sm:grid-cols-2">${options.map(box).join("")}</div>
+        <p class="pt-4 text-[11px] leading-relaxed text-faint">
+          Hiding a status only takes its chip off the row. Everything at it stays in
+          <strong>All statuses</strong>, and the chip comes back on its own while the table is cut to it.
+        </p>`,
+      // The modal host sits outside the app's delegated listener, so the
+      // three shortcuts wire themselves up here.
+      onReady: (root) => {
+        const boxes = [...root.querySelectorAll('input[name="statuses"]')];
+        root.querySelectorAll("[data-chips]").forEach((btn) => btn.addEventListener("click", () => {
+          const mode = btn.dataset.chips;
+          boxes.forEach((input, i) => {
+            input.checked = mode === "all" || (mode === "used" && options[i].count > 0);
+          });
+        }));
+      },
+      onSubmit: () => { onSave(formValues().statuses || []); close(); }
+    });
+  }
+
   // ---------- confirm ----------
 
   function confirm({ title, message, confirmLabel, onConfirm }) {
@@ -266,15 +318,19 @@ const Modals = (() => {
   function addUser() {
     open({
       title: "Add user",
-      subtitle: "Their display name is what Jira's assignee labels are matched against.",
+      subtitle: "Their Jira assignee names are what a ticket's \"Ticket Assignee\" field is matched against.",
       submitLabel: "Add user",
       body: `<div class="grid gap-3 sm:grid-cols-2">
         ${H.field("Display name", { data: { name: "name" }, placeholder: "e.g. [BE]_Sem" })}
         ${H.field("Role", { data: { name: "role" }, value: "Team", placeholder: "e.g. Backend" })}
+        ${H.field("Jira assignee names", {
+          data: { name: "jiraNames" }, span: true,
+          placeholder: "Comma separated — leave blank to use the display name"
+        })}
       </div>`,
       onSubmit: () => {
         const v = formValues();
-        const result = State.addUser({ name: v.name, role: v.role });
+        const result = State.addUser({ name: v.name, role: v.role, jiraNames: v.jiraNames });
         if (!result.ok) { showError(result.errors); return; }
         close();
       }
@@ -360,6 +416,37 @@ const Modals = (() => {
       </label>`).join("")}</div>`;
   }
 
+  /**
+   * The Jira "Ticket Assignee" labels a login answers to.
+   *
+   * Offered as a datalist of the names already on the board rather than a
+   * bare text box: these labels are shaped like "[QA]_Jhoewell", and a typo
+   * costs nothing at save time and then silently shows that person an empty
+   * page. Names seen on tickets but missing from the directory are in the
+   * list too — those are exactly the people whose login needs one.
+   */
+  function jiraNameField(value) {
+    const seen = new Set();
+    Model.assigneeRows().forEach((row) => {
+      seen.add(row.name);
+      row.jiraNames.forEach((n) => seen.add(n));
+    });
+    const options = [...seen].filter(Boolean).sort((a, b) => a.localeCompare(b));
+
+    return `
+      ${H.field("Jira assignee name", {
+        value: value || "", span: true,
+        data: { name: "jiraNames", list: "jira-assignee-options", autocapitalize: "none", spellcheck: "false" },
+        placeholder: "e.g. [QA]_Jerome — comma separated if Jira knows them by more than one"
+      })}
+      <datalist id="jira-assignee-options">${options.map((n) => `<option value="${H.esc(n)}"></option>`).join("")}</datalist>
+      <p class="text-[11px] leading-relaxed text-faint sm:col-span-2">
+        Exactly what Jira writes in a ticket's <strong>Ticket Assignee</strong> field. It is how
+        <strong>My tickets</strong> knows which tickets are theirs. Leave it blank if they never
+        appear on one.
+      </p>`;
+  }
+
   function passwordPair(labels) {
     return `<div class="grid gap-3 sm:grid-cols-2">
       ${H.field(labels[0], { type: "password", data: { name: "password", autocomplete: "new-password" }, placeholder: "At least 8 characters" })}
@@ -387,6 +474,7 @@ const Modals = (() => {
           <div class="grid gap-3 sm:grid-cols-2">
             ${H.field("Display name", { data: { name: "displayName" }, placeholder: "e.g. Jerome Cruz" })}
             ${H.field("Username", { data: { name: "username", autocapitalize: "none", spellcheck: "false" }, placeholder: "e.g. jerome" })}
+            ${jiraNameField("")}
           </div>
           ${passwordPair(["Password", "Confirm password"])}
           <div>
@@ -399,7 +487,7 @@ const Modals = (() => {
         if (!passwordsMatch(v)) return;
         const result = await Auth.createUser({
           displayName: v.displayName, username: v.username,
-          role: v.role, password: v.password
+          role: v.role, password: v.password, jiraNames: v.jiraNames
         });
         if (!result.ok) { showError(result.errors || result.error || "Couldn't create that user."); return; }
         close();
@@ -419,6 +507,7 @@ const Modals = (() => {
           <div class="grid gap-3 sm:grid-cols-2">
             ${H.field("Display name", { data: { name: "displayName" }, value: user.displayName })}
             ${H.field("Username", { data: { name: "username", autocapitalize: "none", spellcheck: "false" }, value: user.username })}
+            ${jiraNameField((user.jiraNames || []).join(", "))}
           </div>
           <div>
             <p class="pb-2 text-[11px] font-semibold text-muted">Role</p>
@@ -433,7 +522,7 @@ const Modals = (() => {
         const v = formValues();
         const result = await Auth.updateUser(user.id, {
           displayName: v.displayName, username: v.username,
-          role: v.role, active: !!(v.active && v.active.length)
+          role: v.role, active: !!(v.active && v.active.length), jiraNames: v.jiraNames
         });
         if (!result.ok) { showError(result.errors || result.error || "Couldn't save that user."); return; }
         close();
@@ -516,7 +605,7 @@ const Modals = (() => {
 
   return {
     open, close, isOpen, showError, confirm, info,
-    assign, note, repoUrl, directoryAdd,
+    assign, note, repoUrl, directoryAdd, statusChips,
     authUserAdd, authUserEdit, authUserPassword, changeOwnPassword,
     bind
   };

@@ -37,13 +37,14 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const { buildDefaultAppData, migrateAppData, matchRepositoriesToKeys, matchUserIdsByLabels, findServerForTicket, JIRA_TERMINAL_STATUSES } = require("./js/data.js");
+const { buildDefaultAppData, migrateAppData, matchRepositoriesToKeys, matchUserIdsByLabels, findServerForTicket, JIRA_TERMINAL_STATUSES, statusIn } = require("./js/data.js");
 const Auth = require("./auth-store.js");
 const IpAllowlist = require("./ip-allowlist.js");
 
 const PORT = process.env.PORT || 4000;
 const ROOT = __dirname;
 const STATE_FILE = path.join(ROOT, "shared-state.json");
+const STATE_TMP_FILE = STATE_FILE + ".tmp";
 const JIRA_CONFIG_FILE = path.join(ROOT, "jira-config.json");
 
 // Accept a saved baseUrl with or without a protocol (people paste bare
@@ -83,8 +84,9 @@ function loadState() {
         if (migrateAppData(parsed)) fs.writeFileSync(STATE_FILE, JSON.stringify(parsed, null, 2));
         return parsed;
       }
+      keepUnreadableState("it is missing users, accounts or servers");
     } catch (err) {
-      // fall through to reseed
+      keepUnreadableState(err.message);
     }
   }
   const seeded = buildDefaultAppData();
@@ -92,11 +94,50 @@ function loadState() {
   return seeded;
 }
 
+// Seeding over a file we could not read would throw away every claim on
+// the board with nothing to show for it. Move it aside and say so instead:
+// whatever is in there can still be recovered by hand.
+function keepUnreadableState(reason) {
+  const kept = STATE_FILE.replace(/\.json$/, "") + ".unreadable.json";
+  try {
+    fs.renameSync(STATE_FILE, kept);
+    console.warn(`\n  shared-state.json could not be read (${reason}).`);
+    console.warn(`  Kept it as ${path.basename(kept)} and started from the seed board.\n`);
+  } catch (err) {
+    console.warn(`\n  shared-state.json could not be read (${reason}) and could not be moved aside.\n`);
+  }
+}
+
 let state = loadState();
 const sseClients = new Set();
 
+/**
+ * Writes the board to disk, atomically and one at a time.
+ *
+ * Four things persist — the Jira sync, the health checks, a claim posted by
+ * a browser, and a settings change — and they overlap freely. Two plain
+ * writeFile calls to the same path interleave: the shorter one leaves the
+ * tail of the longer one behind, and what is on disk is then JSON followed
+ * by rubbish, which the next boot cannot parse. So a write goes to a temp
+ * file and is renamed over the real one (a rename is atomic, and readers
+ * see either the old file or the new one), and anything asked for while a
+ * write is in flight is coalesced into one more write after it.
+ */
+let writing = false;
+let writeAgain = false;
+
 function persist() {
-  fs.writeFile(STATE_FILE, JSON.stringify(state, null, 2), () => {});
+  if (writing) { writeAgain = true; return; }
+  writing = true;
+  const body = JSON.stringify(state, null, 2);
+  fs.writeFile(STATE_TMP_FILE, body, (err) => {
+    const done = () => {
+      writing = false;
+      if (writeAgain) { writeAgain = false; persist(); }
+    };
+    if (err) { done(); return; }
+    fs.rename(STATE_TMP_FILE, STATE_FILE, done);
+  });
 }
 
 function broadcast() {
@@ -615,10 +656,6 @@ function extractTicketFields(issue, fieldMap) {
   };
 }
 
-function statusIn(list, statusName) {
-  return (list || []).some((s) => s.trim().toLowerCase() === (statusName || "").trim().toLowerCase());
-}
-
 async function runJiraSync(force) {
   if (!state.settings.jira.enabled) return { ok: false, reason: "disabled" };
   if (!force && !state.settings.jira.autoSync) return { ok: false, reason: "auto-sync-off" };
@@ -637,53 +674,82 @@ async function runJiraSync(force) {
     const issues = await fetchJiraSearchIssues(config, fieldIds);
     const jira = state.settings.jira;
     const skipped = [];
-    const waiting = [];
+    const onBoard = [];
+
+    /**
+     * Everything the sync saw that is not an active claim, in the shape the
+     * ticket tables read. A ticket holds repositories only at an occupying
+     * status, but it is somebody's ticket at every status — so this keeps
+     * the assignees, dates and matched environment rather than a bare
+     * count, and the tables can offer the whole workflow as a filter.
+     *
+     * What bounds the list is the JIRA_SYNC_WINDOW query, not the status:
+     * one record per issue updated in the window, refilled from scratch on
+     * every pass.
+     */
+    const record = (t) => {
+      const { server } = findServerForTicket(t, state.accounts, state.servers);
+      const repoCheck = server
+        ? matchRepositoriesToKeys(t.repository, Object.keys(server.repos))
+        : { matched: [] };
+      onBoard.push({
+        key: t.key,
+        serverId: server ? server.id : null,
+        accountName: t.accountName,
+        branch: t.branch,
+        repos: repoCheck.matched,
+        userIds: matchUserIdsByLabels(t.ticketAssignees, state.users).matched,
+        rawAssignees: t.ticketAssignees,
+        status: t.status,
+        summary: t.summary,
+        // Dates as Jira has them. Nothing is being held, so unlike a claim
+        // there is no "it started now" to fall back on.
+        startTime: t.startDate ? new Date(`${t.startDate}T09:00`).toISOString() : null,
+        endTime: t.dueDate ? new Date(`${t.dueDate}T18:00`).toISOString() : null
+      });
+    };
 
     issues.forEach((issue) => {
       const t = extractTicketFields(issue, fieldMap);
       const existing = state.tickets.find((tk) => tk.id === t.key && tk.source === "jira");
 
       if (existing) {
-        if (statusIn(jira.releasingStatuses, t.status)) {
-          state.tickets = state.tickets.filter((tk) => tk !== existing);
-        } else {
+        if (!statusIn(jira.releasingStatuses, t.status)) {
           // Sticky: repos/serverId/userIds don't move mid-claim — only the
           // display-facing fields refresh each pass.
           existing.status = t.status;
           existing.summary = t.summary;
           existing.lastSyncedAt = new Date().toISOString();
+          return;
         }
+        // Released: it stops holding repositories. It is still a ticket on
+        // the board, so it stays in the tables at its new status.
+        state.tickets = state.tickets.filter((tk) => tk !== existing);
+        record(t);
         return;
       }
 
       if (!statusIn(jira.occupyingStatuses, t.status)) {
-        // Not claiming anything yet. If it still matches a real environment
-        // it's worth surfacing — the row can then say "N more tickets on
-        // this branch aren't in QA testing yet, so they hold nothing".
-        // Releasing and terminal statuses are done with the environment,
-        // not waiting on it.
-        if (!statusIn(jira.releasingStatuses, t.status) && !statusIn(JIRA_TERMINAL_STATUSES, t.status)) {
-          const match = findServerForTicket(t, state.accounts, state.servers);
-          if (match.server) {
-            waiting.push({ key: t.key, serverId: match.server.id, status: t.status, summary: t.summary });
-          }
-        }
+        record(t);
         return;
       }
 
       const { server, error } = findServerForTicket(t, state.accounts, state.servers);
       if (error) {
         skipped.push({ key: t.key, reason: error, status: t.status, accountName: t.accountName, branch: t.branch });
+        record(t);
         return;
       }
 
       if (!t.repository || !t.repository.length) {
         skipped.push({ key: t.key, reason: "Repository field is empty.", status: t.status, accountName: t.accountName, branch: t.branch });
+        record(t);
         return;
       }
       const repoCheck = matchRepositoriesToKeys(t.repository, Object.keys(server.repos));
       if (!repoCheck.matched.length) {
         skipped.push({ key: t.key, reason: `Repository field ("${t.repository.join(", ")}") doesn't match any repo on ${server.name}.`, status: t.status, accountName: t.accountName, branch: t.branch });
+        record(t);
         return;
       }
 
@@ -711,7 +777,7 @@ async function runJiraSync(force) {
     });
 
     state.jiraSkipped = skipped;
-    state.jiraWaiting = waiting;
+    state.jiraIssues = onBoard;
     lastJiraSyncError = null;
     state.lastJiraSyncAt = new Date().toISOString();
     // jiraSkipped/lastJiraSyncAt update every pass regardless of `changed` —
@@ -793,7 +859,7 @@ function handleApi(req, res, url, user) {
       if (!Array.isArray(parsed.tickets)) parsed.tickets = [];
       if (!parsed.notes) parsed.notes = {};
       if (!Array.isArray(parsed.jiraSkipped)) parsed.jiraSkipped = state.jiraSkipped || [];
-      if (!Array.isArray(parsed.jiraWaiting)) parsed.jiraWaiting = state.jiraWaiting || [];
+      if (!Array.isArray(parsed.jiraIssues)) parsed.jiraIssues = state.jiraIssues || [];
       if (!parsed.settings) parsed.settings = state.settings;
 
       // A role that can claim but not configure may move claims and notes,

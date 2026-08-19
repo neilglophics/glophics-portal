@@ -94,8 +94,7 @@ Router.register(HEALTH_PAGE, {
         : r.health === "unconfigured" ? "bg-line-2 text-muted"
         : r.health === "checking" ? "bg-faint text-white"
         : "bg-emerald-500/85 text-white";
-      return `<span title="${H.esc(r.name)}: ${H.esc(r.health)}"
-        class="w-9 rounded-md ${cls} py-0.5 text-center text-[9px] font-bold">${H.esc(Tokens.shortRepo(r.name))}</span>`;
+      return H.repoChip({ name: r.name, url: r.url, cls, state: Tokens.HEALTH[r.health] ? Tokens.HEALTH[r.health].label.toLowerCase() : r.health });
     }).join("") + `</div>`;
   },
 
@@ -145,7 +144,7 @@ Router.register(HEALTH_PAGE, {
 
     return `<div class="flex flex-wrap items-center gap-3 rounded-xl bg-surface px-3 py-2.5 ring-1 ring-line">
       <div class="flex w-40 shrink-0 items-center gap-2.5">
-        <span class="w-9 shrink-0 rounded-md ${chipCls} py-0.5 text-center text-[9px] font-bold">${H.esc(Tokens.shortRepo(r.name))}</span>
+        ${H.repoChip({ name: r.name, url: r.url, cls: chipCls, state: token.label.toLowerCase() })}
         <span class="truncate text-xs font-semibold capitalize text-body">${H.esc(r.name)}</span>
       </div>
 

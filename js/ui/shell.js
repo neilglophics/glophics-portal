@@ -19,13 +19,15 @@ const Shell = (() => {
 
   const NAV = [
     { group: "overview", id: "dashboard",    label: "Dashboard",    icon: "grid" },
+    { group: "overview", id: "tickets",      label: "Active tickets", icon: "list",
+      badge: (s) => s.claims },
+    { group: "overview", id: "assignees",    label: "My tickets",   icon: "users",
+      badge: (s) => s.myTickets },
     { group: "overview", id: "environments", label: "Environments", icon: "servers" },
     { group: "overview", id: "health",       label: "Health",       icon: "pulse",
       badge: (s) => s.repoOffline, tone: "rose" },
     { group: "activity", id: "in-use",       label: "In use",       icon: "clock",
       badge: (s) => s.reposHeld },
-    { group: "activity", id: "tickets",      label: "Tickets",      icon: "list",
-      badge: (s) => s.claims },
     { group: "activity", id: "not-tracked",  label: "Not tracked",  icon: "alert",
       badge: (s) => s.skipped, tone: "amber" },
     { group: "settings", id: "users",        label: "Users",        icon: "users",

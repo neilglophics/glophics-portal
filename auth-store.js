@@ -84,6 +84,19 @@ function passwordMatches(user, password) {
 
 // ---------- shapes ----------
 
+// The Jira "Ticket Assignee" labels this login answers to. Accepts the
+// comma-separated string the form sends, or an array. One person can carry
+// several: the same tester is "[QA]_Jerome" on one board and "[QA]_Jerome_C"
+// on another.
+function normalizeJiraNames(value) {
+  const list = Array.isArray(value) ? value : String(value == null ? "" : value).split(",");
+  const names = [];
+  list.map((n) => String(n || "").trim()).filter(Boolean).forEach((n) => {
+    if (!names.some((seen) => seen.toLowerCase() === n.toLowerCase())) names.push(n);
+  });
+  return names;
+}
+
 // The only user shape that ever leaves this process.
 function publicUser(user) {
   if (!user) return null;
@@ -92,6 +105,7 @@ function publicUser(user) {
     username: user.username,
     displayName: user.displayName,
     role: user.role,
+    jiraNames: Array.isArray(user.jiraNames) ? user.jiraNames : [],
     active: user.active !== false,
     createdAt: user.createdAt || null,
     lastLoginAt: user.lastLoginAt || null
@@ -102,7 +116,7 @@ function normalizeUsername(username) {
   return String(username || "").trim().toLowerCase();
 }
 
-function validateCredentials(store, { username, displayName, role, password }, existingId) {
+function validateCredentials(store, { username, displayName, role, password, jiraNames }, existingId) {
   const errors = [];
   const name = normalizeUsername(username);
 
@@ -119,6 +133,14 @@ function validateCredentials(store, { username, displayName, role, password }, e
   if (password !== undefined && String(password).length < MIN_PASSWORD_LENGTH) {
     errors.push(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
   }
+
+  // Two logins answering to one Jira name would each be shown the other's
+  // tickets as their own, so the clash is refused rather than resolved.
+  (jiraNames || []).forEach((name) => {
+    const owner = store.users.find((u) => u.id !== existingId &&
+      (u.jiraNames || []).some((n) => String(n).toLowerCase() === name.toLowerCase()));
+    if (owner) errors.push(`"${name}" is already the Jira assignee name for ${owner.displayName}.`);
+  });
   return errors;
 }
 
@@ -153,6 +175,7 @@ function seedIfEmpty() {
     username,
     displayName: "Super Admin",
     role: "superadmin",
+    jiraNames: [],
     salt, hash,
     active: true,
     createdAt: new Date().toISOString(),
@@ -261,9 +284,10 @@ function listUsers() {
   return load().users.map(publicUser).sort((a, b) => a.username.localeCompare(b.username));
 }
 
-function createUser({ username, displayName, role, password }) {
+function createUser({ username, displayName, role, password, jiraNames }) {
   const store = load();
-  const errors = validateCredentials(store, { username, displayName, role, password });
+  const names = normalizeJiraNames(jiraNames);
+  const errors = validateCredentials(store, { username, displayName, role, password, jiraNames: names });
   if (errors.length) return { ok: false, errors };
 
   const { salt, hash } = newCredentials(password);
@@ -272,6 +296,7 @@ function createUser({ username, displayName, role, password }) {
     username: normalizeUsername(username),
     displayName: String(displayName).trim(),
     role,
+    jiraNames: names,
     salt, hash,
     active: true,
     createdAt: new Date().toISOString(),
@@ -283,15 +308,17 @@ function createUser({ username, displayName, role, password }) {
   return { ok: true, user: publicUser(user) };
 }
 
-function updateUser(userId, { username, displayName, role, active }, actingUserId) {
+function updateUser(userId, { username, displayName, role, active, jiraNames }, actingUserId) {
   const store = load();
   const user = store.users.find((u) => u.id === userId);
   if (!user) return { ok: false, errors: ["That user no longer exists."] };
 
   const nextRole = role || user.role;
   const nextActive = active === undefined ? user.active !== false : !!active;
+  const nextJiraNames = normalizeJiraNames(jiraNames === undefined ? user.jiraNames : jiraNames);
 
-  const errors = validateCredentials(store, { username, displayName, role: nextRole }, userId);
+  const errors = validateCredentials(store,
+    { username, displayName, role: nextRole, jiraNames: nextJiraNames }, userId);
   if (errors.length) return { ok: false, errors };
 
   const losingSuperAdmin = user.role === "superadmin" && (nextRole !== "superadmin" || !nextActive);
@@ -309,6 +336,7 @@ function updateUser(userId, { username, displayName, role, active }, actingUserI
   user.username = normalizeUsername(username);
   user.displayName = String(displayName).trim();
   user.role = nextRole;
+  user.jiraNames = nextJiraNames;
   user.active = nextActive;
   user.updatedAt = new Date().toISOString();
 
