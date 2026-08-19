@@ -95,7 +95,7 @@ const State = (() => {
 
   function signedInIdentityValues() {
     const authUser = typeof Auth !== "undefined" ? Auth.user() : null;
-    return authUser ? [authUser.id, authUser.username, authUser.displayName]
+    return authUser ? [authUser.id, authUser.username, authUser.displayName, ...(authUser.jiraNames || [])]
       .filter(Boolean).map((value) => String(value).trim().toLowerCase()) : [];
   }
 
@@ -109,8 +109,12 @@ const State = (() => {
   }
 
   function claimMatchesFilterUser(claim, userId) {
-    if (userId !== "__me__") return (claim.userIds || []).includes(userId);
-    const values = signedInIdentityValues();
+    const user = userId === "__me__" ? null : getUser(userId);
+    const values = userId === "__me__"
+      ? signedInIdentityValues()
+      : [userId, user?.name, ...(user?.jiraNames || [])]
+        .filter(Boolean).map((value) => String(value).trim().toLowerCase());
+    if ((claim.userIds || []).some((id) => values.includes(String(id).trim().toLowerCase()))) return true;
     const people = (claim.userIds || []).map((id) => getUser(id)?.name || id)
       .concat(claim.rawAssignees || []);
     return people.some((person) => values.includes(String(person).trim().toLowerCase()));
