@@ -93,6 +93,17 @@ const State = (() => {
   function getAccount(id) { return appData.accounts.find((a) => a.id === id) || null; }
   function getServer(id) { return appData.servers.find((s) => s.id === id) || null; }
 
+  function getSignedInUserId() {
+    const authUser = typeof Auth !== "undefined" ? Auth.user() : null;
+    if (!authUser) return null;
+    const values = [authUser.id, authUser.username, authUser.displayName]
+      .filter(Boolean).map((value) => String(value).trim().toLowerCase());
+    const user = appData.users.find((candidate) =>
+      [candidate.id, candidate.name].some((value) => values.includes(String(value).trim().toLowerCase()))
+    );
+    return user ? user.id : null;
+  }
+
   function getRepositoriesForAccount(accountId) {
     const account = getAccount(accountId);
     return account ? account.repositories : [];
@@ -593,7 +604,7 @@ const State = (() => {
     subscribe, subscribeStatus, getSyncStatus,
     getUsers, getAccounts, getServers, getSettings, getSkippedTickets, getWaitingTickets,
     getJiraIssues, getLastJiraSyncAt,
-    getUser, getAccount, getServer,
+    getUser, getAccount, getServer, getSignedInUserId,
     getRepositoriesForAccount, getDisplayStatus,
     getFilters, getFilteredServers, getSummary,
     setFilter, clearFilters,
