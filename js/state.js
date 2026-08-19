@@ -81,15 +81,27 @@ const State = (() => {
   function getAccount(id) { return appData.accounts.find((a) => a.id === id) || null; }
   function getServer(id) { return appData.servers.find((s) => s.id === id) || null; }
 
-  function getSignedInUserId() {
+  function signedInIdentityValues() {
     const authUser = typeof Auth !== "undefined" ? Auth.user() : null;
-    if (!authUser) return null;
-    const values = [authUser.id, authUser.username, authUser.displayName]
-      .filter(Boolean).map((value) => String(value).trim().toLowerCase());
+    return authUser ? [authUser.id, authUser.username, authUser.displayName]
+      .filter(Boolean).map((value) => String(value).trim().toLowerCase()) : [];
+  }
+
+  function getSignedInUserId() {
+    const values = signedInIdentityValues();
+    if (!values.length) return null;
     const user = appData.users.find((candidate) =>
       [candidate.id, candidate.name].some((value) => values.includes(String(value).trim().toLowerCase()))
     );
-    return user ? user.id : null;
+    return user ? user.id : "__me__";
+  }
+
+  function claimMatchesFilterUser(claim, userId) {
+    if (userId !== "__me__") return (claim.userIds || []).includes(userId);
+    const values = signedInIdentityValues();
+    const people = (claim.userIds || []).map((id) => getUser(id)?.name || id)
+      .concat(claim.rawAssignees || []);
+    return people.some((person) => values.includes(String(person).trim().toLowerCase()));
   }
 
   function getRepositoriesForAccount(accountId) {
@@ -141,7 +153,7 @@ const State = (() => {
     return appData.servers.filter((server) => {
       if (filters.status !== "all" && getDisplayStatus(server) !== filters.status) return false;
       const claims = getServerTickets(server.id);
-      if (filters.userId !== "all" && !claims.some((t) => t.userIds.includes(filters.userId))) return false;
+      if (filters.userId !== "all" && !claims.some((t) => claimMatchesFilterUser(t, filters.userId))) return false;
       if (filters.accountId !== "all" && server.accountId !== filters.accountId) return false;
 
       if (search) {

@@ -39,7 +39,7 @@ Router.register("environments", {
         ${statusChip("all", "All", all.length)}
         ${Object.keys(counts).map((k) => statusChip(k, Tokens.ENV_STATE[k].label, counts[k])).join("")}
         <button data-action="filter-me" ${signedInUserId ? "" : "disabled"}
-            title="${signedInUserId ? "Show servers assigned to you" : "Your login is not linked to a claim user"}"
+          title="${signedInUserId ? "Show servers assigned to you" : "Sign in to use this filter"}"
             class="rounded-full px-3.5 py-1.5 text-[11px] font-semibold transition ${
               showingMine ? "bg-accent text-on-accent" : signedInUserId
                 ? "bg-surface text-muted ring-1 ring-line-2 hover:text-ink"
