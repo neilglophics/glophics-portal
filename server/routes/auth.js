@@ -8,7 +8,7 @@
 
 const Auth = require("../auth-store.js");
 const { sendJson, readBody } = require("../http.js");
-const { sessionCookie, currentUser, allows } = require("../access.js");
+const { SESSION_COOKIE, parseCookies, sessionCookie, currentUser, allows } = require("../access.js");
 
 async function handleLogin(req, res) {
   try {
