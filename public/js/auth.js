@@ -4,7 +4,7 @@
  * Part of the data layer: it talks to /api/auth/* and holds the current
  * user. The UI asks `Auth.can("configure")` and hides what the answer says
  * to hide — but hiding is only courtesy. Every one of these routes is
- * checked again on the server with the same roleCan() from js/data.js, so
+ * checked again on the server with the same roleCan() from shared/data.js, so
  * a hidden button and a forged request are refused by the same rule.
  *
  * Credentials never live here. The session is an HttpOnly cookie the
@@ -81,8 +81,16 @@ const Auth = (() => {
 
   // The Jira "Ticket Assignee" labels this login answers to — what "mine"
   // means on the My tickets page. Empty until a super admin sets it.
+  // Served by the account's link into the board's directory, not stored on
+  // the account — so this is whatever the directory says right now.
   function jiraNames() {
     return (current && Array.isArray(current.jiraNames)) ? current.jiraNames : [];
+  }
+
+  // Which directory person this login is, if any. Null for an account
+  // nobody has pointed at a person yet.
+  function directoryUserId() {
+    return (current && current.directoryUserId) || null;
   }
 
   // ---------- managing other people's credentials (super admin) ----------
@@ -113,7 +121,7 @@ const Auth = (() => {
 
   return {
     refresh, signIn, signOut, changeOwnPassword,
-    user, isSignedIn, can, roleName, roles, jiraNames,
+    user, isSignedIn, can, roleName, roles, jiraNames, directoryUserId,
     listUsers, createUser, updateUser, removeUser, setPassword
   };
 })();

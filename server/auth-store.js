@@ -1,24 +1,37 @@
 /**
  * Sign-in credentials and sessions. Server-side only.
  *
- * Credentials live in auth.json beside server.js and are *never* part of
- * `state` — so they are never written to shared-state.json and never
+ * Credentials live in config/auth.json — outside every root the static
+ * handler serves — and are *never* part of `state`, so they are never
+ * written into the board's own files and never
  * broadcast to a browser tab over SSE. The only shape that ever reaches a
  * client is publicUser(), which carries no salt and no hash.
+ *
+ * An account does not describe the person behind it beyond a display name.
+ * Who they are on the board — their job role, and the Jira "Ticket Assignee"
+ * labels their tickets carry — is the directory's business (shared-state.json
+ * → users), and an account points at one directory person by id. So a person
+ * is described in one place, and an account and a ticket cannot end up
+ * disagreeing about which label belongs to whom.
  *
  * Passwords are scrypt-hashed with a per-user random salt and compared with
  * a timing-safe equal. No dependencies: everything here is node:crypto.
  *
- * Roles come from js/data.js (AUTH_ROLES) — the same list the browser
+ * Roles come from shared/data.js (AUTH_ROLES) — the same list the browser
  * reads, so what the UI hides and what the server refuses cannot drift.
  */
 
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { AUTH_ROLES, roleCan, isValidRole } = require("./js/data.js");
+const { AUTH_ROLES, roleCan, isValidRole, userJiraNames, matchUserIdsByLabels } = require("../shared/data.js");
 
-const AUTH_FILE = path.join(__dirname, "auth.json");
+const { CONFIG_DIR } = require("./paths.js");
+
+// Not beside this file: config/ is outside every root the static handler can
+// read, so the hashes and live session tokens below are unreachable over http
+// by layout rather than by an extension allowlist.
+const AUTH_FILE = path.join(CONFIG_DIR, "auth.json");
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;   // a week, then sign in again
 const SCRYPT_KEYLEN = 64;
@@ -63,6 +76,34 @@ function save(store) {
   fs.writeFileSync(AUTH_FILE, JSON.stringify(store, null, 2), { mode: 0o600 });
 }
 
+// ---------- the people directory ----------
+
+/**
+ * The directory an account links into lives in `state`, which this file
+ * deliberately cannot see — it holds credentials, and must not grow a way
+ * to reach the board. So server/index.js injects a reader for it at boot.
+ *
+ * Until it does, every account reads as unlinked rather than throwing: a
+ * script that requires this file on its own still works, it just sees no
+ * Jira names.
+ */
+let readDirectory = () => [];
+
+function useDirectory(getUsers) {
+  readDirectory = typeof getUsers === "function" ? getUsers : () => [];
+}
+
+function directoryPerson(id) {
+  if (!id) return null;
+  return readDirectory().find((u) => u.id === id) || null;
+}
+
+// Blank, whitespace, or a form field left on "Nobody" all mean unlinked.
+function normalizeLink(value) {
+  const id = String(value == null ? "" : value).trim();
+  return id || null;
+}
+
 // ---------- passwords ----------
 
 function hashPassword(password, salt) {
@@ -84,28 +125,27 @@ function passwordMatches(user, password) {
 
 // ---------- shapes ----------
 
-// The Jira "Ticket Assignee" labels this login answers to. Accepts the
-// comma-separated string the form sends, or an array. One person can carry
-// several: the same tester is "[QA]_Jerome" on one board and "[QA]_Jerome_C"
-// on another.
-function normalizeJiraNames(value) {
-  const list = Array.isArray(value) ? value : String(value == null ? "" : value).split(",");
-  const names = [];
-  list.map((n) => String(n || "").trim()).filter(Boolean).forEach((n) => {
-    if (!names.some((seen) => seen.toLowerCase() === n.toLowerCase())) names.push(n);
-  });
-  return names;
-}
-
-// The only user shape that ever leaves this process.
+/**
+ * The only user shape that ever leaves this process.
+ *
+ * `jiraNames` is not stored on an account — it is read through the link, so
+ * it is whatever the directory says right now. Fixing a mistyped label in
+ * the directory fixes what My tickets shows, with no second edit here.
+ *
+ * A link whose person has since been removed from the directory reads as
+ * unlinked rather than as an error: the account still signs in, it simply
+ * has no Jira names until somebody points it at a person again.
+ */
 function publicUser(user) {
   if (!user) return null;
+  const person = directoryPerson(user.directoryUserId);
   return {
     id: user.id,
     username: user.username,
     displayName: user.displayName,
     role: user.role,
-    jiraNames: Array.isArray(user.jiraNames) ? user.jiraNames : [],
+    directoryUserId: person ? person.id : null,
+    jiraNames: person ? userJiraNames(person) : [],
     active: user.active !== false,
     createdAt: user.createdAt || null,
     lastLoginAt: user.lastLoginAt || null
@@ -116,7 +156,7 @@ function normalizeUsername(username) {
   return String(username || "").trim().toLowerCase();
 }
 
-function validateCredentials(store, { username, displayName, role, password, jiraNames }, existingId) {
+function validateCredentials(store, { username, displayName, role, password, directoryUserId }, existingId) {
   const errors = [];
   const name = normalizeUsername(username);
 
@@ -134,13 +174,16 @@ function validateCredentials(store, { username, displayName, role, password, jir
     errors.push(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
   }
 
-  // Two logins answering to one Jira name would each be shown the other's
-  // tickets as their own, so the clash is refused rather than resolved.
-  (jiraNames || []).forEach((name) => {
-    const owner = store.users.find((u) => u.id !== existingId &&
-      (u.jiraNames || []).some((n) => String(n).toLowerCase() === name.toLowerCase()));
-    if (owner) errors.push(`"${name}" is already the Jira assignee name for ${owner.displayName}.`);
-  });
+  // One person, one account. Two logins pointing at the same directory
+  // person would each be shown the other's tickets as their own, so the
+  // clash is refused here rather than discovered at sync time.
+  if (directoryUserId) {
+    if (!directoryPerson(directoryUserId)) {
+      errors.push("That person is not in the directory any more — pick somebody else.");
+    }
+    const owner = store.users.find((u) => u.id !== existingId && u.directoryUserId === directoryUserId);
+    if (owner) errors.push(`That person already signs in as @${owner.username}.`);
+  }
   return errors;
 }
 
@@ -158,7 +201,7 @@ function isLastActiveSuperAdmin(store, userId) {
 /**
  * Creates the first super admin the first time the server runs — from
  * ADMIN_USERNAME / ADMIN_PASSWORD when they are set, and the documented
- * default above otherwise. Returns what it used so server.js can print it.
+ * default above otherwise. Returns what it used so index.js can print it.
  * Afterwards only the hash is stored, so the password cannot be read back
  * out of auth.json by anyone, which is why that printout matters.
  */
@@ -175,7 +218,7 @@ function seedIfEmpty() {
     username,
     displayName: "Super Admin",
     role: "superadmin",
-    jiraNames: [],
+    directoryUserId: null,
     salt, hash,
     active: true,
     createdAt: new Date().toISOString(),
@@ -284,10 +327,10 @@ function listUsers() {
   return load().users.map(publicUser).sort((a, b) => a.username.localeCompare(b.username));
 }
 
-function createUser({ username, displayName, role, password, jiraNames }) {
+function createUser({ username, displayName, role, password, directoryUserId }) {
   const store = load();
-  const names = normalizeJiraNames(jiraNames);
-  const errors = validateCredentials(store, { username, displayName, role, password, jiraNames: names });
+  const link = normalizeLink(directoryUserId);
+  const errors = validateCredentials(store, { username, displayName, role, password, directoryUserId: link });
   if (errors.length) return { ok: false, errors };
 
   const { salt, hash } = newCredentials(password);
@@ -296,7 +339,7 @@ function createUser({ username, displayName, role, password, jiraNames }) {
     username: normalizeUsername(username),
     displayName: String(displayName).trim(),
     role,
-    jiraNames: names,
+    directoryUserId: link,
     salt, hash,
     active: true,
     createdAt: new Date().toISOString(),
@@ -308,17 +351,19 @@ function createUser({ username, displayName, role, password, jiraNames }) {
   return { ok: true, user: publicUser(user) };
 }
 
-function updateUser(userId, { username, displayName, role, active, jiraNames }, actingUserId) {
+function updateUser(userId, { username, displayName, role, active, directoryUserId }, actingUserId) {
   const store = load();
   const user = store.users.find((u) => u.id === userId);
   if (!user) return { ok: false, errors: ["That user no longer exists."] };
 
   const nextRole = role || user.role;
   const nextActive = active === undefined ? user.active !== false : !!active;
-  const nextJiraNames = normalizeJiraNames(jiraNames === undefined ? user.jiraNames : jiraNames);
+  const nextLink = directoryUserId === undefined
+    ? normalizeLink(user.directoryUserId)
+    : normalizeLink(directoryUserId);
 
   const errors = validateCredentials(store,
-    { username, displayName, role: nextRole, jiraNames: nextJiraNames }, userId);
+    { username, displayName, role: nextRole, directoryUserId: nextLink }, userId);
   if (errors.length) return { ok: false, errors };
 
   const losingSuperAdmin = user.role === "superadmin" && (nextRole !== "superadmin" || !nextActive);
@@ -336,7 +381,7 @@ function updateUser(userId, { username, displayName, role, active, jiraNames }, 
   user.username = normalizeUsername(username);
   user.displayName = String(displayName).trim();
   user.role = nextRole;
-  user.jiraNames = nextJiraNames;
+  user.directoryUserId = nextLink;
   user.active = nextActive;
   user.updatedAt = new Date().toISOString();
 
@@ -401,9 +446,65 @@ function changeOwnPassword(userId, currentPassword, newPassword) {
   return { ok: true };
 }
 
+/**
+ * Bridges accounts written before the link existed, when each one carried
+ * its own copy of the Jira names.
+ *
+ * The match uses exactly the rule the ticket sync uses — data.js
+ * matchUserIdsByLabels — so a converted account and a ticket cannot end up
+ * disagreeing about who a label belongs to. Names resolving to two
+ * different people, or to nobody, are left unlinked for a super admin to
+ * settle by hand rather than guessed at.
+ *
+ * Runs on every boot; a no-op once there is nothing left to convert.
+ * Returns what it did so index.js can say so on the console.
+ */
+function linkAccountsToDirectory() {
+  const store = load();
+  const people = readDirectory();
+  const linked = [];
+  const unresolved = [];
+  let changed = false;
+
+  store.users.forEach((user) => {
+    if (!("jiraNames" in user)) return;
+    const names = Array.isArray(user.jiraNames) ? user.jiraNames : [];
+
+    // Already linked, or nothing to go on: the old field has been
+    // superseded and can go.
+    if (user.directoryUserId || !names.length) {
+      delete user.jiraNames;
+      changed = true;
+      return;
+    }
+
+    const { matched } = matchUserIdsByLabels(names, people);
+    if (matched.length !== 1) {
+      // Nobody, or more than one person, answers to these. Keep the names
+      // exactly as they were — deleting them would destroy the only record
+      // of what this account used to answer to, which is the very thing
+      // somebody needs in order to fix it. publicUser() ignores the field,
+      // so it grants nothing; it just stays readable, and stays reported
+      // on every boot until a super admin settles it.
+      unresolved.push(`@${user.username} (${names.join(", ")})`);
+      return;
+    }
+
+    user.directoryUserId = matched[0];
+    delete user.jiraNames;
+    changed = true;
+    const person = people.find((p) => p.id === matched[0]);
+    linked.push(`@${user.username} → ${person ? person.name : matched[0]}`);
+  });
+
+  if (changed) save(store);
+  return { linked, unresolved };
+}
+
 module.exports = {
   AUTH_ROLES, roleCan,
   MIN_PASSWORD_LENGTH, DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD,
+  useDirectory, linkAccountsToDirectory,
   seedIfEmpty, usingDefaultPassword, signIn, signOut, userForToken,
   listUsers, createUser, updateUser, deleteUser, setPassword, changeOwnPassword
 };

@@ -208,10 +208,15 @@ const TicketTable = (() => {
     const jira = State.getSettings().jira;
     const occupying = jira.occupyingStatuses || [];
     if (!occupying.length) return "";
-    const releasing = jira.releasingStatuses || [];
+    // Terminal statuses free an environment whether or not anyone listed
+    // them, so they belong in the sentence that says what frees one.
+    const seen = new Set();
+    const releasing = [...(jira.releasingStatuses || []), ...JIRA_TERMINAL_STATUSES]
+      .filter((s) => !seen.has(s.toLowerCase()) && seen.add(s.toLowerCase()));
+
     return `<p class="pt-4 text-center text-[11px] text-faint">
-      A ticket holds its repositories while Jira has it at ${H.esc(occupying.join(", "))}${
-        releasing.length ? `, and hands them back at ${H.esc(releasing.join(", "))}` : ""} —
+      A ticket holds its repositories while Jira has it at ${H.esc(occupying.join(", "))},
+      and hands them back at ${H.esc(releasing.join(", "))} —
       every other status is on this list without holding anything.
     </p>`;
   }

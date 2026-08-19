@@ -20,7 +20,7 @@ const Actions = (() => {
    * one place to read rather than a check scattered through seven pages.
    *
    * It is a courtesy, not the boundary: the same capability is checked
-   * again in server.js on whichever route the action ends up calling, with
+   * again on the server on whichever route the action ends up calling, with
    * the same roleCan() from data.js. An action missing from this map is a
    * UI slip that offers someone a button they will be refused — never a
    * way past the server.

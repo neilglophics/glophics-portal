@@ -2,7 +2,7 @@
  * Persistence layer. Everything above this file (state.js) talks to
  * Storage's load()/save()/subscribeRemote() only.
  *
- * When served by server.js, state lives on that server and is pushed to
+ * When served by the sync server, state lives there and is pushed to
  * every open tab over Server-Sent Events — that's what makes assign/edit/
  * release show up live for other viewers (e.g. over VS Code Live Share).
  * When opened directly as a file (no server), the network calls fail
@@ -19,9 +19,13 @@ const Storage = (() => {
   let readOnly = false;
   function setReadOnly(value) { readOnly = !!value; }
 
+  // The cache is what this browser falls back to with no server: the board
+  // as configured, not what Jira said a while ago. Leaving the sync's own
+  // lists out of it keeps a save small — they are most of the payload, and
+  // they would be stale by the time anything read them back.
   function cacheLocally(appData) {
     try {
-      localStorage.setItem(LOCAL_KEY, JSON.stringify(appData));
+      localStorage.setItem(LOCAL_KEY, JSON.stringify(withoutJiraDerived(appData)));
     } catch (err) {
       // storage full/unavailable — remote sync (if any) still works
     }
@@ -76,7 +80,7 @@ const Storage = (() => {
     });
   }
 
-  // Fire-and-forget nudge for server.js to run a Jira sync pass right now
+  // Fire-and-forget nudge for the server to run a Jira sync pass right now
   // instead of waiting for its next scheduled tick — used right after
   // adding a new environment, so an already-existing matching ticket
   // populates immediately. A no-op (silently ignored) with no server
@@ -87,7 +91,7 @@ const Storage = (() => {
 
   /**
    * Subscribes to live updates pushed by other viewers connected to the same
-   * server.js instance. onUpdate receives the full appData whenever it
+   * server instance. onUpdate receives the full appData whenever it
    * changes remotely. onStatusChange("connected" | "offline") reflects
    * whether we're actually talking to a shared server right now.
    */

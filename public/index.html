@@ -214,8 +214,9 @@
 <div id="modal-host"></div>
 
 <!-- Data layer: seed + migrations, persistence, and the single source of
-     truth. Shared with server.js via data.js's module.exports. -->
-<script src="js/data.js"></script>
+     truth. Shared with the server via data.js's module.exports. -->
+<!-- The one module both sides run. Served from shared/, not public/. -->
+<script src="/shared/data.js"></script>
 <script src="js/storage.js"></script>
 <script src="js/state.js"></script>
 <script src="js/auth.js"></script>

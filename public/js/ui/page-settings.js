@@ -1,6 +1,9 @@
 /**
  * Jira connection, the rules that claim and free a server, booking defaults,
- * and the three directories.
+ * and the two directories.
+ *
+ * People used to be a third tab here. They are on the Users page now,
+ * beside the sign-in accounts that point at them — one list, edited once.
  *
  * Directory rows edit in place; adding one opens a modal. All writes go
  * through State.* — this file never touches appData, and never persists
@@ -19,33 +22,11 @@ Router.register("settings", (() => {
   let jiraConfig = null;
   let fetching = false;
 
-  const TABS = [["accounts", "Accounts"], ["users", "Users"], ["servers", "Servers"]];
+  const TABS = [["accounts", "Accounts"], ["servers", "Servers"]];
 
   // ---------- directories ----------
 
   function directoryRows() {
-    if (ui.tab === "users") {
-      return State.getUsers().map((u) => {
-        // The display name is what the board shows; the Jira names are what
-        // a ticket's "Ticket Assignee" field is matched against, so the row
-        // states both rather than letting one stand in for the other.
-        const jiraNames = userJiraNames(u);
-        return {
-          key: "user:" + u.id,
-          title: u.name,
-          meta: `${u.role || "No role set"} · Jira: ${jiraNames.join(", ") || "—"}`,
-          leading: H.avatar(u, "h-9 w-9"),
-          fields: H.field("Display name", { value: u.name, data: { "data-field": "name" } }) +
-                  H.field("Role", { value: u.role || "", data: { "data-field": "role" } }) +
-                  H.field("Jira assignee names", {
-                    value: jiraNames.join(", "), span: true,
-                    placeholder: "e.g. [BE]_Sem, [QA]_Sem — comma separated",
-                    data: { "data-field": "jiraNames" }
-                  })
-        };
-      });
-    }
-
     if (ui.tab === "servers") {
       return State.getServers().map((s) => {
         const account = State.getAccount(s.accountId);
@@ -120,7 +101,7 @@ Router.register("settings", (() => {
       </div>`;
   }
 
-  const ADD_LABEL = { accounts: "Add account", users: "Add user", servers: "Add environment" };
+  const ADD_LABEL = { accounts: "Add account", servers: "Add environment" };
 
   function directories() {
     const rows = directoryRows();
@@ -186,24 +167,70 @@ Router.register("settings", (() => {
       </div>`}`);
   }
 
+  /**
+   * What "never fetched" costs, said plainly under the three lists.
+   *
+   * A status can be ticked in two columns at once and the sync will do
+   * exactly what the ticks say — which for a status that is both occupying
+   * and never fetched means it can never claim anything, because the
+   * ticket is never pulled. That is a real setting, not an error, so this
+   * says what will happen rather than refusing it.
+   */
+  function fetchNote(jira) {
+    const ignored = jira.ignoredStatuses || [];
+    if (!ignored.length) {
+      return `<p class="pt-3 text-[11px] text-faint">
+        Every status is fetched. Anything not occupying or releasing is listed on the ticket
+        pages without holding a repository.</p>`;
+    }
+    const clash = ignored.filter((s) => (jira.occupyingStatuses || []).includes(s));
+    return `
+      <p class="pt-3 text-[11px] leading-relaxed text-faint">
+        ${H.esc(ignored.join(", "))} ${ignored.length === 1 ? "is" : "are"} left out of the Jira
+        query, so ${ignored.length === 1 ? "it" : "they"} cost nothing to sync and appear nowhere.
+        A ticket already holding repositories is still fetched by key whatever status it reaches,
+        so a claim can always be freed.
+      </p>
+      ${clash.length ? `<p class="pt-2 text-[11px] font-semibold leading-relaxed text-warn">
+        ${H.esc(clash.join(", "))} ${clash.length === 1 ? "is" : "are"} also marked as occupying.
+        A ticket at ${clash.length === 1 ? "that status" : "those statuses"} is never pulled, so it
+        will never claim an environment — untick it in one column or the other.</p>` : ""}`;
+  }
+
   function statusRulesCard() {
     const jira = State.getSettings().jira;
+    // A finished or cancelled ticket frees its environment and can never
+    // take one, whatever these lists say — so rather than offer a box that
+    // decides nothing, those two columns show the answer and say why.
+    const fixed = (kind, status) => {
+      if (!statusIsTerminal(status)) return null;
+      if (kind === "releasing") return { on: true, tag: "always", why: "A finished or cancelled ticket always frees its environment." };
+      if (kind === "occupying") return { on: false, tag: "never", why: "A finished or cancelled ticket can't hold an environment." };
+      return null;
+    };
+
     const list = (selected, kind) => `
       <div class="max-h-44 space-y-1 overflow-y-auto rounded-xl bg-subtle p-2 no-scrollbar">
         ${JIRA_STATUS_VOCABULARY.map((status) => {
-          const on = selected.includes(status);
-          return `<label class="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 transition hover:bg-surface">
-            <input type="checkbox" ${on ? "checked" : ""}
+          const locked = fixed(kind, status);
+          const on = locked ? locked.on : selected.includes(status);
+          return `<label title="${H.esc(locked ? locked.why : "")}"
+            class="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 transition ${
+              locked ? "cursor-default" : "cursor-pointer hover:bg-surface"}">
+            <input type="checkbox" ${on ? "checked" : ""} ${locked ? "disabled" : ""}
                    data-change="status-rule" data-kind="${kind}" data-status="${H.esc(status)}"
-                   class="h-3.5 w-3.5 rounded accent-brand-500" />
-            <span class="text-[11px] font-medium ${on ? "text-ink" : "text-muted"}">${H.esc(status)}</span>
+                   class="h-3.5 w-3.5 rounded accent-brand-500 ${locked ? "opacity-50" : ""}" />
+            <span class="text-[11px] font-medium ${
+              locked ? "text-faint" : on ? "text-ink" : "text-muted"}">${H.esc(status)}</span>
+            ${locked ? `<span class="ml-auto text-[9px] font-bold uppercase tracking-wide text-faintest">${locked.tag}</span>` : ""}
           </label>`;
         }).join("")}
       </div>`;
 
     return H.card("Status rules",
-      "A ticket claims its repositories on reaching a status on the left, and frees them on the right. Any other status leaves an active claim alone.", `
-      <div class="grid gap-4 sm:grid-cols-2">
+      "A ticket claims its repositories on reaching an occupying status and frees them on a releasing one; any other status leaves an active claim alone. A status marked never fetched is not asked of Jira at all.",
+      `
+      <div class="grid gap-4 sm:grid-cols-3">
         <div>
           <p class="pb-2 text-[11px] font-semibold text-muted">Occupies a server</p>
           ${list(jira.occupyingStatuses || [], "occupying")}
@@ -212,7 +239,17 @@ Router.register("settings", (() => {
           <p class="pb-2 text-[11px] font-semibold text-muted">Frees the server</p>
           ${list(jira.releasingStatuses || [], "releasing")}
         </div>
+        <div>
+          <p class="pb-2 text-[11px] font-semibold text-muted">Never fetched</p>
+          ${list(jira.ignoredStatuses || [], "ignored")}
+        </div>
       </div>
+      <p class="pt-3 text-[11px] leading-relaxed text-faint">
+        ${H.esc(JIRA_TERMINAL_STATUSES.join(", "))} are decided for you: a ticket that has been
+        finished or cancelled frees whatever it was holding on the next sync, and can never take
+        an environment. Nothing is left booked in the name of a ticket nobody will come back to.
+      </p>
+      ${fetchNote(jira)}
       <div class="mt-4">
         ${H.select("Poll interval", [1, 5, 15, 30].map((m) => ({ value: String(m), label: `Every ${m} minute${m === 1 ? "" : "s"}` })),
           { value: String(jira.pollIntervalMinutes || 1), data: { "data-change": "poll-interval" } })}
@@ -290,7 +327,6 @@ Router.register("settings", (() => {
       confirmLabel: "Remove",
       onConfirm: () => {
         if (kind === "account") State.removeAccount(id);
-        else if (kind === "user") State.removeUser(id);
         else State.removeServer(id);
         setUi({ editing: null, error: null });
       }
@@ -312,10 +348,6 @@ Router.register("settings", (() => {
       result = State.updateAccount(id, {
         displayName: val("displayName"),
         repositories: val("repositories").split(",").map((r) => r.trim()).filter(Boolean)
-      });
-    } else if (kind === "user") {
-      result = State.updateUser(id, {
-        name: val("name"), role: val("role"), jiraNames: val("jiraNames")
       });
     } else {
       const repoUrls = {};
@@ -345,9 +377,16 @@ Router.register("settings", (() => {
   Actions.onChange("booking-length", (el) => State.updateSettings({ defaultBookingHours: Number(el.value) }));
   Actions.onChange("on-expiry", (el) => State.updateSettings({ onExpiry: el.value }));
 
+  const STATUS_RULE_KEYS = {
+    occupying: "occupyingStatuses",
+    releasing: "releasingStatuses",
+    ignored: "ignoredStatuses"
+  };
+
   Actions.onChange("status-rule", (el) => {
     const jira = State.getSettings().jira;
-    const key = el.dataset.kind === "occupying" ? "occupyingStatuses" : "releasingStatuses";
+    const key = STATUS_RULE_KEYS[el.dataset.kind];
+    if (!key) return;
     const current = new Set(jira[key] || []);
     if (el.checked) current.add(el.dataset.status); else current.delete(el.dataset.status);
     State.updateJiraOptions({ [key]: [...current] });
@@ -411,7 +450,6 @@ Router.register("settings", (() => {
 
   function describe(kind, id) {
     if (kind === "account") return (State.getAccount(id) || {}).displayName || "this account";
-    if (kind === "user") return (State.getUser(id) || {}).name || "this user";
     return (State.getServer(id) || {}).name || "this environment";
   }
 
@@ -422,7 +460,6 @@ Router.register("settings", (() => {
         ? `${envs} environment${envs === 1 ? "" : "s"} belong to it and will be left without an account.`
         : "It has no environments, so nothing else is affected.";
     }
-    if (kind === "user") return "Their claims stay, but they will no longer be listed as a holder.";
     const claims = State.getServerTickets(id).length;
     return claims
       ? `${claims} active claim${claims === 1 ? "" : "s"} and every note on it will be removed too.`

@@ -315,24 +315,66 @@ const Modals = (() => {
     });
   }
 
-  function addUser() {
+  // ---------- the people directory ----------
+
+  /**
+   * A person on the board: the name claims are listed under, what they do,
+   * and the Jira labels their tickets arrive with.
+   *
+   * Not a sign-in account — that is a separate record pointing at this one
+   * (see personField below). Most of the directory never signs in at all;
+   * they only need to be assignable.
+   */
+  const PERSON_FIELDS = (person) => `<div class="grid gap-3 sm:grid-cols-2">
+      ${H.field("Display name", {
+        data: { name: "name" }, value: person ? person.name : "",
+        placeholder: "e.g. [BE]_Sem"
+      })}
+      ${H.field("Role", {
+        data: { name: "role" }, value: person ? person.role || "" : "Team",
+        placeholder: "e.g. Backend"
+      })}
+      ${H.field("Jira assignee names", {
+        data: { name: "jiraNames" }, span: true,
+        value: person ? userJiraNames(person).join(", ") : "",
+        placeholder: "Comma separated — leave blank to use the display name"
+      })}
+      <p class="text-[11px] leading-relaxed text-faint sm:col-span-2">
+        Exactly what Jira writes in a ticket's <strong>Ticket Assignee</strong> field. It is how a
+        ticket finds its holder, and how a linked login knows which tickets are its own.
+      </p>
+    </div>`;
+
+  function personAdd(onDone) {
     open({
-      title: "Add user",
-      subtitle: "Their Jira assignee names are what a ticket's \"Ticket Assignee\" field is matched against.",
-      submitLabel: "Add user",
-      body: `<div class="grid gap-3 sm:grid-cols-2">
-        ${H.field("Display name", { data: { name: "name" }, placeholder: "e.g. [BE]_Sem" })}
-        ${H.field("Role", { data: { name: "role" }, value: "Team", placeholder: "e.g. Backend" })}
-        ${H.field("Jira assignee names", {
-          data: { name: "jiraNames" }, span: true,
-          placeholder: "Comma separated — leave blank to use the display name"
-        })}
-      </div>`,
+      title: "Add person",
+      subtitle: "Somebody claims can be assigned to. Giving them a login is a separate step.",
+      submitLabel: "Add person",
+      body: PERSON_FIELDS(null),
       onSubmit: () => {
         const v = formValues();
         const result = State.addUser({ name: v.name, role: v.role, jiraNames: v.jiraNames });
         if (!result.ok) { showError(result.errors); return; }
         close();
+        if (onDone) onDone();
+      }
+    });
+  }
+
+  function personEdit(person, onDone) {
+    open({
+      title: "Edit person",
+      subtitle: person.name,
+      submitLabel: "Save changes",
+      body: PERSON_FIELDS(person),
+      onSubmit: () => {
+        const v = formValues();
+        const result = State.updateUser(person.id, {
+          name: v.name, role: v.role, jiraNames: v.jiraNames
+        });
+        if (!result.ok) { showError(result.errors); return; }
+        close();
+        if (onDone) onDone();
       }
     });
   }
@@ -393,10 +435,11 @@ const Modals = (() => {
     });
   }
 
-  // The three directory tabs share one Add button; this picks its form.
+  // Both directory tabs share one Add button; this picks its form. People
+  // are not among them any more — they live on the Users page, beside the
+  // logins that point at them.
   function directoryAdd(tab) {
-    if (tab === "users") addUser();
-    else if (tab === "servers") addServer();
+    if (tab === "servers") addServer();
     else addAccount();
   }
 
@@ -417,33 +460,47 @@ const Modals = (() => {
   }
 
   /**
-   * The Jira "Ticket Assignee" labels a login answers to.
+   * Which person on the board this login is.
    *
-   * Offered as a datalist of the names already on the board rather than a
-   * bare text box: these labels are shaped like "[QA]_Jhoewell", and a typo
-   * costs nothing at save time and then silently shows that person an empty
-   * page. Names seen on tickets but missing from the directory are in the
-   * list too — those are exactly the people whose login needs one.
+   * The account carries a username and a role; everything about the person —
+   * their job, and the Jira "Ticket Assignee" labels their tickets arrive
+   * under — belongs to the directory entry this points at. Picking from a
+   * list rather than retyping a label is the whole point: these are shaped
+   * like "[QA]_Jhoewell", and a typo used to cost nothing at save time and
+   * then silently show that person an empty My tickets.
+   *
+   * People already spoken for by another account are listed but disabled.
+   * Hiding them would leave a super admin hunting for somebody who is right
+   * there, so the row says who has them instead.
    */
-  function jiraNameField(value) {
-    const seen = new Set();
-    Model.assigneeRows().forEach((row) => {
-      seen.add(row.name);
-      row.jiraNames.forEach((n) => seen.add(n));
+  function personField(selectedId, accounts, editingAccountId) {
+    const claimed = new Map();
+    (accounts || []).forEach((a) => {
+      if (a.directoryUserId && a.id !== editingAccountId) claimed.set(a.directoryUserId, a.username);
     });
-    const options = [...seen].filter(Boolean).sort((a, b) => a.localeCompare(b));
+
+    const people = State.getUsers().slice().sort((a, b) => a.name.localeCompare(b.name));
+    const options = [`<option value="">Nobody yet — link later</option>`].concat(
+      people.map((p) => {
+        const takenBy = claimed.get(p.id);
+        const label = `${p.name}${p.role ? ` · ${p.role}` : ""}${takenBy ? ` — already @${takenBy}` : ""}`;
+        return `<option value="${H.esc(p.id)}"${p.id === selectedId ? " selected" : ""}${takenBy ? " disabled" : ""}>${H.esc(label)}</option>`;
+      })
+    );
 
     return `
-      ${H.field("Jira assignee name", {
-        value: value || "", span: true,
-        data: { name: "jiraNames", list: "jira-assignee-options", autocapitalize: "none", spellcheck: "false" },
-        placeholder: "e.g. [QA]_Jerome — comma separated if Jira knows them by more than one"
-      })}
-      <datalist id="jira-assignee-options">${options.map((n) => `<option value="${H.esc(n)}"></option>`).join("")}</datalist>
+      <label class="block sm:col-span-2">
+        <span class="text-[11px] font-semibold text-muted">Person on the board</span>
+        <select name="directoryUserId"
+          class="mt-1.5 w-full rounded-xl bg-subtle px-3.5 py-2.5 text-sm text-ink-2 focus:bg-surface focus:outline-none focus:ring-2 focus:ring-brand-soft">
+          ${options.join("")}
+        </select>
+      </label>
       <p class="text-[11px] leading-relaxed text-faint sm:col-span-2">
-        Exactly what Jira writes in a ticket's <strong>Ticket Assignee</strong> field. It is how
-        <strong>My tickets</strong> knows which tickets are theirs. Leave it blank if they never
-        appear on one.
+        ${people.length
+          ? `Whose tickets this login sees under <strong>My tickets</strong>. Their Jira assignee
+             names come from that entry, so they are written once, in one place.`
+          : `Nobody is in the directory yet — add a person first and this login can point at them.`}
       </p>`;
   }
 
@@ -463,9 +520,12 @@ const Modals = (() => {
     return true;
   }
 
-  function authUserAdd(onDone) {
+  // `personId` preselects somebody — the Users page opens this from a
+  // particular row, and having to find that person again in the list would be
+  // asking twice for something already said.
+  function authUserAdd(accounts, onDone, personId) {
     open({
-      title: "Add user",
+      title: "Give someone a login",
       subtitle: "Creates the credentials they sign in with, and the role that decides what they can do.",
       submitLabel: "Create user",
       wide: true,
@@ -474,7 +534,7 @@ const Modals = (() => {
           <div class="grid gap-3 sm:grid-cols-2">
             ${H.field("Display name", { data: { name: "displayName" }, placeholder: "e.g. Jerome Cruz" })}
             ${H.field("Username", { data: { name: "username", autocapitalize: "none", spellcheck: "false" }, placeholder: "e.g. jerome" })}
-            ${jiraNameField("")}
+            ${personField(personId || "", accounts, null)}
           </div>
           ${passwordPair(["Password", "Confirm password"])}
           <div>
@@ -487,7 +547,7 @@ const Modals = (() => {
         if (!passwordsMatch(v)) return;
         const result = await Auth.createUser({
           displayName: v.displayName, username: v.username,
-          role: v.role, password: v.password, jiraNames: v.jiraNames
+          role: v.role, password: v.password, directoryUserId: v.directoryUserId
         });
         if (!result.ok) { showError(result.errors || result.error || "Couldn't create that user."); return; }
         close();
@@ -496,7 +556,7 @@ const Modals = (() => {
     });
   }
 
-  function authUserEdit(user, onDone) {
+  function authUserEdit(user, accounts, onDone) {
     open({
       title: "Edit user",
       subtitle: `@${user.username}`,
@@ -507,7 +567,7 @@ const Modals = (() => {
           <div class="grid gap-3 sm:grid-cols-2">
             ${H.field("Display name", { data: { name: "displayName" }, value: user.displayName })}
             ${H.field("Username", { data: { name: "username", autocapitalize: "none", spellcheck: "false" }, value: user.username })}
-            ${jiraNameField((user.jiraNames || []).join(", "))}
+            ${personField(user.directoryUserId || "", accounts, user.id)}
           </div>
           <div>
             <p class="pb-2 text-[11px] font-semibold text-muted">Role</p>
@@ -522,7 +582,8 @@ const Modals = (() => {
         const v = formValues();
         const result = await Auth.updateUser(user.id, {
           displayName: v.displayName, username: v.username,
-          role: v.role, active: !!(v.active && v.active.length), jiraNames: v.jiraNames
+          role: v.role, active: !!(v.active && v.active.length),
+          directoryUserId: v.directoryUserId
         });
         if (!result.ok) { showError(result.errors || result.error || "Couldn't save that user."); return; }
         close();
@@ -606,6 +667,7 @@ const Modals = (() => {
   return {
     open, close, isOpen, showError, confirm, info,
     assign, note, repoUrl, directoryAdd, statusChips,
+    personAdd, personEdit,
     authUserAdd, authUserEdit, authUserPassword, changeOwnPassword,
     bind
   };

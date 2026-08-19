@@ -9,7 +9,7 @@
  * specific environment. Several claims can exist for the same server at
  * once (different tickets, different repos — a "partly free" server), and
  * more than one claim can touch the same repo ("Shared"). Which statuses
- * start/end a jira-sourced claim is server.js's runJiraSync() job; this
+ * start/end a jira-sourced claim is the server's runJiraSync() job; this
  * file only reads/writes the resulting list.
  */
 
@@ -351,7 +351,7 @@ const State = (() => {
 
     repoNames.forEach((repoName) => {
       const url = ((repoUrls && repoUrls[repoName]) || "").trim();
-      // An untouched url keeps the health server.js last measured for it —
+      // An untouched url keeps the health the server last measured for it —
       // only a changed one goes back to "checking".
       if (server.repos[repoName] && server.repos[repoName].url === url) return;
       server.repos[repoName] = { url, health: url ? "checking" : "unconfigured" };

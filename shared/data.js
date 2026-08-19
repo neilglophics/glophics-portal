@@ -27,7 +27,7 @@ const DEFAULT_ACCOUNTS = [
  * A server is an "environment" (e.g. one account's "hotfix-2" box) that
  * hosts ALL of that account's repos at once, each independently tracked:
  *   repos: { storefront: { url, health }, backend: { url, health }, admin: { url, health } }
- * accountId is permanent. `health` per repo is live-updated by server.js
+ * accountId is permanent. `health` per repo is live-updated by the server
  * pinging that repo's own url — any repo offline makes the environment show
  * "Needs attention" regardless of whether it's booked.
  *
@@ -36,7 +36,7 @@ const DEFAULT_ACCOUNTS = [
  * manual "Assign") currently occupying one or more specific repos on one
  * specific server. Several tickets can claim different repos of the same
  * server at once (a "partly free" environment), and a repo can be claimed
- * by more than one ticket at a time ("Shared"). See js/state.js for how
+ * by more than one ticket at a time ("Shared"). See public/js/state.js for how
  * claims are derived/synced and js/ui.js for how they render.
  */
 function buildRepos(urls) {
@@ -124,11 +124,52 @@ function buildDefaultTickets() {
 // environment, whatever the configured releasing statuses happen to be.
 const JIRA_TERMINAL_STATUSES = ["DONE", "CLOSED", "CANCELLED"];
 
+/**
+ * Whether a ticket at this status has stopped holding its repositories.
+ *
+ * Two ways to stop: the team's own releasing list — a ticket that has moved
+ * on to the next stage and is done with the environment — and reaching the
+ * end of its life. The second is not a preference. A cancelled or closed
+ * ticket is nobody's work in progress, and leaving an environment held in
+ * its name is a booking nothing will ever come back to clear. So a terminal
+ * status frees the environment whatever the lists say, and by the same
+ * argument can never take one.
+ */
+function statusFrees(jira, status) {
+  return statusIn((jira || {}).releasingStatuses, status) || statusIn(JIRA_TERMINAL_STATUSES, status);
+}
+
+function statusIsTerminal(status) {
+  return statusIn(JIRA_TERMINAL_STATUSES, status);
+}
+
 const JIRA_STATUS_VOCABULARY = [
   "OPEN", "IN PROGRESS", "TO REVIEW", "QA FAILED", "CANCELLED", "ON HOLD",
   "QA TESTING (DEV)", "QA TESTING (STG)", "LIVE DEPLOYMENT", "QA TESTING (LIVE)",
   "FINAL CHECKING", "DONE", "CLOSED"
 ];
+
+/**
+ * The parts of the board only Jira can answer for, rebuilt from scratch by
+ * every sync pass: the tickets that aren't holding anything, the ones it
+ * couldn't place, and when the last pass ran.
+ *
+ * Neither the server's state file nor the browser's local cache keeps
+ * these. They are three quarters of the board by size, they change every
+ * minute, and a copy that outlives the process it came from is only a
+ * stale answer to a question the next sync answers properly. Everything
+ * else — directories, environments, settings, notes, and the claims
+ * actually holding repositories — is hand-entered or not recoverable from
+ * Jira, so it is saved.
+ */
+const JIRA_DERIVED_KEYS = ["jiraIssues", "jiraSkipped", "lastJiraSyncAt"];
+
+// The board as it should be stored: everything except the above.
+function withoutJiraDerived(appData) {
+  const copy = { ...appData };
+  JIRA_DERIVED_KEYS.forEach((key) => delete copy[key]);
+  return copy;
+}
 
 const DEFAULT_SETTINGS = {
   defaultBookingHours: 4,
@@ -147,6 +188,15 @@ const DEFAULT_SETTINGS = {
     // e.g. QA FAILED doesn't free the environment, it's still being worked.
     occupyingStatuses: ["QA TESTING (DEV)", "QA TESTING (STG)"],
     releasingStatuses: ["FINAL CHECKING", "DONE"],
+    // Statuses the sync does not ask Jira for at all. A ticket parked at
+    // one of these is not waiting on an environment and not on its way to
+    // one, so pulling it only to file it away costs a request, a row and a
+    // chunk of every payload. Cut in the JQL, not after the fact.
+    //
+    // The one exception is a ticket already holding repositories: its key
+    // is asked for by name whatever status it reached, because reaching
+    // one of these is often exactly how a claim ends.
+    ignoredStatuses: ["OPEN", "TO REVIEW", "ON HOLD", "CANCELLED", "DONE", "CLOSED"],
     pollIntervalMinutes: 1,
     autoSync: true
   }
@@ -168,7 +218,7 @@ function buildDefaultAppData() {
 /**
  * Upgrades appData saved by older versions of this app in place. Returns
  * true if anything changed (caller should persist). Shared between the
- * browser (storage.js) and server.js so both apply the same rules to the
+ * browser (storage.js) and server/state-store.js so both apply the same rules to the
  * same on-disk/localStorage shape.
  */
 function migrateAppData(appData) {
@@ -317,6 +367,10 @@ function migrateAppData(appData) {
           : [...DEFAULT_SETTINGS.jira.releasingStatuses];
         changed = true;
       }
+      if (!Array.isArray(jira.ignoredStatuses)) {
+        jira.ignoredStatuses = [...DEFAULT_SETTINGS.jira.ignoredStatuses];
+        changed = true;
+      }
       if ("releaseOnStatuses" in jira) { delete jira.releaseOnStatuses; changed = true; }
       if ("autoReleaseOnClose" in jira) { delete jira.autoReleaseOnClose; changed = true; }
       if (jira.pollIntervalMinutes === undefined) { jira.pollIntervalMinutes = DEFAULT_SETTINGS.jira.pollIntervalMinutes; changed = true; }
@@ -339,7 +393,7 @@ function migrateAppData(appData) {
   return changed;
 }
 
-// ---------- Jira label matching (shared by state.js and server.js) ----------
+// ---------- Jira label matching (shared by state.js and the Jira sync) ----------
 // The "Repository" ticket field is free-text labels, not our repo keys —
 // translate the known synonyms (confirmed: API=backend; Admin/Frontend are
 // the literal/obvious reading of admin panel vs. customer storefront).
@@ -414,7 +468,7 @@ function findServerForTicket(ticketData, accounts, servers) {
   return { server };
 }
 
-// ---------- Access roles (shared by the browser and server.js) ----------
+// ---------- Access roles (shared by the browser and server/access.js) ----------
 // A role is a named set of capabilities. Both sides read this same list, so
 // what the UI hides and what the server refuses can never drift apart —
 // the UI hides on `roleCan()`, and every API route checks the same call.
@@ -468,10 +522,12 @@ function isValidRole(roleId) {
   return !!getRole(roleId);
 }
 
-// Lets server.js reuse the same seed/migration/matching logic via require() — no-op in the browser.
+// Lets the server reuse the same seed/migration/matching logic via require() — no-op in the browser.
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    buildDefaultAppData, migrateAppData, JIRA_STATUS_VOCABULARY, JIRA_TERMINAL_STATUSES, statusIn,
+    buildDefaultAppData, migrateAppData, JIRA_STATUS_VOCABULARY, JIRA_TERMINAL_STATUSES,
+    statusIn, statusFrees, statusIsTerminal,
+    JIRA_DERIVED_KEYS, withoutJiraDerived,
     matchRepositoriesToKeys, matchUserIdsByLabels, userJiraNames, findServerForTicket,
     AUTH_ROLES, getRole, roleCan, roleLabel, isValidRole
   };

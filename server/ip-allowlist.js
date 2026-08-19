@@ -12,7 +12,7 @@
  *   allowed-ips.json                                   (file, see the .example)
  *
  * An entry is a plain address (v4 or v6), a CIDR block, or one of the
- * aliases below. With no entries at all the gate stays open and server.js
+ * aliases below. With no entries at all the gate stays open and index.js
  * prints a warning — an empty allowlist means "not configured yet", never
  * "let nobody in", so a missing env var can't lock everyone out of a
  * running deployment.
@@ -33,7 +33,9 @@
 const fs = require("fs");
 const path = require("path");
 
-const CONFIG_FILE = path.join(__dirname, "allowed-ips.json");
+const { CONFIG_DIR } = require("./paths.js");
+
+const CONFIG_FILE = path.join(CONFIG_DIR, "allowed-ips.json");
 
 // Shorthands, so nobody has to remember which /8 the private ranges are.
 const ALIASES = {
@@ -262,7 +264,7 @@ function noteBlocked(ip, req) {
   console.warn(`[ip-allowlist] blocked ${key} (${req.method} ${req.url}) — add it to ALLOWED_IPS or allowed-ips.json to let it in`);
 }
 
-// The only call server.js makes. True = carry on; false = it has been
+// The only call index.js makes. True = carry on; false = it has been
 // logged already and the caller should answer 403.
 function allows(req) {
   const ip = clientIp(req);
