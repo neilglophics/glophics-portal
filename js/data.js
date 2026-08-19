@@ -3,10 +3,13 @@
  * After that, storage.js owns the live copy and this file is not read again.
  */
 
+// `name` is what the board shows; `jiraNames` is what Jira actually writes
+// in a ticket's "Ticket Assignee" field. They start out the same, and a
+// person who appears under more than one label collects the rest there.
 const DEFAULT_USERS = [
-  { id: "sem", name: "[BE]_Sem", role: "Backend" },
-  { id: "jerome", name: "[QA]_Jerome", role: "QA" },
-  { id: "neil", name: "[FE]_Neil", role: "Frontend" }
+  { id: "sem", name: "[BE]_Sem", role: "Backend", jiraNames: ["[BE]_Sem"] },
+  { id: "jerome", name: "[QA]_Jerome", role: "QA", jiraNames: ["[QA]_Jerome"] },
+  { id: "neil", name: "[FE]_Neil", role: "Frontend", jiraNames: ["[FE]_Neil"] }
 ];
 
 const DEFAULT_ACCOUNTS = [
@@ -157,7 +160,7 @@ function buildDefaultAppData() {
     tickets: buildDefaultTickets(),
     notes: {},
     jiraSkipped: [],
-    jiraWaiting: [],
+    jiraIssues: [],
     settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS))
   };
 }
@@ -175,7 +178,38 @@ function migrateAppData(appData) {
   if (!Array.isArray(appData.tickets)) appData.tickets = [];
   if (!appData.notes) appData.notes = {};
   if (!Array.isArray(appData.jiraSkipped)) appData.jiraSkipped = [];
-  if (!Array.isArray(appData.jiraWaiting)) appData.jiraWaiting = [];
+  if (!Array.isArray(appData.jiraIssues)) appData.jiraIssues = [];
+
+  // jiraWaiting held only the tickets sitting on a branch without holding
+  // it, and only enough of each to count them. jiraIssues replaces it with
+  // every ticket the sync saw that isn't an active claim, at whatever
+  // status it is at — the ticket tables list those, so they carry the
+  // assignees, repositories and dates a row needs.
+  //
+  // What is already on disk is carried over as far as it goes rather than
+  // dropped: the environment pages keep their "N more on this branch" note
+  // from the first paint, and the next sync fills in the rest.
+  if (appData.jiraWaiting !== undefined) {
+    if (!appData.jiraIssues.length) {
+      appData.jiraIssues = appData.jiraWaiting.map((w) => ({
+        key: w.key, serverId: w.serverId, accountName: null, branch: null,
+        repos: [], userIds: [], rawAssignees: [],
+        status: w.status, summary: w.summary, startTime: null, endTime: null
+      }));
+    }
+    delete appData.jiraWaiting;
+    changed = true;
+  }
+
+  // A user's display name used to double as their Jira assignee label.
+  // Seeding jiraNames from it keeps every existing directory matching
+  // exactly what it matched before, and gives people somewhere to add the
+  // other labels Jira knows them by.
+  (appData.users || []).forEach((user) => {
+    if (Array.isArray(user.jiraNames)) return;
+    user.jiraNames = user.name ? [user.name] : [];
+    changed = true;
+  });
 
   appData.servers.forEach((server) => {
     if (server.url === undefined && server.hostname !== undefined) {
@@ -326,16 +360,37 @@ function matchRepositoriesToKeys(labels, validKeys) {
   return { matched, unmatched };
 }
 
+// Whether a status is in one of the configured lists. Jira reports its own
+// casing and the lists are written in whatever the reader typed, so every
+// comparison in the app goes through here.
+function statusIn(list, statusName) {
+  return (list || []).some((s) => String(s).trim().toLowerCase() === String(statusName || "").trim().toLowerCase());
+}
+
+// The labels Jira may write for one person. Empty falls back to the
+// display name, so a directory that predates the field still matches.
+function userJiraNames(user) {
+  const names = (Array.isArray(user.jiraNames) ? user.jiraNames : [])
+    .map((n) => (n || "").trim()).filter(Boolean);
+  return names.length ? names : [(user.name || "").trim()].filter(Boolean);
+}
+
 // Matches a Jira ticket's "Ticket Assignee" label values against
-// configured users by display name (exact, then case-insensitive).
+// configured users by their Jira names (exact, then case-insensitive).
+// One person can carry several labels — the same tester is "[QA]_Jerome"
+// on one board and "[QA]_Jerome_C" on another — so a label that matched
+// nobody is reported rather than guessed at.
 function matchUserIdsByLabels(labels, users) {
   const matched = [];
   const unmatched = [];
+  const hits = (user, test) => userJiraNames(user).some(test);
   (labels || []).forEach((label) => {
-    const user = users.find((u) => u.name === label)
-      || users.find((u) => u.name.toLowerCase() === label.toLowerCase());
-    if (user) matched.push(user.id);
-    else unmatched.push(label);
+    const raw = (label || "").trim();
+    const lower = raw.toLowerCase();
+    const user = users.find((u) => hits(u, (n) => n === raw))
+      || users.find((u) => hits(u, (n) => n.toLowerCase() === lower));
+    if (!user) unmatched.push(label);
+    else if (!matched.includes(user.id)) matched.push(user.id);
   });
   return { matched, unmatched };
 }
@@ -416,8 +471,8 @@ function isValidRole(roleId) {
 // Lets server.js reuse the same seed/migration/matching logic via require() — no-op in the browser.
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    buildDefaultAppData, migrateAppData, JIRA_STATUS_VOCABULARY, JIRA_TERMINAL_STATUSES,
-    matchRepositoriesToKeys, matchUserIdsByLabels, findServerForTicket,
+    buildDefaultAppData, migrateAppData, JIRA_STATUS_VOCABULARY, JIRA_TERMINAL_STATUSES, statusIn,
+    matchRepositoriesToKeys, matchUserIdsByLabels, userJiraNames, findServerForTicket,
     AUTH_ROLES, getRole, roleCan, roleLabel, isValidRole
   };
 }

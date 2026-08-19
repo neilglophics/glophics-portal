@@ -70,10 +70,22 @@ const State = (() => {
   function getServers() { return appData.servers; }
   function getSettings() { return appData.settings; }
   function getSkippedTickets() { return appData.jiraSkipped || []; }
+
+  // Every ticket the last sync saw that is not holding a repository — the
+  // rest of the board, at whatever status Jira has it at. Claims live in
+  // appData.tickets; these are everything else, and the two never overlap.
+  function getJiraIssues() { return appData.jiraIssues || []; }
+
   // Tickets Jira matched to this environment that are not at an occupying
-  // status — they're on the branch but hold no repo.
+  // status — they're on the branch but hold no repo. Read off the board
+  // with the same rule the sync claims by, so the two cannot disagree.
   function getWaitingTickets(serverId) {
-    return (appData.jiraWaiting || []).filter((w) => w.serverId === serverId);
+    const jira = getSettings().jira;
+    return getJiraIssues().filter((t) =>
+      t.serverId === serverId &&
+      !statusIn(jira.occupyingStatuses, t.status) &&
+      !statusIn(jira.releasingStatuses, t.status) &&
+      !statusIn(JIRA_TERMINAL_STATUSES, t.status));
   }
   function getLastJiraSyncAt() { return appData.lastJiraSyncAt || null; }
 
@@ -395,11 +407,43 @@ const State = (() => {
     return window.matchUserIdsByLabels(labels, appData.users);
   }
 
-  // Same rules as updateUser below — a new display name is what the next
-  // sync matches Jira's assignee labels against, so it has to be unique.
-  function addUser({ name, role }) {
+  // ---------- users ----------
+
+  // "[BE]_Sem, [QA]_Sem" from a text field, or an array from anywhere
+  // else, normalised to the list the matcher wants. Blank means "use the
+  // display name", which is what the field did before it existed.
+  function normalizeJiraNames(value, fallbackName) {
+    const list = Array.isArray(value) ? value : String(value || "").split(",");
+    const names = [];
+    list.map((n) => String(n || "").trim()).filter(Boolean).forEach((n) => {
+      if (!names.some((seen) => seen.toLowerCase() === n.toLowerCase())) names.push(n);
+    });
+    if (names.length) return names;
+    const fallback = (fallbackName || "").trim();
+    return fallback ? [fallback] : [];
+  }
+
+  // Two users answering to the same Jira label makes matching a coin toss,
+  // so the clash is refused here rather than resolved silently at sync time.
+  function jiraNameClashes(names, exceptUserId) {
+    const errors = [];
+    names.forEach((name) => {
+      const owner = appData.users.find((u) =>
+        u.id !== exceptUserId && window.userJiraNames(u).some((n) => n.toLowerCase() === name.toLowerCase()));
+      if (!owner) return;
+      errors.push(owner.name.trim().toLowerCase() === name.toLowerCase()
+        ? `"${name}" belongs to a second user of the same name — remove the duplicate first.`
+        : `"${name}" is already a Jira name for ${owner.name}.`);
+    });
+    return errors;
+  }
+
+  // Same rules as updateUser below — the Jira names are what the next sync
+  // matches Jira's assignee labels against, so they have to be unique.
+  function addUser({ name, role, jiraNames }) {
     const nextName = (name || "").trim();
     const nextRole = (role || "").trim();
+    const nextJiraNames = normalizeJiraNames(jiraNames, nextName);
 
     const errors = [];
     if (!nextName) errors.push("Display name is required.");
@@ -407,24 +451,27 @@ const State = (() => {
     if (appData.users.some((u) => u.name.trim().toLowerCase() === nextName.toLowerCase())) {
       errors.push(`Another user is already called "${nextName}".`);
     }
+    errors.push(...jiraNameClashes(nextJiraNames, null));
     if (errors.length) return { ok: false, errors };
 
-    appData.users.push({ id: uid("user"), name: nextName, role: nextRole });
+    appData.users.push({ id: uid("user"), name: nextName, role: nextRole, jiraNames: nextJiraNames });
     notify();
     if (Storage.nudgeJiraSync) Storage.nudgeJiraSync();
     return { ok: true };
   }
 
-  // A user's display name is what Jira's "Ticket Assignee" labels are
-  // matched against (data.js matchUserIdsByLabels), so a rename changes who
-  // the next sync resolves a ticket to. Claims reference users by id, so
-  // the ones already on the board follow the rename on their own.
-  function updateUser(userId, { name, role }) {
+  // A user's Jira names are what "Ticket Assignee" labels are matched
+  // against (data.js matchUserIdsByLabels), so editing them changes who the
+  // next sync resolves a ticket to. Claims reference users by id, so the
+  // ones already on the board follow a rename on their own.
+  function updateUser(userId, { name, role, jiraNames }) {
     const user = getUser(userId);
     if (!user) return { ok: false, errors: ["User not found."] };
 
     const nextName = (name || "").trim();
     const nextRole = (role || "").trim();
+    const nextJiraNames = normalizeJiraNames(
+      jiraNames === undefined ? user.jiraNames : jiraNames, nextName);
 
     const errors = [];
     if (!nextName) errors.push("Display name is required.");
@@ -432,10 +479,12 @@ const State = (() => {
     if (appData.users.some((u) => u.id !== userId && u.name.trim().toLowerCase() === nextName.toLowerCase())) {
       errors.push(`Another user is already called "${nextName}".`);
     }
+    errors.push(...jiraNameClashes(nextJiraNames, userId));
     if (errors.length) return { ok: false, errors };
 
     user.name = nextName;
     user.role = nextRole;
+    user.jiraNames = nextJiraNames;
     notify();
     if (Storage.nudgeJiraSync) Storage.nudgeJiraSync();
     return { ok: true };
@@ -553,7 +602,8 @@ const State = (() => {
   return {
     init,
     subscribe, subscribeStatus, getSyncStatus,
-    getUsers, getAccounts, getServers, getSettings, getSkippedTickets, getWaitingTickets, getLastJiraSyncAt,
+    getUsers, getAccounts, getServers, getSettings, getSkippedTickets, getWaitingTickets,
+    getJiraIssues, getLastJiraSyncAt,
     getUser, getAccount, getServer, getSignedInUserId,
     getRepositoriesForAccount, getDisplayStatus,
     getFilters, getFilteredServers, getSummary,
@@ -562,7 +612,7 @@ const State = (() => {
     getRepoNote, setRepoNote,
     addClaim, forceFreeTicket, forceFreeServer,
     addServer, updateServer, removeServer, updateServerRepoUrl,
-    matchUserIdsByLabels, matchRepositoriesToKeys,
+    matchUserIdsByLabels, matchRepositoriesToKeys, normalizeJiraNames,
     addUser, updateUser, removeUser,
     addAccount, updateAccount, removeAccount,
     updateSettings, updateJiraOptions

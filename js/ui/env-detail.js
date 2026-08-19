@@ -36,10 +36,14 @@ const EnvDetail = (() => {
 
   const repoLabel = (repoName, repo, held) => `
     <div class="flex w-40 shrink-0 items-center gap-2.5">
-      <span class="w-9 shrink-0 rounded-md py-0.5 text-center text-[9px] font-bold ${
-        repo.health === "offline" ? "bg-rose-500/85 text-white"
-        : !repo.url ? "bg-line-2 text-muted"
-        : held ? "bg-amber-500/85 text-white" : "bg-emerald-500/85 text-white"}">${H.esc(Tokens.shortRepo(repoName))}</span>
+      ${H.repoChip({
+        name: repoName,
+        url: repo.url,
+        state: repo.health === "offline" ? "offline" : !repo.url ? "no URL configured" : held ? "held" : "free",
+        cls: repo.health === "offline" ? "bg-rose-500/85 text-white"
+          : !repo.url ? "bg-line-2 text-muted"
+          : held ? "bg-amber-500/85 text-white" : "bg-emerald-500/85 text-white"
+      })}
       <span class="truncate text-xs font-semibold capitalize text-body">${H.esc(repoName)}</span>
     </div>`;
 

@@ -24,6 +24,18 @@ const H = (() => {
 
   const jiraChip = (status) => status ? chip(Tokens.jiraChip(status), status) : "";
 
+  // A count-bearing toggle for narrowing a list. Selected reads as a solid
+  // brand pill, the rest as quiet outlines, so which way a table is cut is
+  // legible without reading a single label. Uses the fixed brand colour on
+  // purpose: it means the same thing in both themes.
+  const filterChip = (label, count, on, data) => `
+    <button type="button" ${attrs(data)}
+      class="inline-flex items-center gap-2 whitespace-nowrap rounded-full px-3 py-1.5 text-[11px] font-semibold transition ${
+        on ? "bg-brand-500 text-white" : "bg-surface text-muted ring-1 ring-line-2 hover:text-brand-fg hover:ring-brand-soft"}">
+      ${esc(label)}
+      <span class="rounded-full px-1.5 text-[10px] font-bold ${on ? "bg-white/20 text-white" : "bg-subtle-2 text-muted"}">${count}</span>
+    </button>`;
+
   // ---------- people ----------
 
   const avatar = (user, size = "h-8 w-8") =>
@@ -42,6 +54,19 @@ const H = (() => {
 
   // ---------- repositories ----------
 
+  // One SF/API/ADM chip. A repository with a URL becomes a link: the tooltip
+  // carries the address and a click opens it in a new tab. Without a URL
+  // there is nowhere to go, so it stays a plain badge and says so on hover.
+  const repoChip = ({ name, cls, state, url, extra = "" }) => {
+    const shape = `block w-9 shrink-0 rounded-md ${cls} py-0.5 text-center text-[9px] font-bold ${extra}`;
+    const short = esc(Tokens.shortRepo(name));
+    if (!url) return `<span title="${esc(`${name}: ${state}`)}" class="${shape}">${short}</span>`;
+    return `<a href="${esc(url)}" target="_blank" rel="noopener"
+      title="${esc(`${name}: ${state}
+${url}`)}"
+      class="${shape} cursor-pointer transition hover:brightness-110 hover:ring-2 hover:ring-brand-300">${short}</a>`;
+  };
+
   // The SF/API/ADM strip: green free, amber held, red offline, grey no URL.
   // Reads identically on a card and in a table, which is the point.
   const repoStrip = (row) => `<div class="flex gap-1">` + row.repoNames.map((name) => {
@@ -51,9 +76,8 @@ const H = (() => {
       : (!repo.url || repo.health === "unconfigured") ? "bg-line-2 text-muted"
       : held ? "bg-amber-500/85 text-white"
       : "bg-emerald-500/85 text-white";
-    const state = repo.health === "offline" ? "offline" : (!repo.url ? "no URL" : held ? "held" : "free");
-    return `<span title="${esc(name)}: ${state}"
-      class="w-9 rounded-md ${cls} py-0.5 text-center text-[9px] font-bold">${esc(Tokens.shortRepo(name))}</span>`;
+    const state = repo.health === "offline" ? "offline" : (!repo.url ? "no URL configured" : held ? "held" : "free");
+    return repoChip({ name, cls, state, url: repo.url });
   }).join("") + `</div>`;
 
   const bar = (pct, cls) =>
@@ -197,7 +221,7 @@ const H = (() => {
     </label>`;
 
   return {
-    esc, dash, muted, chip, dotChip, jiraChip, avatar, avatarStack, repoStrip, bar,
+    esc, dash, muted, chip, dotChip, jiraChip, filterChip, avatar, avatarStack, repoChip, repoStrip, bar,
     icon, iconBtn, btn, attrs,
     page, pageHead, card, statTile, notice, TONE,
     th, td, tr, table, empty,

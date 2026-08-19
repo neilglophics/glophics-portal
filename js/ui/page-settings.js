@@ -25,14 +25,25 @@ Router.register("settings", (() => {
 
   function directoryRows() {
     if (ui.tab === "users") {
-      return State.getUsers().map((u) => ({
-        key: "user:" + u.id,
-        title: u.name,
-        meta: u.role || "No role set",
-        leading: H.avatar(u, "h-9 w-9"),
-        fields: H.field("Display name", { value: u.name, data: { "data-field": "name" } }) +
-                H.field("Role", { value: u.role || "", data: { "data-field": "role" } })
-      }));
+      return State.getUsers().map((u) => {
+        // The display name is what the board shows; the Jira names are what
+        // a ticket's "Ticket Assignee" field is matched against, so the row
+        // states both rather than letting one stand in for the other.
+        const jiraNames = userJiraNames(u);
+        return {
+          key: "user:" + u.id,
+          title: u.name,
+          meta: `${u.role || "No role set"} · Jira: ${jiraNames.join(", ") || "—"}`,
+          leading: H.avatar(u, "h-9 w-9"),
+          fields: H.field("Display name", { value: u.name, data: { "data-field": "name" } }) +
+                  H.field("Role", { value: u.role || "", data: { "data-field": "role" } }) +
+                  H.field("Jira assignee names", {
+                    value: jiraNames.join(", "), span: true,
+                    placeholder: "e.g. [BE]_Sem, [QA]_Sem — comma separated",
+                    data: { "data-field": "jiraNames" }
+                  })
+        };
+      });
     }
 
     if (ui.tab === "servers") {
@@ -303,7 +314,9 @@ Router.register("settings", (() => {
         repositories: val("repositories").split(",").map((r) => r.trim()).filter(Boolean)
       });
     } else if (kind === "user") {
-      result = State.updateUser(id, { name: val("name"), role: val("role") });
+      result = State.updateUser(id, {
+        name: val("name"), role: val("role"), jiraNames: val("jiraNames")
+      });
     } else {
       const repoUrls = {};
       row.querySelectorAll('[data-field="url"]').forEach((node) => { repoUrls[node.dataset.repo] = node.value.trim(); });

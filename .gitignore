@@ -14,7 +14,7 @@ auth.json
 
 # Runtime state. server.js recreates this from the seed in js/data.js on
 # first run, and it accumulates live ticket data, internal URLs and names.
-shared-state.json
+shared-state*.json*
 
 node_modules/
 
