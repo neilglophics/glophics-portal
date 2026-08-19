@@ -198,7 +198,10 @@ const Model = (() => {
         claims: r.claims,
         tickets: r.claims.length,
         repos: r.claims.reduce((n, c) => n + c.claim.repos.length, 0),
-        envs: new Set(r.claims.map((c) => c.server.id)).size,
+        // A ticket Jira could not place on an environment counts towards
+        // the person's total but not towards how many environments they
+        // are on — it is on none.
+        envs: new Set(r.claims.filter((c) => c.server).map((c) => c.server.id)).size,
         soonest: ends.length ? Math.min(...ends) : null
       };
     // Busiest first; whoever is holding the most is who the page is about.
