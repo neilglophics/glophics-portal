@@ -49,8 +49,15 @@ Router.register("dashboard", {
       </section>
 
       <section class="mt-7">
-        <div class="flex items-center justify-between pb-4">
-          <h2 class="text-[17px] font-bold tracking-tight">Active claims</h2>
+        <div class="flex flex-wrap items-end justify-between gap-3 pb-4">
+          <div>
+            <h2 class="text-[17px] font-bold tracking-tight">Active tickets</h2>
+            <p class="mt-0.5 text-xs text-faint">
+              ${claims.length < s.claims
+                ? `The ${claims.length} freeing up first, of ${s.claims} holding a repository`
+                : `${s.claims} ticket${s.claims === 1 ? " is" : "s are"} holding a repository`}
+            </p>
+          </div>
           <a href="#tickets" class="text-xs font-semibold text-brand-fg hover:underline">See all</a>
         </div>
         ${H.table(

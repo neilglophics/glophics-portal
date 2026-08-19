@@ -78,6 +78,10 @@ const Actions = (() => {
     root.addEventListener("click", (e) => {
       const el = e.target.closest("[data-action]");
       if (!el || !root.contains(el)) return;
+      // A real link sitting inside a clickable row belongs to the link: the
+      // browser follows it and the row's own action stays out of the way.
+      const link = e.target.closest("a[href]");
+      if (link && link !== el && el.contains(link)) return;
       const fn = clicks[el.dataset.action];
       if (!fn) return;
       if (el.tagName !== "A" || el.getAttribute("href") === "#") e.preventDefault();

@@ -3,10 +3,13 @@
  * After that, storage.js owns the live copy and this file is not read again.
  */
 
+// `name` is what the board shows; `jiraNames` is what Jira actually writes
+// in a ticket's "Ticket Assignee" field. They start out the same, and a
+// person who appears under more than one label collects the rest there.
 const DEFAULT_USERS = [
-  { id: "sem", name: "[BE]_Sem", role: "Backend" },
-  { id: "jerome", name: "[QA]_Jerome", role: "QA" },
-  { id: "neil", name: "[FE]_Neil", role: "Frontend" }
+  { id: "sem", name: "[BE]_Sem", role: "Backend", jiraNames: ["[BE]_Sem"] },
+  { id: "jerome", name: "[QA]_Jerome", role: "QA", jiraNames: ["[QA]_Jerome"] },
+  { id: "neil", name: "[FE]_Neil", role: "Frontend", jiraNames: ["[FE]_Neil"] }
 ];
 
 const DEFAULT_ACCOUNTS = [
@@ -177,6 +180,16 @@ function migrateAppData(appData) {
   if (!Array.isArray(appData.jiraSkipped)) appData.jiraSkipped = [];
   if (!Array.isArray(appData.jiraWaiting)) appData.jiraWaiting = [];
 
+  // A user's display name used to double as their Jira assignee label.
+  // Seeding jiraNames from it keeps every existing directory matching
+  // exactly what it matched before, and gives people somewhere to add the
+  // other labels Jira knows them by.
+  (appData.users || []).forEach((user) => {
+    if (Array.isArray(user.jiraNames)) return;
+    user.jiraNames = user.name ? [user.name] : [];
+    changed = true;
+  });
+
   appData.servers.forEach((server) => {
     if (server.url === undefined && server.hostname !== undefined) {
       server.url = server.hostname;
@@ -326,16 +339,30 @@ function matchRepositoriesToKeys(labels, validKeys) {
   return { matched, unmatched };
 }
 
+// The labels Jira may write for one person. Empty falls back to the
+// display name, so a directory that predates the field still matches.
+function userJiraNames(user) {
+  const names = (Array.isArray(user.jiraNames) ? user.jiraNames : [])
+    .map((n) => (n || "").trim()).filter(Boolean);
+  return names.length ? names : [(user.name || "").trim()].filter(Boolean);
+}
+
 // Matches a Jira ticket's "Ticket Assignee" label values against
-// configured users by display name (exact, then case-insensitive).
+// configured users by their Jira names (exact, then case-insensitive).
+// One person can carry several labels — the same tester is "[QA]_Jerome"
+// on one board and "[QA]_Jerome_C" on another — so a label that matched
+// nobody is reported rather than guessed at.
 function matchUserIdsByLabels(labels, users) {
   const matched = [];
   const unmatched = [];
+  const hits = (user, test) => userJiraNames(user).some(test);
   (labels || []).forEach((label) => {
-    const user = users.find((u) => u.name === label)
-      || users.find((u) => u.name.toLowerCase() === label.toLowerCase());
-    if (user) matched.push(user.id);
-    else unmatched.push(label);
+    const raw = (label || "").trim();
+    const lower = raw.toLowerCase();
+    const user = users.find((u) => hits(u, (n) => n === raw))
+      || users.find((u) => hits(u, (n) => n.toLowerCase() === lower));
+    if (!user) unmatched.push(label);
+    else if (!matched.includes(user.id)) matched.push(user.id);
   });
   return { matched, unmatched };
 }
@@ -417,7 +444,7 @@ function isValidRole(roleId) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     buildDefaultAppData, migrateAppData, JIRA_STATUS_VOCABULARY, JIRA_TERMINAL_STATUSES,
-    matchRepositoriesToKeys, matchUserIdsByLabels, findServerForTicket,
+    matchRepositoriesToKeys, matchUserIdsByLabels, userJiraNames, findServerForTicket,
     AUTH_ROLES, getRole, roleCan, roleLabel, isValidRole
   };
 }

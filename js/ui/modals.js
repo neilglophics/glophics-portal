@@ -266,15 +266,19 @@ const Modals = (() => {
   function addUser() {
     open({
       title: "Add user",
-      subtitle: "Their display name is what Jira's assignee labels are matched against.",
+      subtitle: "Their Jira assignee names are what a ticket's \"Ticket Assignee\" field is matched against.",
       submitLabel: "Add user",
       body: `<div class="grid gap-3 sm:grid-cols-2">
         ${H.field("Display name", { data: { name: "name" }, placeholder: "e.g. [BE]_Sem" })}
         ${H.field("Role", { data: { name: "role" }, value: "Team", placeholder: "e.g. Backend" })}
+        ${H.field("Jira assignee names", {
+          data: { name: "jiraNames" }, span: true,
+          placeholder: "Comma separated — leave blank to use the display name"
+        })}
       </div>`,
       onSubmit: () => {
         const v = formValues();
-        const result = State.addUser({ name: v.name, role: v.role });
+        const result = State.addUser({ name: v.name, role: v.role, jiraNames: v.jiraNames });
         if (!result.ok) { showError(result.errors); return; }
         close();
       }
@@ -360,6 +364,37 @@ const Modals = (() => {
       </label>`).join("")}</div>`;
   }
 
+  /**
+   * The Jira "Ticket Assignee" labels a login answers to.
+   *
+   * Offered as a datalist of the names already on the board rather than a
+   * bare text box: these labels are shaped like "[QA]_Jhoewell", and a typo
+   * costs nothing at save time and then silently shows that person an empty
+   * page. Names seen on tickets but missing from the directory are in the
+   * list too — those are exactly the people whose login needs one.
+   */
+  function jiraNameField(value) {
+    const seen = new Set();
+    Model.assigneeRows().forEach((row) => {
+      seen.add(row.name);
+      row.jiraNames.forEach((n) => seen.add(n));
+    });
+    const options = [...seen].filter(Boolean).sort((a, b) => a.localeCompare(b));
+
+    return `
+      ${H.field("Jira assignee name", {
+        value: value || "", span: true,
+        data: { name: "jiraNames", list: "jira-assignee-options", autocapitalize: "none", spellcheck: "false" },
+        placeholder: "e.g. [QA]_Jerome — comma separated if Jira knows them by more than one"
+      })}
+      <datalist id="jira-assignee-options">${options.map((n) => `<option value="${H.esc(n)}"></option>`).join("")}</datalist>
+      <p class="text-[11px] leading-relaxed text-faint sm:col-span-2">
+        Exactly what Jira writes in a ticket's <strong>Ticket Assignee</strong> field. It is how
+        <strong>By assignee</strong> knows which tickets are theirs. Leave it blank if they never
+        appear on one.
+      </p>`;
+  }
+
   function passwordPair(labels) {
     return `<div class="grid gap-3 sm:grid-cols-2">
       ${H.field(labels[0], { type: "password", data: { name: "password", autocomplete: "new-password" }, placeholder: "At least 8 characters" })}
@@ -387,6 +422,7 @@ const Modals = (() => {
           <div class="grid gap-3 sm:grid-cols-2">
             ${H.field("Display name", { data: { name: "displayName" }, placeholder: "e.g. Jerome Cruz" })}
             ${H.field("Username", { data: { name: "username", autocapitalize: "none", spellcheck: "false" }, placeholder: "e.g. jerome" })}
+            ${jiraNameField("")}
           </div>
           ${passwordPair(["Password", "Confirm password"])}
           <div>
@@ -399,7 +435,7 @@ const Modals = (() => {
         if (!passwordsMatch(v)) return;
         const result = await Auth.createUser({
           displayName: v.displayName, username: v.username,
-          role: v.role, password: v.password
+          role: v.role, password: v.password, jiraNames: v.jiraNames
         });
         if (!result.ok) { showError(result.errors || result.error || "Couldn't create that user."); return; }
         close();
@@ -419,6 +455,7 @@ const Modals = (() => {
           <div class="grid gap-3 sm:grid-cols-2">
             ${H.field("Display name", { data: { name: "displayName" }, value: user.displayName })}
             ${H.field("Username", { data: { name: "username", autocapitalize: "none", spellcheck: "false" }, value: user.username })}
+            ${jiraNameField((user.jiraNames || []).join(", "))}
           </div>
           <div>
             <p class="pb-2 text-[11px] font-semibold text-muted">Role</p>
@@ -433,7 +470,7 @@ const Modals = (() => {
         const v = formValues();
         const result = await Auth.updateUser(user.id, {
           displayName: v.displayName, username: v.username,
-          role: v.role, active: !!(v.active && v.active.length)
+          role: v.role, active: !!(v.active && v.active.length), jiraNames: v.jiraNames
         });
         if (!result.ok) { showError(result.errors || result.error || "Couldn't save that user."); return; }
         close();

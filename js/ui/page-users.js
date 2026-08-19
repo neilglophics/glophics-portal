@@ -40,6 +40,10 @@ Router.register("users", (() => {
             <p class="truncate text-[11px] text-faint">@${H.esc(user.username)}</p>
           </div>
         </div>`) +
+      H.td((user.jiraNames || []).length
+        ? `<div class="flex flex-wrap gap-1">${user.jiraNames.map((n) => H.chip("bg-subtle-2 text-muted", n)).join("")}</div>`
+        : `<button data-action="auth-user-edit" data-id="${H.esc(user.id)}"
+             class="text-[11px] font-semibold text-faint hover:text-brand-fg hover:underline">Not linked</button>`) +
       H.td(H.chip(Tokens.roleChip(user.role), roleLabel(user.role))) +
       H.td(user.active
         ? H.dotChip({ chip: "bg-ok-soft text-ok", dot: "bg-emerald-500", label: "Active" })
@@ -60,8 +64,9 @@ Router.register("users", (() => {
   function usersTable() {
     if (!loaded) return H.empty(loading ? "Loading users…" : "Loading…");
     return H.table(
-      H.th("User") + H.th("Role") + H.th("Status") + H.th("Last sign-in", "whitespace-nowrap") +
-        H.th("Created", "whitespace-nowrap") + H.th("", "text-right"),
+      H.th("User") + H.th("Jira assignee") + H.th("Role") + H.th("Status") +
+        H.th("Last sign-in", "whitespace-nowrap") + H.th("Created", "whitespace-nowrap") +
+        H.th("", "text-right"),
       users.map(userRow),
       "No users yet."
     );
@@ -96,7 +101,7 @@ Router.register("users", (() => {
       }
 
       const active = users.filter((u) => u.active).length;
-      const supers = users.filter((u) => u.role === "superadmin" && u.active).length;
+      const linked = users.filter((u) => (u.jiraNames || []).length).length;
 
       return H.page(`
         ${H.pageHead("Users", "Who can sign in, and what each of them is allowed to do",
@@ -105,7 +110,7 @@ Router.register("users", (() => {
         <section class="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
           ${H.statTile("brand", "Accounts", users.length, "with sign-in credentials", "list")}
           ${H.statTile("ok", "Active", active, `${users.length - active} deactivated`, "check")}
-          ${H.statTile("alt", "Super admins", supers, "can manage users", "gear")}
+          ${H.statTile("alt", "Linked to Jira", linked, `of ${users.length} see their own tickets`, "users")}
         </section>
 
         ${usersTable()}

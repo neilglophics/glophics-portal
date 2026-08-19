@@ -118,6 +118,108 @@ const Model = (() => {
     }).sort((a, b) => nullsLast(a.minutesLeft) - nullsLast(b.minutesLeft));
   }
 
+  // ---------- assignees ----------
+
+  /**
+   * One row per person, built from the claims rather than the directory:
+   * every configured user, plus every Jira assignee label that matched
+   * nobody. The unmatched ones are half the point — a label with no user
+   * behind it is a ticket that looks unheld on every other page.
+   */
+  function assigneeRows() {
+    const byKey = new Map();
+    const rowFor = (key, person, user) => {
+      if (!byKey.has(key)) byKey.set(key, { key, person, user, claims: [] });
+      return byKey.get(key);
+    };
+
+    // Everyone in the directory first, so a person with nothing on reads
+    // as free rather than as missing.
+    State.getUsers().forEach((u) => rowFor("user:" + u.id, u, u));
+
+    claimRows().forEach((row) => {
+      (row.claim.userIds || []).forEach((id) => {
+        const user = State.getUser(id);
+        if (user) rowFor("user:" + user.id, user, user).claims.push(row);
+      });
+      unmatchedAssignees(row.claim).forEach((label) => {
+        rowFor("raw:" + label.trim().toLowerCase(),
+          { id: label, name: label, unmatched: true }, null).claims.push(row);
+      });
+    });
+
+    return [...byKey.values()].map((r) => {
+      const ends = r.claims.map((c) => c.minutesLeft).filter((m) => m !== null);
+      return {
+        key: r.key,
+        person: r.person,
+        user: r.user,
+        name: r.person.name,
+        role: r.user ? (r.user.role || "") : "",
+        jiraNames: r.user ? userJiraNames(r.user) : [r.person.name],
+        unmatched: !r.user,
+        claims: r.claims,
+        tickets: r.claims.length,
+        repos: r.claims.reduce((n, c) => n + c.claim.repos.length, 0),
+        envs: new Set(r.claims.map((c) => c.server.id)).size,
+        soonest: ends.length ? Math.min(...ends) : null
+      };
+    // Busiest first; whoever is holding the most is who the page is about.
+    }).sort((a, b) => b.tickets - a.tickets || a.name.localeCompare(b.name));
+  }
+
+  /**
+   * Every name a claim is assigned under, lowercased.
+   *
+   * A Jira claim carries the raw labels the ticket was written with; a
+   * manual claim carries directory users instead and no labels at all. Both
+   * are folded into one set here so a sign-in account's Jira name can be
+   * tested against either kind without the caller knowing the difference.
+   */
+  function claimAssigneeNames(claim) {
+    const names = new Set();
+    const add = (value) => {
+      const name = String(value || "").trim().toLowerCase();
+      if (name) names.add(name);
+    };
+    (claim.rawAssignees || []).forEach(add);
+    (claim.userIds || []).forEach((id) => {
+      const user = State.getUser(id);
+      if (!user) return;
+      add(user.name);
+      userJiraNames(user).forEach(add);
+    });
+    return names;
+  }
+
+  // Every claim assigned to one of these names — how a signed-in person's
+  // own tickets are found, from the Jira name on their credential.
+  function claimsForNames(names) {
+    const wanted = (names || []).map((n) => String(n || "").trim().toLowerCase()).filter(Boolean);
+    if (!wanted.length) return [];
+    return claimRows().filter(({ claim }) => {
+      const assigned = claimAssigneeNames(claim);
+      return wanted.some((name) => assigned.has(name));
+    });
+  }
+
+  // The "Ticket Assignee" labels on one claim that resolve to nobody —
+  // matched by the same rules the sync uses, so this page and the sync can
+  // never disagree about who a label belongs to.
+  function unmatchedAssignees(claim) {
+    return State.matchUserIdsByLabels(claim.rawAssignees || []).unmatched;
+  }
+
+  // Every such label across the board, deduplicated case-insensitively.
+  function unmatchedNames() {
+    const seen = new Map();
+    allClaims().forEach((claim) => unmatchedAssignees(claim).forEach((label) => {
+      const key = label.trim().toLowerCase();
+      if (!seen.has(key)) seen.set(key, label);
+    }));
+    return [...seen.values()];
+  }
+
   // ---------- shared helpers ----------
 
   function minutesLeft(claim) {
@@ -194,13 +296,19 @@ const Model = (() => {
       repoOffline: repos.filter((r) => r.health === "offline").length,
       repoUnconfigured: repos.filter((r) => r.health === "unconfigured").length,
       reposHeld: claimRepoRows().length,
-      skipped: State.getSkippedTickets().length
+      skipped: State.getSkippedTickets().length,
+      unmatchedNames: unmatchedNames().length,
+      // What the signed-in person is holding — the nav badge, so their own
+      // count is on screen wherever they are.
+      myTickets: claimsForNames(Auth.jiraNames()).length
     };
   }
 
   return {
     envRow, envRows, filteredEnvRows,
     repoRows, claimRepoRows, claimRows, allClaims,
+    assigneeRows, unmatchedAssignees, unmatchedNames,
+    claimAssigneeNames, claimsForNames,
     minutesLeft, leftText, progress, isUrgent, peopleOf, summary
   };
 })();

@@ -79,6 +79,12 @@ const Auth = (() => {
 
   function roles() { return AUTH_ROLES; }
 
+  // The Jira "Ticket Assignee" labels this login answers to — what "mine"
+  // means on the By assignee page. Empty until a super admin sets it.
+  function jiraNames() {
+    return (current && Array.isArray(current.jiraNames)) ? current.jiraNames : [];
+  }
+
   // ---------- managing other people's credentials (super admin) ----------
 
   async function listUsers() {
@@ -107,7 +113,7 @@ const Auth = (() => {
 
   return {
     refresh, signIn, signOut, changeOwnPassword,
-    user, isSignedIn, can, roleName, roles,
+    user, isSignedIn, can, roleName, roles, jiraNames,
     listUsers, createUser, updateUser, removeUser, setPassword
   };
 })();
