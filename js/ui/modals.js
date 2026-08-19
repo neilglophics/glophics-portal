@@ -79,6 +79,58 @@ const Modals = (() => {
     return out;
   }
 
+  // ---------- status chips ----------
+
+  /**
+   * Which status chips sit above the ticket tables.
+   *
+   * The Jira workflow is thirteen statuses and most weeks touch four, so
+   * the row is worth trimming — but trimming it changes only what is on
+   * screen, never what the table can be cut to. A status left unticked is
+   * still reachable the moment something is filtered to it.
+   *
+   * Per-browser, like the theme: nobody else's view moves.
+   */
+  function statusChips(options, isHidden, onSave) {
+    const box = (o) => `
+      <label class="flex cursor-pointer items-center gap-2.5 rounded-xl bg-subtle px-3 py-2.5">
+        <input type="checkbox" name="statuses" value="${H.esc(o.label)}" ${isHidden(o.label) ? "" : "checked"}
+               class="h-4 w-4 shrink-0 rounded accent-brand-500" />
+        <span class="truncate text-xs font-medium text-ink-2">${H.esc(o.label)}</span>
+        <span class="ml-auto shrink-0 text-[10px] font-bold ${o.count ? "text-brand-fg" : "text-faintest"}">${o.count}</span>
+      </label>`;
+
+    open({
+      title: "Status chips",
+      subtitle: "Which statuses to keep above the table — this browser only.",
+      wide: true,
+      submitLabel: "Save chips",
+      body: `
+        <div class="flex flex-wrap gap-2 pb-4">
+          ${H.btn("All", { size: "sm", variant: "quiet", data: { "data-chips": "all" } })}
+          ${H.btn("Only ones in use", { size: "sm", variant: "quiet", data: { "data-chips": "used" } })}
+          ${H.btn("None", { size: "sm", variant: "quiet", data: { "data-chips": "none" } })}
+        </div>
+        <div class="grid gap-2 sm:grid-cols-2">${options.map(box).join("")}</div>
+        <p class="pt-4 text-[11px] leading-relaxed text-faint">
+          Hiding a status only takes its chip off the row. Everything at it stays in
+          <strong>All statuses</strong>, and the chip comes back on its own while the table is cut to it.
+        </p>`,
+      // The modal host sits outside the app's delegated listener, so the
+      // three shortcuts wire themselves up here.
+      onReady: (root) => {
+        const boxes = [...root.querySelectorAll('input[name="statuses"]')];
+        root.querySelectorAll("[data-chips]").forEach((btn) => btn.addEventListener("click", () => {
+          const mode = btn.dataset.chips;
+          boxes.forEach((input, i) => {
+            input.checked = mode === "all" || (mode === "used" && options[i].count > 0);
+          });
+        }));
+      },
+      onSubmit: () => { onSave(formValues().statuses || []); close(); }
+    });
+  }
+
   // ---------- confirm ----------
 
   function confirm({ title, message, confirmLabel, onConfirm }) {
@@ -390,7 +442,7 @@ const Modals = (() => {
       <datalist id="jira-assignee-options">${options.map((n) => `<option value="${H.esc(n)}"></option>`).join("")}</datalist>
       <p class="text-[11px] leading-relaxed text-faint sm:col-span-2">
         Exactly what Jira writes in a ticket's <strong>Ticket Assignee</strong> field. It is how
-        <strong>By assignee</strong> knows which tickets are theirs. Leave it blank if they never
+        <strong>My tickets</strong> knows which tickets are theirs. Leave it blank if they never
         appear on one.
       </p>`;
   }
@@ -553,7 +605,7 @@ const Modals = (() => {
 
   return {
     open, close, isOpen, showError, confirm, info,
-    assign, note, repoUrl, directoryAdd,
+    assign, note, repoUrl, directoryAdd, statusChips,
     authUserAdd, authUserEdit, authUserPassword, changeOwnPassword,
     bind
   };

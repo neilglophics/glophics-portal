@@ -80,7 +80,7 @@ const Auth = (() => {
   function roles() { return AUTH_ROLES; }
 
   // The Jira "Ticket Assignee" labels this login answers to — what "mine"
-  // means on the By assignee page. Empty until a super admin sets it.
+  // means on the My tickets page. Empty until a super admin sets it.
   function jiraNames() {
     return (current && Array.isArray(current.jiraNames)) ? current.jiraNames : [];
   }

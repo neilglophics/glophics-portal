@@ -70,10 +70,22 @@ const State = (() => {
   function getServers() { return appData.servers; }
   function getSettings() { return appData.settings; }
   function getSkippedTickets() { return appData.jiraSkipped || []; }
+
+  // Every ticket the last sync saw that is not holding a repository — the
+  // rest of the board, at whatever status Jira has it at. Claims live in
+  // appData.tickets; these are everything else, and the two never overlap.
+  function getJiraIssues() { return appData.jiraIssues || []; }
+
   // Tickets Jira matched to this environment that are not at an occupying
-  // status — they're on the branch but hold no repo.
+  // status — they're on the branch but hold no repo. Read off the board
+  // with the same rule the sync claims by, so the two cannot disagree.
   function getWaitingTickets(serverId) {
-    return (appData.jiraWaiting || []).filter((w) => w.serverId === serverId);
+    const jira = getSettings().jira;
+    return getJiraIssues().filter((t) =>
+      t.serverId === serverId &&
+      !statusIn(jira.occupyingStatuses, t.status) &&
+      !statusIn(jira.releasingStatuses, t.status) &&
+      !statusIn(JIRA_TERMINAL_STATUSES, t.status));
   }
   function getLastJiraSyncAt() { return appData.lastJiraSyncAt || null; }
 
@@ -579,7 +591,8 @@ const State = (() => {
   return {
     init,
     subscribe, subscribeStatus, getSyncStatus,
-    getUsers, getAccounts, getServers, getSettings, getSkippedTickets, getWaitingTickets, getLastJiraSyncAt,
+    getUsers, getAccounts, getServers, getSettings, getSkippedTickets, getWaitingTickets,
+    getJiraIssues, getLastJiraSyncAt,
     getUser, getAccount, getServer,
     getRepositoriesForAccount, getDisplayStatus,
     getFilters, getFilteredServers, getSummary,

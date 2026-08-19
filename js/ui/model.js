@@ -113,18 +113,55 @@ const Model = (() => {
         claim, server,
         env: server.name,
         accountName: account ? account.displayName : "—",
-        minutesLeft: minutesLeft(claim)
+        minutesLeft: minutesLeft(claim),
+        holding: true
       }));
     }).sort((a, b) => nullsLast(a.minutesLeft) - nullsLast(b.minutesLeft));
+  }
+
+  /**
+   * One row per ticket that is *not* holding a repository — everything the
+   * last sync saw at any other status, from OPEN to CLOSED.
+   *
+   * Same shape as claimRows(), so a ticket table can list the two together
+   * and `holding` is the only thing that separates them. A ticket Jira
+   * could not match to an environment still gets a row: it has a status
+   * and an assignee, which is all the table needs.
+   */
+  function boardRows() {
+    return State.getJiraIssues().map((issue) => {
+      const server = issue.serverId ? State.getServer(issue.serverId) : null;
+      const account = server ? State.getAccount(server.accountId) : null;
+      return {
+        claim: { ...issue, id: issue.key, source: "jira", note: null },
+        server,
+        env: server ? server.name : (issue.branch || "—"),
+        accountName: account ? account.displayName : (issue.accountName || "—"),
+        minutesLeft: minutesLeft(issue),
+        holding: false
+      };
+    }).sort((a, b) =>
+      nullsLast(a.minutesLeft) - nullsLast(b.minutesLeft) ||
+      a.claim.id.localeCompare(b.claim.id));
+  }
+
+  // The whole board, one row per ticket: what is holding a repository
+  // first — the question the tables were built for — then everything else.
+  function ticketRows() {
+    return [...claimRows(), ...boardRows()];
   }
 
   // ---------- assignees ----------
 
   /**
-   * One row per person, built from the claims rather than the directory:
+   * One row per person, built from the tickets rather than the directory:
    * every configured user, plus every Jira assignee label that matched
    * nobody. The unmatched ones are half the point — a label with no user
-   * behind it is a ticket that looks unheld on every other page.
+   * behind it is a ticket nobody can find as theirs.
+   *
+   * Reads the whole board, not only what is holding a repository: someone
+   * whose tickets are all at IN PROGRESS is exactly the person whose
+   * sign-in still needs the name.
    */
   function assigneeRows() {
     const byKey = new Map();
@@ -137,7 +174,7 @@ const Model = (() => {
     // as free rather than as missing.
     State.getUsers().forEach((u) => rowFor("user:" + u.id, u, u));
 
-    claimRows().forEach((row) => {
+    ticketRows().forEach((row) => {
       (row.claim.userIds || []).forEach((id) => {
         const user = State.getUser(id);
         if (user) rowFor("user:" + user.id, user, user).claims.push(row);
@@ -192,12 +229,13 @@ const Model = (() => {
     return names;
   }
 
-  // Every claim assigned to one of these names — how a signed-in person's
-  // own tickets are found, from the Jira name on their credential.
-  function claimsForNames(names) {
+  // Every ticket assigned to one of these names, holding a repository or
+  // not — how a signed-in person's own tickets are found, from the Jira
+  // name on their credential.
+  function ticketsForNames(names) {
     const wanted = (names || []).map((n) => String(n || "").trim().toLowerCase()).filter(Boolean);
     if (!wanted.length) return [];
-    return claimRows().filter(({ claim }) => {
+    return ticketRows().filter(({ claim }) => {
       const assigned = claimAssigneeNames(claim);
       return wanted.some((name) => assigned.has(name));
     });
@@ -218,6 +256,22 @@ const Model = (() => {
       if (!seen.has(key)) seen.set(key, label);
     }));
     return [...seen.values()];
+  }
+
+  /**
+   * Names on tickets that no sign-in account answers to, given the list of
+   * accounts. Whoever they are, they cannot open My tickets and find their
+   * own work — so this is the list of accounts still to link, busiest
+   * first. Needs the accounts from /api/auth/users, which only a super
+   * admin may ask for, so it takes them rather than fetching.
+   */
+  function namesWithoutAccount(accounts) {
+    const key = (name) => String(name || "").trim().toLowerCase();
+    const covered = new Set();
+    (accounts || []).forEach((a) => (a.jiraNames || []).forEach((n) => covered.add(key(n))));
+    return assigneeRows()
+      .filter((r) => r.tickets && !r.jiraNames.some((n) => covered.has(key(n))))
+      .map((r) => ({ name: r.name, tickets: r.tickets }));
   }
 
   // ---------- shared helpers ----------
@@ -298,17 +352,20 @@ const Model = (() => {
       reposHeld: claimRepoRows().length,
       skipped: State.getSkippedTickets().length,
       unmatchedNames: unmatchedNames().length,
-      // What the signed-in person is holding — the nav badge, so their own
+      // Every ticket on the board, holding or not — what My tickets and
+      // Active tickets can list once nothing is filtered out.
+      board: State.getJiraIssues().length + claims.length,
+      // What the signed-in person has on them — the nav badge, so their own
       // count is on screen wherever they are.
-      myTickets: claimsForNames(Auth.jiraNames()).length
+      myTickets: ticketsForNames(Auth.jiraNames()).length
     };
   }
 
   return {
     envRow, envRows, filteredEnvRows,
-    repoRows, claimRepoRows, claimRows, allClaims,
-    assigneeRows, unmatchedAssignees, unmatchedNames,
-    claimAssigneeNames, claimsForNames,
+    repoRows, claimRepoRows, claimRows, boardRows, ticketRows, allClaims,
+    assigneeRows, unmatchedAssignees, unmatchedNames, namesWithoutAccount,
+    claimAssigneeNames, ticketsForNames,
     minutesLeft, leftText, progress, isUrgent, peopleOf, summary
   };
 })();

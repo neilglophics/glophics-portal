@@ -160,7 +160,7 @@ function buildDefaultAppData() {
     tickets: buildDefaultTickets(),
     notes: {},
     jiraSkipped: [],
-    jiraWaiting: [],
+    jiraIssues: [],
     settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS))
   };
 }
@@ -178,7 +178,28 @@ function migrateAppData(appData) {
   if (!Array.isArray(appData.tickets)) appData.tickets = [];
   if (!appData.notes) appData.notes = {};
   if (!Array.isArray(appData.jiraSkipped)) appData.jiraSkipped = [];
-  if (!Array.isArray(appData.jiraWaiting)) appData.jiraWaiting = [];
+  if (!Array.isArray(appData.jiraIssues)) appData.jiraIssues = [];
+
+  // jiraWaiting held only the tickets sitting on a branch without holding
+  // it, and only enough of each to count them. jiraIssues replaces it with
+  // every ticket the sync saw that isn't an active claim, at whatever
+  // status it is at — the ticket tables list those, so they carry the
+  // assignees, repositories and dates a row needs.
+  //
+  // What is already on disk is carried over as far as it goes rather than
+  // dropped: the environment pages keep their "N more on this branch" note
+  // from the first paint, and the next sync fills in the rest.
+  if (appData.jiraWaiting !== undefined) {
+    if (!appData.jiraIssues.length) {
+      appData.jiraIssues = appData.jiraWaiting.map((w) => ({
+        key: w.key, serverId: w.serverId, accountName: null, branch: null,
+        repos: [], userIds: [], rawAssignees: [],
+        status: w.status, summary: w.summary, startTime: null, endTime: null
+      }));
+    }
+    delete appData.jiraWaiting;
+    changed = true;
+  }
 
   // A user's display name used to double as their Jira assignee label.
   // Seeding jiraNames from it keeps every existing directory matching
@@ -339,6 +360,13 @@ function matchRepositoriesToKeys(labels, validKeys) {
   return { matched, unmatched };
 }
 
+// Whether a status is in one of the configured lists. Jira reports its own
+// casing and the lists are written in whatever the reader typed, so every
+// comparison in the app goes through here.
+function statusIn(list, statusName) {
+  return (list || []).some((s) => String(s).trim().toLowerCase() === String(statusName || "").trim().toLowerCase());
+}
+
 // The labels Jira may write for one person. Empty falls back to the
 // display name, so a directory that predates the field still matches.
 function userJiraNames(user) {
@@ -443,7 +471,7 @@ function isValidRole(roleId) {
 // Lets server.js reuse the same seed/migration/matching logic via require() — no-op in the browser.
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    buildDefaultAppData, migrateAppData, JIRA_STATUS_VOCABULARY, JIRA_TERMINAL_STATUSES,
+    buildDefaultAppData, migrateAppData, JIRA_STATUS_VOCABULARY, JIRA_TERMINAL_STATUSES, statusIn,
     matchRepositoriesToKeys, matchUserIdsByLabels, userJiraNames, findServerForTicket,
     AUTH_ROLES, getRole, roleCan, roleLabel, isValidRole
   };

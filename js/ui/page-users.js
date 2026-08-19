@@ -72,6 +72,24 @@ Router.register("users", (() => {
     );
   }
 
+  /**
+   * Names on the board that no sign-in account carries. Every ticket under
+   * one of them is invisible on its owner's My tickets page — they cannot
+   * link the account themselves, so the list of accounts still to link
+   * belongs here, next to the Edit button that fixes it.
+   */
+  function coverageNotice() {
+    const missing = Model.namesWithoutAccount(users);
+    if (!missing.length) return "";
+    const tickets = missing.reduce((n, m) => n + m.tickets, 0);
+    return H.notice("warn",
+      `${tickets} ticket${tickets === 1 ? " is" : "s are"} assigned to ${missing.length} name${missing.length === 1 ? "" : "s"} no account uses`,
+      `${missing.slice(0, 8).map((m) => `<strong>${H.esc(m.name)}</strong> (${m.tickets})`).join(" · ")}${
+        missing.length > 8 ? ` and ${missing.length - 8} more` : ""}.
+       Put each name in the <strong>Jira assignee name</strong> field of that person's account
+       and they will see their own tickets under My tickets.`);
+  }
+
   // What each role actually unlocks, straight from the shared list — the
   // same one the server enforces, so this table cannot describe a rule
   // that isn't real.
@@ -113,6 +131,7 @@ Router.register("users", (() => {
           ${H.statTile("alt", "Linked to Jira", linked, `of ${users.length} see their own tickets`, "users")}
         </section>
 
+        ${loaded ? coverageNotice() : ""}
         ${usersTable()}
         <div class="mt-5">${rolesCard()}</div>`);
     },
