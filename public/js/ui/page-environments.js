@@ -17,6 +17,8 @@ Router.register("environments", {
     const counts = { free: 0, partial: 0, inuse: 0, issue: 0 };
     all.forEach((r) => counts[r.state]++);
     const filtered = rows.length !== all.length;
+    const signedInUserId = State.getSignedInUserId();
+    const showingMine = !!signedInUserId && filters.userId === signedInUserId;
     const anyOpen = EnvDetail.openCount("environments") > 0;
 
     const statusChip = (key, label, count) => {
@@ -36,6 +38,13 @@ Router.register("environments", {
       <div class="flex flex-wrap items-center gap-2 pb-5">
         ${statusChip("all", "All", all.length)}
         ${Object.keys(counts).map((k) => statusChip(k, Tokens.ENV_STATE[k].label, counts[k])).join("")}
+        <button data-action="filter-me" ${signedInUserId ? "" : "disabled"}
+          title="${signedInUserId ? "Show servers assigned to you" : "Sign in to use this filter"}"
+            class="rounded-full px-3.5 py-1.5 text-[11px] font-semibold transition ${
+              showingMine ? "bg-accent text-on-accent" : signedInUserId
+                ? "bg-surface text-muted ring-1 ring-line-2 hover:text-ink"
+                : "cursor-not-allowed bg-subtle-2 text-faintest"}">
+            My servers</button>
         ${filtered ? `<button data-action="clear-filters"
             class="ml-1 text-[11px] font-semibold text-brand-fg hover:underline">Clear filters</button>` : ""}
       </div>

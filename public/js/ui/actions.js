@@ -167,6 +167,12 @@ const Actions = (() => {
 
   on("filter-account", (el) => State.setFilter("accountId", el.dataset.id));
   on("filter-status", (el) => State.setFilter("status", el.dataset.status));
+  on("filter-me", () => {
+    const userId = State.getSignedInUserId();
+    if (!userId) return;
+    const current = State.getFilters().userId;
+    State.setFilter("userId", current === userId ? "all" : userId);
+  });
   on("clear-filters", () => {
     const search = document.getElementById("search-input");
     if (search) search.value = "";
