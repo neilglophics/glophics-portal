@@ -102,8 +102,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                 {/* useSearchParams needs a Suspense boundary above it. */}
                 <Suspense fallback={<div className="h-14 shrink-0 border-b border-line bg-panel" />}>
                   <Topbar
-                    user={user}
-                    avatar_url={avatarUrl(user.id, avatars)}
                     jiraEnabled={settings.jira.enabled}
                     lastSyncAt={syncState.lastSyncAt}
                   />

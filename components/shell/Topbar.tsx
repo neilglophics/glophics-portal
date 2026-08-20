@@ -4,13 +4,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/ui/Icon";
 import { agoText } from "@/lib/shared/format";
-import { AccountMenu } from "./AccountMenu";
 import { ConnectionDot } from "./ConnectionDot";
 import { ThemeSwitcher } from "./ThemeSwitcher";
-import type { AuthUser } from "@/lib/types";
 
 /**
- * Search, connection status, appearance, and the signed-in account.
+ * Search, connection status, and appearance controls.
  *
  * The two indicators are deliberately separate. "Live" is whether *other
  * people's* changes reach this tab; "Synced Nm ago" is how fresh the Jira data
@@ -18,13 +16,9 @@ import type { AuthUser } from "@/lib/types";
  * hide that.
  */
 export function Topbar({
-  user,
-  avatar_url,
   jiraEnabled,
   lastSyncAt,
 }: {
-  user: AuthUser;
-  avatar_url: string | null;
   jiraEnabled: boolean;
   lastSyncAt: string | null;
 }) {
@@ -117,9 +111,7 @@ export function Topbar({
           </div>
         </div>
         <ThemeSwitcher />
-        <AccountMenu user={user} avatar_url={avatar_url} />
       </div>
-
     </header>
   );
 }
