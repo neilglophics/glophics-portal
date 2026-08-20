@@ -167,6 +167,7 @@ const Actions = (() => {
 
   on("filter-account", (el) => State.setFilter("accountId", el.dataset.id));
   on("filter-status", (el) => State.setFilter("status", el.dataset.status));
+  on("filter-view", (el) => State.setFilter("view", el.dataset.view));
   on("clear-filters", () => {
     const search = document.getElementById("search-input");
     if (search) search.value = "";
@@ -175,6 +176,7 @@ const Actions = (() => {
 
   onChange("filter-status", (el) => State.setFilter("status", el.value));
   onChange("filter-account", (el) => State.setFilter("accountId", el.value));
+  onChange("filter-view", (el) => State.setFilter("view", el.value));
   onChange("filter-user", (el) => {
     if (el.value === "all") {
       State.setFilter("userId", "all");

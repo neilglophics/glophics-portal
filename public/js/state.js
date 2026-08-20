@@ -21,7 +21,8 @@ const State = (() => {
     status: "all",
     userId: "all",
     accountId: "all",
-    search: ""
+    search: "",
+    view: "table"
   };
 
   const listeners = [];
@@ -238,6 +239,7 @@ const State = (() => {
     filters.userId = "all";
     filters.accountId = "all";
     filters.search = "";
+    filters.view = "table";
     notify();
   }
 
