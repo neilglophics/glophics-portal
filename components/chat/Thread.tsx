@@ -10,6 +10,11 @@ import { useUnread } from "@/components/providers/UnreadProvider";
 import { conversationChannel } from "@/lib/realtime/channels";
 import { getPusher, realtimeHeaders } from "@/lib/realtime/client";
 import { dropConfirmedPending, mergeMessages } from "@/lib/chat/merge";
+import {
+  MESSAGE_COUNTER_THRESHOLD,
+  MESSAGE_MAX_LENGTH,
+  messageLength,
+} from "@/lib/chat/limits";
 import { formatDateTime } from "@/lib/shared/format";
 import type { MessageRow } from "@/lib/db/queries/chat";
 
@@ -96,6 +101,10 @@ export function Thread({
   const hasConnected = useRef(false);
 
   const dmPartner = members.length === 2 ? members.find((m) => m.id !== viewerId) : undefined;
+
+  const draftLength = messageLength(draft);
+  const overLimit = draftLength > MESSAGE_MAX_LENGTH;
+  const showCounter = draftLength >= MESSAGE_COUNTER_THRESHOLD;
 
   // The newest message the viewer sent — the only one that carries a receipt.
   const lastMineId = confirmed.reduce(
@@ -330,6 +339,9 @@ export function Thread({
   const submitDraft = useCallback(() => {
     const body = draft;
     if (!body.trim()) return;
+    // Checked here and not only on the button: Enter-to-send does not care
+    // whether a button is disabled.
+    if (messageLength(body) > MESSAGE_MAX_LENGTH) return;
     setDraft("");
     void send(body);
   }, [draft, send]);
@@ -487,10 +499,26 @@ export function Thread({
         }}
         className="flex shrink-0 items-end gap-2 border-t border-line p-3"
       >
+        <div className="min-w-0 flex-1">
+          {showCounter ? (
+            <p
+              className={`mb-1 text-right text-[10px] font-semibold ${
+                overLimit ? "text-bad" : "text-faint"
+              }`}
+              // Announced only once it matters, so a screen reader is not told
+              // the count on every keystroke of a short message.
+              aria-live="polite"
+            >
+              {overLimit
+                ? `${draftLength - MESSAGE_MAX_LENGTH} over the ${MESSAGE_MAX_LENGTH} limit`
+                : `${draftLength} / ${MESSAGE_MAX_LENGTH}`}
+            </p>
+          ) : null}
         <textarea
           value={draft}
           rows={1}
           placeholder="Write a message…"
+          aria-invalid={overLimit}
           onChange={(e) => {
             setDraft(e.target.value);
             if (e.target.value.trim()) pingTyping();
@@ -503,9 +531,18 @@ export function Thread({
               submitDraft();
             }
           }}
-          className="max-h-32 min-h-[42px] flex-1 resize-y rounded-xl bg-subtle px-3.5 py-2.5 text-sm text-ink-2 placeholder:text-faintest focus:bg-surface focus:outline-none focus:ring-2 focus:ring-brand-soft"
+          className={`max-h-32 min-h-[42px] w-full resize-y rounded-xl bg-subtle px-3.5 py-2.5 text-sm text-ink-2 placeholder:text-faintest focus:bg-surface focus:outline-none focus:ring-2 ${
+            overLimit ? "ring-2 ring-bad focus:ring-bad" : "focus:ring-brand-soft"
+          }`}
         />
-        <Button type="submit" variant="dark" disabled={sending || !draft.trim()} className="shrink-0">
+        </div>
+        <Button
+          type="submit"
+          variant="dark"
+          disabled={sending || !draft.trim() || overLimit}
+          title={overLimit ? `Too long by ${draftLength - MESSAGE_MAX_LENGTH} characters` : undefined}
+          className="shrink-0"
+        >
           Send
         </Button>
       </form>
@@ -553,7 +590,12 @@ function Bubble({
       {!mine && author ? (
         <Avatar person={{ id: authorId ?? author, name: author, avatarUrl: authorFace }} size="h-7 w-7" />
       ) : null}
-      <div className={`max-w-[78%] ${mine ? "items-end" : "items-start"}`}>
+      {/* flex-col is load-bearing, not decoration. Without it the items-* classes
+          below are inert, the bubble is a block element that stretches to this
+          wrapper's full width, and the wrapper is as wide as its widest child —
+          the timestamp-and-receipt row. A three-letter message then renders in a
+          bubble sized to "Aug 21, 07:25 AM  Read by …". */}
+      <div className={`flex max-w-[78%] flex-col ${mine ? "items-end" : "items-start"}`}>
         {!mine && author ? (
           <p className="mb-0.5 px-1 text-[10px] font-semibold text-faint">{author}</p>
         ) : null}

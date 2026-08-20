@@ -21,6 +21,7 @@
 
 import { sql, withTransaction } from "@/lib/db/client";
 import { HttpError } from "@/lib/auth/require";
+import { MESSAGE_MAX_LENGTH, messageLength } from "@/lib/chat/limits";
 import type { AuthUserId } from "@/lib/types";
 
 // ---------- shapes ----------
@@ -341,7 +342,7 @@ export interface SendResult {
   notify: AuthUserId[];
 }
 
-const MAX_BODY = 8000;
+
 
 /**
  * Sends a message.
@@ -363,7 +364,16 @@ export async function sendMessage(
 
   const body = input.body.trim();
   if (!body) throw new HttpError(400, "Nothing to send.");
-  if (body.length > MAX_BODY) throw new HttpError(400, "That message is too long.");
+
+  // Counted in graphemes, exactly as the composer counts it, so a message the UI
+  // said was 2000 is never rejected here as 2004 because of a few emoji.
+  const length = messageLength(body);
+  if (length > MESSAGE_MAX_LENGTH) {
+    throw new HttpError(
+      400,
+      `That message is ${length} characters. The limit is ${MESSAGE_MAX_LENGTH}.`,
+    );
+  }
 
   const clientMsgId = String(input.clientMsgId ?? "").trim();
   if (!clientMsgId || clientMsgId.length > 100) {
