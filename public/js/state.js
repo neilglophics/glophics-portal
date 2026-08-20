@@ -56,6 +56,7 @@ const State = (() => {
   async function init() {
     appData = await Storage.load();
     if (migrateAppData(appData)) Storage.save(appData);
+    if (filters.userId === "all") filters.userId = getSignedInUserId() || "all";
     Storage.subscribeRemote(applyRemoteUpdate, setSyncStatus);
   }
 
@@ -169,7 +170,8 @@ const State = (() => {
     return appData.servers.filter((server) => {
       if (filters.status !== "all" && getDisplayStatus(server) !== filters.status) return false;
       const claims = getServerTickets(server.id);
-      if (filters.userId !== "all" && !claims.some((t) => claimMatchesFilterUser(t, filters.userId))) return false;
+      const userIds = Array.isArray(filters.userId) ? filters.userId : [filters.userId];
+      if (!userIds.includes("all") && !claims.some((t) => userIds.some((id) => claimMatchesFilterUser(t, id)))) return false;
       if (filters.accountId !== "all" && server.accountId !== filters.accountId) return false;
 
       if (search) {
@@ -621,7 +623,7 @@ const State = (() => {
     getUsers, getAccounts, getServers, getSettings, getSkippedTickets, getWaitingTickets,
     getJiraIssues, getLastJiraSyncAt,
     getUser, getAccount, getServer, getSignedInUserId,
-    getRepositoriesForAccount, getDisplayStatus,
+    getRepositoriesForAccount, getDisplayStatus, claimMatchesFilterUser,
     getFilters, getFilteredServers, getSummary,
     setFilter, clearFilters,
     getServerTickets, getRepoClaims, getTicket,
