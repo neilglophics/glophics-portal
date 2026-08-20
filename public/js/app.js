@@ -30,13 +30,6 @@
     if (!Auth.isSignedIn()) await LoginScreen.show();
     LoginScreen.hide();
 
-    // A seeded or freshly-reset account must set its own password before it
-    // is trusted with anything else — the server enforces this on every
-    // route regardless (see requirePasswordCurrent in the request pipeline),
-    // this just means the first thing you see is the same "Change password"
-    // dialog the avatar menu already offers, rather than a wall of 403s.
-    if (Auth.mustChangePassword()) Modals.changeOwnPassword();
-
     await start();
   }
 

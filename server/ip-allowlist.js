@@ -277,14 +277,6 @@ function isOpen() {
   return config.open;
 }
 
-// How many proxy hops are trusted when reading X-Forwarded-For — the same gate
-// cookies.js and csrf.js use before trusting X-Forwarded-Proto. Exposed rather
-// than re-read from process.env so both places agree with whatever this
-// module actually resolved (file config, alias, or the env override).
-function trustProxyHops() {
-  return config.trustProxy;
-}
-
 function describe() {
   if (config.open) return "open to every address";
   const ranges = config.rules.map((rule) => rule.label).join(", ");
@@ -298,7 +290,6 @@ module.exports = {
   allows,
   clientIp,
   isOpen,
-  trustProxyHops,
   describe,
   formatIp,
   // exported so a change here can be checked without starting the server

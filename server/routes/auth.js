@@ -1,89 +1,132 @@
 /**
  * Signing in, signing out, who am I, and managing who may sign in at all.
  *
- * Every handler here is thin: parse the body, call one service, shape the
- * response. Cookie strings, permission checks and CSRF live in the pipeline,
- * not here.
+ * The first three are the only part of the API a stranger reaches — every
+ * other route in the app has already resolved a session before it is called.
+ * Everything under /api/auth/users needs `manage-users`.
  */
 
-const cookies = require("../http/cookies.js");
-const auth = require("../services/auth.service.js");
-const authAdmin = require("../services/auth-admin.service.js");
-const { AUTH_ROLES } = require("../../shared/data.js");
-const { ValidationError } = require("../http/errors.js");
+const Auth = require("../auth-store.js");
+const { sendJson, readBody } = require("../http.js");
+const { SESSION_COOKIE, parseCookies, sessionCookie, currentUser, allows } = require("../access.js");
 
-async function login(ctx) {
-  const body = await ctx.readBody();
-  const { user, session } = await auth.signIn({
-    username: body.username,
-    password: body.password,
-    ip: ctx.clientIp,
-    userAgent: ctx.userAgent,
-    ctx
+async function handleLogin(req, res) {
+  try {
+    const { username, password } = await readBody(req);
+    const result = Auth.signIn(username, password);
+    if (!result.ok) {
+      sendJson(res, 401, { ok: false, error: result.error });
+      return;
+    }
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Set-Cookie": sessionCookie(result.token, result.maxAgeSeconds)
+    });
+    res.end(JSON.stringify({ ok: true, user: result.user }));
+  } catch (err) {
+    sendJson(res, 400, { ok: false, error: "Couldn't read that sign-in request." });
+  }
+}
+
+function handleLogout(req, res) {
+  Auth.signOut(parseCookies(req)[SESSION_COOKIE]);
+  res.writeHead(200, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Set-Cookie": `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`
   });
-
-  const setCookie = cookies.setSession(ctx.req, session.token, Math.floor((session.expiresAt - Date.now()) / 1000));
-  ctx.res.setHeader("Set-Cookie", setCookie);
-  return { ok: true, user, roles: AUTH_ROLES, csrfToken: session.csrfToken };
+  res.end(JSON.stringify({ ok: true }));
 }
 
-async function logout(ctx) {
-  await auth.signOut(ctx.sessionToken, ctx);
-  ctx.res.setHeader("Set-Cookie", cookies.clearSession(ctx.req, { trustProxy: ctx.trustProxy }));
-  return { ok: true };
+// Answers 200 either way — "not signed in" is the expected first answer on
+// a cold load, not an error worth logging in the browser console.
+function handleMe(req, res) {
+  const user = currentUser(req);
+  sendJson(res, 200, { ok: !!user, user: user || null, roles: Auth.AUTH_ROLES });
 }
 
-/** Always 200 -- "not signed in" is the expected first answer on a cold load,
- *  not an error worth treating as one in the browser console. */
-async function me(ctx) {
-  const user = await auth.currentUser(ctx);
-  const body = { ok: Boolean(user), user: user || null, roles: AUTH_ROLES };
-  if (ctx.session) body.csrfToken = ctx.session.csrfToken;
-  return body;
+async function handleChangeOwnPassword(req, res, user) {
+  try {
+    const { currentPassword, newPassword } = await readBody(req);
+    const result = Auth.changeOwnPassword(user.id, currentPassword, newPassword);
+    if (!result.ok) {
+      sendJson(res, 400, result);
+      return;
+    }
+    // Changing a password drops every session that user had, this one
+    // included — hand back a fresh cookie so they aren't signed out of the
+    // tab they just used to change it.
+    const reissued = Auth.signIn(user.username, newPassword);
+    const headers = { "Content-Type": "application/json; charset=utf-8" };
+    if (reissued.ok) headers["Set-Cookie"] = sessionCookie(reissued.token, reissued.maxAgeSeconds);
+    res.writeHead(200, headers);
+    res.end(JSON.stringify({ ok: true }));
+  } catch (err) {
+    sendJson(res, 400, { ok: false, errors: ["Couldn't read that request."] });
+  }
 }
 
-async function changeOwnPassword(ctx) {
-  const body = await ctx.readBody();
-  const { user, session } = await auth.changeOwnPassword(ctx, {
-    currentPassword: body.currentPassword,
-    newPassword: body.newPassword
-  });
+// ---------- user management (manage-users) ----------
 
-  const setCookie = cookies.setSession(ctx.req, session.token, Math.floor((session.expiresAt - Date.now()) / 1000));
-  ctx.res.setHeader("Set-Cookie", setCookie);
-  return { ok: true, user, csrfToken: session.csrfToken };
+async function handleUsersRoute(req, res, url, user) {
+  if (!allows(res, user, "manage-users")) return;
+
+  if (url === "/api/auth/users" && req.method === "GET") {
+    sendJson(res, 200, { ok: true, users: Auth.listUsers(), roles: Auth.AUTH_ROLES });
+    return;
+  }
+  if (url === "/api/auth/users" && req.method === "POST") {
+    const body = await readBody(req).catch(() => null);
+    if (!body) { sendJson(res, 400, { ok: false, errors: ["Couldn't read that request."] }); return; }
+    const result = Auth.createUser(body);
+    sendJson(res, result.ok ? 200 : 400, result);
+    return;
+  }
+
+  const passwordMatch = url.match(/^\/api\/auth\/users\/([^/]+)\/password$/);
+  if (passwordMatch && req.method === "POST") {
+    const body = await readBody(req).catch(() => null);
+    if (!body) { sendJson(res, 400, { ok: false, errors: ["Couldn't read that request."] }); return; }
+    const result = Auth.setPassword(decodeURIComponent(passwordMatch[1]), body.password);
+    sendJson(res, result.ok ? 200 : 400, result);
+    return;
+  }
+
+  const oneMatch = url.match(/^\/api\/auth\/users\/([^/]+)$/);
+  if (oneMatch && req.method === "POST") {
+    const body = await readBody(req).catch(() => null);
+    if (!body) { sendJson(res, 400, { ok: false, errors: ["Couldn't read that request."] }); return; }
+    const result = Auth.updateUser(decodeURIComponent(oneMatch[1]), body, user.id);
+    sendJson(res, result.ok ? 200 : 400, result);
+    return;
+  }
+  if (oneMatch && req.method === "DELETE") {
+    const result = Auth.deleteUser(decodeURIComponent(oneMatch[1]), user.id);
+    sendJson(res, result.ok ? 200 : 400, result);
+    return;
+  }
+
+  sendJson(res, 404, { ok: false, error: "No such user route." });
 }
 
-// ---------------------------------------------------- user management -----
-
-async function listUsers() {
-  const users = await authAdmin.list();
-  return { ok: true, users, roles: AUTH_ROLES };
+// The handshake: no session required, because these are how you get one.
+function routePublic(req, res, url) {
+  if (url === "/api/auth/login" && req.method === "POST") { handleLogin(req, res); return true; }
+  if (url === "/api/auth/logout" && req.method === "POST") { handleLogout(req, res); return true; }
+  if (url === "/api/auth/me" && req.method === "GET") { handleMe(req, res); return true; }
+  return false;
 }
 
-async function createUser(ctx) {
-  const body = await ctx.readBody();
-  const user = await authAdmin.create(ctx, body);
-  return { ok: true, user };
+function route(req, res, url, user) {
+  if (url === "/api/auth/password" && req.method === "POST") {
+    handleChangeOwnPassword(req, res, user);
+    return true;
+  }
+  if (url.startsWith("/api/auth/users")) {
+    handleUsersRoute(req, res, url, user)
+      .catch(() => sendJson(res, 500, { ok: false, error: "User request failed." }));
+    return true;
+  }
+  return false;
 }
 
-async function updateUser(ctx) {
-  const body = await ctx.readBody();
-  const user = await authAdmin.update(ctx, ctx.params.id, body);
-  return { ok: true, user };
-}
-
-async function removeUser(ctx) {
-  return authAdmin.remove(ctx, ctx.params.id);
-}
-
-async function resetPassword(ctx) {
-  const body = await ctx.readBody();
-  if (!body.password) throw new ValidationError(["Enter a password."]);
-  return authAdmin.resetPassword(ctx, ctx.params.id, body.password);
-}
-
-module.exports = {
-  login, logout, me, changeOwnPassword,
-  listUsers, createUser, updateUser, removeUser, resetPassword
-};
+module.exports = { routePublic, route };

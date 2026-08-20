@@ -5,12 +5,7 @@
   "main": "server/index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server/index.js",
-    "dev": "node server/index.js",
-    "migrate": "node scripts/migrate.js",
-    "migrate:status": "node scripts/migrate.js status",
-    "import:legacy": "node server/cli/import-legacy.js",
-    "admin": "node server/cli/admin.js"
+    "start": "node server/index.js"
   },
   "repository": {
     "type": "git",
@@ -23,8 +18,5 @@
   "bugs": {
     "url": "https://github.com/romemadeloo/server-management/issues"
   },
-  "homepage": "https://github.com/romemadeloo/server-management#readme",
-  "dependencies": {
-    "mysql2": "^3.23.3"
-  }
+  "homepage": "https://github.com/romemadeloo/server-management#readme"
 }

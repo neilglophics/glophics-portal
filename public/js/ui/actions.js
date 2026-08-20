@@ -110,16 +110,7 @@ const Actions = (() => {
   }
 
   function post(path) {
-    // credentials default to "same-origin" in fetch, but the CSRF header does
-    // not — every state-changing request needs it explicitly, or the request
-    // pipeline's origin+token check refuses it with a 403. This is the one
-    // other place besides Storage that posts directly rather than through
-    // State's mutators, so it needs the same header those get for free.
-    return fetch(path, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: typeof Auth !== "undefined" ? Auth.csrfHeader("POST") : {}
-    }).catch(() => {});
+    return fetch(path, { method: "POST" }).catch(() => {});
   }
 
   // ---------- core actions ----------
