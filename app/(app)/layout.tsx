@@ -8,6 +8,7 @@ import { currentUserOrNull } from "@/lib/auth/require";
 import { displayStatus } from "@/lib/shared/occupancy";
 import { myClaims } from "@/lib/shared/mine";
 import { totalUnread } from "@/lib/db/queries/chat";
+import { avatarUrl, avatarVersions } from "@/lib/db/queries/avatars";
 import { roleCan } from "@/lib/shared/roles";
 import type { NavCounts } from "@/lib/shared/nav";
 import type { EnvStatus } from "@/lib/types";
@@ -28,13 +29,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // through here on every navigation.
   if (!user) redirect("/login?expired=1");
 
-  const [board, syncState, skipped, unreadChats] = await Promise.all([
+  const [board, syncState, skipped, unreadChats, avatars] = await Promise.all([
     getBoard(),
     getJiraSyncState(),
     getJiraSkippedCount(),
     // Skipped entirely for a role without `chat`: there is no badge to show, and
     // counting would be a query answering a question nobody asked.
     roleCan(user.role, "chat") ? totalUnread(user.id) : Promise.resolve(0),
+    // One query for everyone's avatar version, rather than one per face — the
+    // version is what lets the image URL be cached hard and still update.
+    avatarVersions(),
   ]);
 
   const { accounts, environments, claims, directory, settings } = board;
@@ -82,7 +86,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <div className="flex min-w-0 flex-1 flex-col bg-panel">
           {/* useSearchParams needs a Suspense boundary above it. */}
           <Suspense fallback={<div className="h-14 shrink-0 border-b border-line bg-panel" />}>
-            <Topbar user={user} jiraEnabled={settings.jira.enabled} lastSyncAt={syncState.lastSyncAt} />
+            <Topbar
+              user={user}
+              avatarUrl={avatarUrl(user.id, avatars)}
+              jiraEnabled={settings.jira.enabled}
+              lastSyncAt={syncState.lastSyncAt}
+            />
           </Suspense>
 
           <main className="no-scrollbar min-h-0 flex-1 overflow-y-auto pt-5">{children}</main>

@@ -15,6 +15,7 @@ export interface Person {
   displayName: string;
   username: string;
   role: string;
+  avatarUrl?: string | null;
 }
 
 /**
@@ -28,9 +29,11 @@ export interface Person {
 export function ConversationList({
   conversations,
   people,
+  viewerId,
 }: {
   conversations: ConversationSummary[];
   people: Person[];
+  viewerId: string;
 }) {
   const params = useParams<{ conversationId?: string }>();
   const activeId = params?.conversationId;
@@ -57,7 +60,20 @@ export function ConversationList({
                   active ? "bg-brand-soft" : "hover:bg-subtle"
                 }`}
               >
-                <Avatar person={{ id: c.id, name: c.title }} size="h-9 w-9" />
+                {/* For a DM this is the other member's face; a group falls back
+                    to initials of its name, which reads as a group rather than
+                    as a person. */}
+                <Avatar
+                  person={{
+                    id: c.id,
+                    name: c.title,
+                    avatarUrl:
+                      c.kind === "dm"
+                        ? (c.members.find((m) => m.id !== viewerId)?.avatarUrl ?? null)
+                        : null,
+                  }}
+                  size="h-9 w-9"
+                />
 
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline gap-2">

@@ -12,6 +12,7 @@ import {
 import { currentUserOrNull, requireUser } from "@/lib/auth/require";
 import { listAuthUsers } from "@/lib/db/queries/auth";
 import { getBoard, getJiraIssues } from "@/lib/db/queries/board";
+import { avatarUrl, avatarVersions } from "@/lib/db/queries/avatars";
 import { agoText } from "@/lib/shared/format";
 import { AUTH_ROLES } from "@/lib/shared/roles";
 import { roleChip } from "@/lib/shared/tokens";
@@ -84,11 +85,12 @@ export default async function UsersPage() {
   // Reaching this page needs manage-users, and so does every route behind it.
   await requireUser("manage-users");
 
-  const [board, logins, issues, me] = await Promise.all([
+  const [board, logins, issues, me, avatars] = await Promise.all([
     getBoard(),
     listAuthUsers(),
     getJiraIssues(),
     currentUserOrNull(),
+    avatarVersions(),
   ]);
   const { claims, directory } = board;
 
@@ -195,9 +197,12 @@ export default async function UsersPage() {
           {rows.map(({ person, login }) => {
             const isSelf = !!login && !!me && login.id === me.id;
             const label = person?.name ?? login?.displayName ?? "—";
+            // A picture belongs to a login, so a person's face is read through
+            // their link. Somebody with no login keeps their initials.
+            const face = avatarUrl(login?.id ?? null, avatars);
             const avatarFor = person
-              ? { id: person.id, name: person.name }
-              : { id: login!.id, name: login!.displayName };
+              ? { id: person.id, name: person.name, avatarUrl: face }
+              : { id: login!.id, name: login!.displayName, avatarUrl: face };
 
             return (
               <Tr key={person?.id ?? `login:${login!.id}`}>

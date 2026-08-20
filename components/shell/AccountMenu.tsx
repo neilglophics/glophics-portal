@@ -6,6 +6,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { Icon } from "@/components/ui/Icon";
 import { roleLabel } from "@/lib/shared/roles";
 import { ChangePasswordDialog } from "./ChangePasswordDialog";
+import { AvatarDialog } from "./AvatarDialog";
 import type { AuthUser } from "@/lib/types";
 
 /**
@@ -16,10 +17,11 @@ import type { AuthUser } from "@/lib/types";
  * it — that problem was an artifact of re-rendering the button out from under the
  * click, which React does not do here, so a plain listener is enough.
  */
-export function AccountMenu({ user }: { user: AuthUser }) {
+export function AccountMenu({ user, avatarUrl }: { user: AuthUser; avatarUrl: string | null }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const [avatarOpen, setAvatarOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const hostRef = useRef<HTMLDivElement>(null);
 
@@ -60,7 +62,7 @@ export function AccountMenu({ user }: { user: AuthUser }) {
           onClick={() => setOpen((v) => !v)}
           className="flex shrink-0 items-center gap-3 rounded-full pl-0 pr-1 transition hover:opacity-80"
         >
-          <Avatar person={{ id: user.id, name: user.displayName }} size="h-10 w-10" />
+          <Avatar person={{ id: user.id, name: user.displayName, avatarUrl }} size="h-10 w-10" />
           <span className="hidden text-left lg:block">
             <span className="block text-sm font-semibold leading-tight">{user.displayName}</span>
             <span className="block text-[10px] font-semibold uppercase tracking-wide text-faint">
@@ -103,6 +105,15 @@ export function AccountMenu({ user }: { user: AuthUser }) {
           </div>
         ) : null}
       </div>
+
+      {avatarOpen ? (
+        <AvatarDialog
+          user={user}
+          currentUrl={avatarUrl}
+          onClose={() => setAvatarOpen(false)}
+          onDone={() => router.refresh()}
+        />
+      ) : null}
 
       {passwordOpen ? (
         <ChangePasswordDialog

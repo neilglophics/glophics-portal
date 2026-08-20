@@ -1,6 +1,7 @@
 import { TicketTable } from "@/components/TicketTable";
 import { Page, PageHead } from "@/components/ui/Layout";
 import { getBoard, getJiraIssues } from "@/lib/db/queries/board";
+import { avatarVersions } from "@/lib/db/queries/avatars";
 import { boardRows, claimRows } from "@/lib/shared/view-model";
 
 /**
@@ -10,13 +11,14 @@ import { boardRows, claimRows } from "@/lib/shared/view-model";
 export const metadata = { title: "Active tickets · Glophics Portal" };
 
 export default async function TicketsPage() {
-  const [{ accounts, environments, claims, directory }, issues] = await Promise.all([
+  const [{ accounts, environments, claims, directory }, issues, avatars] = await Promise.all([
     getBoard(),
     getJiraIssues(),
+    avatarVersions(),
   ]);
 
-  const holding = claimRows(environments, accounts, claims, directory);
-  const rest = boardRows(issues, environments, accounts, directory);
+  const holding = claimRows(environments, accounts, claims, directory, avatars);
+  const rest = boardRows(issues, environments, accounts, directory, avatars);
   const rows = [...holding, ...rest];
 
   return (

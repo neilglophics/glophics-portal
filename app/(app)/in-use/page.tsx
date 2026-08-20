@@ -4,6 +4,7 @@ import { Chip, JiraChip } from "@/components/ui/Chips";
 import { Page, PageHead, StatTile } from "@/components/ui/Layout";
 import { Table, Td, Th, Tr } from "@/components/ui/Table";
 import { getBoard } from "@/lib/db/queries/board";
+import { avatarVersions } from "@/lib/db/queries/avatars";
 import { shortRepo } from "@/lib/shared/tokens";
 import { isUrgent, leftText, minutesLeft, nullsLast, peopleOf } from "@/lib/shared/view-model";
 
@@ -17,7 +18,10 @@ import { isUrgent, leftText, minutesLeft, nullsLast, peopleOf } from "@/lib/shar
 export const metadata = { title: "In use · Glophics Portal" };
 
 export default async function InUsePage() {
-  const { accounts, environments, claims, directory } = await getBoard();
+  const [{ accounts, environments, claims, directory }, avatars] = await Promise.all([
+    getBoard(),
+    avatarVersions(),
+  ]);
 
   const rows = claims
     .flatMap((claim) => {
@@ -31,7 +35,7 @@ export default async function InUsePage() {
         env: env?.name ?? claim.branch ?? "—",
         accountName: account?.displayName ?? claim.accountName ?? "—",
         minutesLeft: minutesLeft(claim),
-        people: peopleOf([claim], directory),
+        people: peopleOf([claim], directory, avatars),
       }));
     })
     // Soonest to free first — the question people actually ask.

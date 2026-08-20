@@ -51,6 +51,10 @@ export interface DirectoryUser {
   /** "Backend", "QA" — free text. NOT an auth role. */
   jobRole: string;
   jiraNames: string[];
+  /** The active login pointing at this person, if any. A picture is uploaded by
+   *  a login, so this is where a face is read from — the same "read through the
+   *  link" rule jiraNames follows. Null for most of the board. */
+  avatarUserId: AuthUserId | null;
 }
 
 // ---------- the board ----------

@@ -1,16 +1,20 @@
 import { avatarTone, initials } from "@/lib/shared/tokens";
 
 /**
- * Ported from H.avatar / H.avatarStack.
+ * Ported from H.avatar / H.avatarStack, now with an optional uploaded image.
  *
- * Colour is derived from the id, so a person keeps the same colour everywhere
- * and across reloads without anything being stored. Initials handle the team's
- * "[BE]_Sem" naming, stripping the bracketed prefix first.
+ * Initials remain the default, not a fallback for a failed load: most of the
+ * board has no login, and only a login can upload a picture. Colour is derived
+ * from the id so a person keeps the same one everywhere and across reloads
+ * without anything being stored.
  */
 
 export interface AvatarPerson {
   id: string;
   name: string;
+  /** From lib/db/queries/avatars.ts avatarUrl(). Carries a ?v= version, so it
+   *  can be cached hard and still update the moment somebody re-uploads. */
+  avatarUrl?: string | null;
 }
 
 export function Avatar({
@@ -20,8 +24,8 @@ export function Avatar({
 }: {
   person: AvatarPerson;
   size?: string;
-  /** Presence dot. Undefined means "presence is not being shown here" — which
-   *  is different from "offline", and renders no dot at all. */
+  /** Presence dot. Undefined means "presence is not shown here" — which is
+   *  different from "offline", and renders no dot at all. */
   online?: boolean;
 }) {
   const badge =
@@ -36,14 +40,29 @@ export function Avatar({
 
   return (
     <span className="relative inline-flex shrink-0">
-      <span
-        title={person.name}
-        className={`grid ${size} shrink-0 place-items-center rounded-full text-[10px] font-bold ring-2 ring-surface ${avatarTone(
-          person.id,
-        )}`}
-      >
-        {initials(person.name)}
-      </span>
+      {person.avatarUrl ? (
+        // A plain <img>, not next/image: these are already optimised to a
+        // 256px WebP on the way in, and next/image would put its own loader in
+        // front of an authenticated route for no benefit.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={person.avatarUrl}
+          alt={person.name}
+          title={person.name}
+          loading="lazy"
+          decoding="async"
+          className={`${size} shrink-0 rounded-full object-cover ring-2 ring-surface`}
+        />
+      ) : (
+        <span
+          title={person.name}
+          className={`grid ${size} shrink-0 place-items-center rounded-full text-[10px] font-bold ring-2 ring-surface ${avatarTone(
+            person.id,
+          )}`}
+        >
+          {initials(person.name)}
+        </span>
+      )}
       {badge}
     </span>
   );

@@ -25,6 +25,10 @@ import type {
 export interface Person {
   id: string;
   name: string;
+  /** Resolved through this person's linked login, because a picture is uploaded
+   *  by a login. Null for most of the board, which has no login at all — the
+   *  same "read through the link" rule jiraNames already follows. */
+  avatarUrl?: string | null;
   /** A Jira label that matched nobody in the directory. Half the point of
    *  showing it: a label with no person behind it is a ticket nobody can find
    *  as theirs. */
@@ -93,6 +97,7 @@ export function envRow(
   accounts: Account[],
   claims: Claim[],
   directory: DirectoryUser[],
+  avatars?: Map<string, string>,
 ): EnvRow {
   const account = accounts.find((a) => a.id === env.accountId) ?? null;
   const mine = claims.filter((c) => c.serverId === env.id);
@@ -114,7 +119,7 @@ export function envRow(
     freeRepos: env.repos.map((r) => r.repoName).filter((r) => !held.has(r)),
     offline: env.repos.filter((r) => r.health === "offline").map((r) => r.repoName),
     soonest: withEnd[0] ?? null,
-    people: peopleOf(mine, directory),
+    people: peopleOf(mine, directory, avatars),
     ticketIds: [...new Set(mine.map((c) => c.id))],
   };
 }
@@ -124,8 +129,9 @@ export function envRows(
   accounts: Account[],
   claims: Claim[],
   directory: DirectoryUser[],
+  avatars?: Map<string, string>,
 ): EnvRow[] {
-  return environments.map((env) => envRow(env, accounts, claims, directory));
+  return environments.map((env) => envRow(env, accounts, claims, directory, avatars));
 }
 
 /**
@@ -135,14 +141,32 @@ export function envRows(
  * held by a label nobody recognises still shows *someone* rather than an empty
  * cell that reads as unassigned.
  */
-export function peopleOf(claims: Claim[], directory: DirectoryUser[]): Person[] {
+export function peopleOf(
+  claims: Claim[],
+  directory: DirectoryUser[],
+  /** From avatarVersions(). Optional so a caller that renders no faces — the
+   *  badge counts, say — does not have to fetch it. */
+  avatars?: Map<string, string>,
+): Person[] {
   const byId = new Map<string, Person>();
+
+  const faceFor = (person: DirectoryUser): string | null => {
+    if (!avatars || !person.avatarUserId) return null;
+    const version = avatars.get(person.avatarUserId);
+    // The version is what makes the URL cacheable forever and still current.
+    return version
+      ? `/api/avatar/${person.avatarUserId}?v=${encodeURIComponent(version)}`
+      : null;
+  };
 
   for (const claim of claims) {
     for (const id of claim.userIds) {
       const person = directory.find((d) => d.id === id);
-      if (person) byId.set(person.id, { id: person.id, name: person.name });
-      else byId.set(id, { id, name: id, unmatched: true });
+      if (person) {
+        byId.set(person.id, { id: person.id, name: person.name, avatarUrl: faceFor(person) });
+      } else {
+        byId.set(id, { id, name: id, unmatched: true });
+      }
     }
     for (const label of claim.rawAssignees) {
       const key = `raw:${label.trim().toLowerCase()}`;
@@ -232,6 +256,7 @@ export function claimRows(
   accounts: Account[],
   claims: Claim[],
   directory: DirectoryUser[],
+  avatars?: Map<string, string>,
 ): TicketRow[] {
   return claims
     .map((claim) => {
@@ -244,7 +269,7 @@ export function claimRows(
         serverId: env?.id ?? null,
         accountName: account?.displayName ?? claim.accountName ?? "—",
         minutesLeft: minutesLeft(claim),
-        people: peopleOf([claim], directory),
+        people: peopleOf([claim], directory, avatars),
         holding: true,
       };
     })
@@ -264,6 +289,7 @@ export function boardRows(
   environments: Environment[],
   accounts: Account[],
   directory: DirectoryUser[],
+  avatars?: Map<string, string>,
 ): TicketRow[] {
   return issues
     .map((issue) => {
@@ -294,7 +320,7 @@ export function boardRows(
         serverId: env?.id ?? null,
         accountName: account?.displayName ?? issue.accountName ?? "—",
         minutesLeft: minutesLeft(issue),
-        people: peopleOf([asClaim], directory),
+        people: peopleOf([asClaim], directory, avatars),
         holding: false,
       };
     })

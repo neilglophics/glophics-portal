@@ -39,6 +39,9 @@ export const LIMITS = {
   "chat.typing": { max: 6, windowSeconds: 10 },
   "chat.read": { max: 10, windowSeconds: 10 },
   "chat.conversation.create": { max: 10, windowSeconds: 3600 },
+  /** Each upload costs an optimiser round trip, so this is lower than it looks
+   *  like it needs to be — it protects their service as much as ours. */
+  "avatar.upload": { max: 10, windowSeconds: 600 },
 } as const satisfies Record<string, Limit>;
 
 export type LimitName = keyof typeof LIMITS;

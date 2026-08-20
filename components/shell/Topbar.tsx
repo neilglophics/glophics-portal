@@ -20,10 +20,12 @@ import type { AuthUser } from "@/lib/types";
  */
 export function Topbar({
   user,
+  avatarUrl,
   jiraEnabled,
   lastSyncAt,
 }: {
   user: AuthUser;
+  avatarUrl: string | null;
   jiraEnabled: boolean;
   lastSyncAt: string | null;
 }) {
@@ -86,7 +88,7 @@ export function Topbar({
       </div>
 
       <ThemeSwitcher />
-      <AccountMenu user={user} />
+      <AccountMenu user={user} avatarUrl={avatarUrl} />
     </header>
   );
 }

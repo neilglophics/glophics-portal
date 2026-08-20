@@ -42,6 +42,7 @@ interface Pending {
 interface Member {
   id: string;
   displayName: string;
+  avatarUrl?: string | null;
 }
 
 const TYPING_PING_MS = 3000;
@@ -86,6 +87,11 @@ export function Thread({
 
   const memberName = useCallback(
     (id: string | null) => members.find((m) => m.id === id)?.displayName ?? "Former member",
+    [members],
+  );
+
+  const memberFace = useCallback(
+    (id: string | null) => members.find((m) => m.id === id)?.avatarUrl ?? null,
     [members],
   );
 
@@ -336,7 +342,17 @@ export function Thread({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line">
       <div className="flex shrink-0 items-center gap-3 border-b border-line px-4 py-3">
-        <Avatar person={{ id: conversationId, name: title }} size="h-9 w-9" />
+        <Avatar
+          person={{
+            id: conversationId,
+            name: title,
+            avatarUrl:
+              members.length === 2
+                ? (members.find((m) => m.id !== viewerId)?.avatarUrl ?? null)
+                : null,
+          }}
+          size="h-9 w-9"
+        />
         <div className="min-w-0">
           <p className="truncate text-sm font-bold">{title}</p>
           <p className="truncate text-[11px] text-faint">
@@ -370,6 +386,8 @@ export function Thread({
               key={m.id}
               mine={m.senderId === viewerId}
               author={memberName(m.senderId)}
+              authorId={m.senderId}
+              authorFace={memberFace(m.senderId)}
               body={m.body}
               at={m.createdAt}
               deleted={!!m.deletedAt}
@@ -460,6 +478,8 @@ export function Thread({
 function Bubble({
   mine,
   author,
+  authorId,
+  authorFace,
   body,
   at,
   state,
@@ -468,6 +488,8 @@ function Bubble({
 }: {
   mine: boolean;
   author: string;
+  authorId?: string | null;
+  authorFace?: string | null;
   body: string;
   at: string | null;
   state?: "sending" | "failed";
@@ -475,7 +497,11 @@ function Bubble({
   onRetry?: () => void;
 }) {
   return (
-    <div className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+    <div className={`flex items-end gap-2 ${mine ? "justify-end" : "justify-start"}`}>
+      {/* Only on the other side: your own face beside your own words is noise. */}
+      {!mine && author ? (
+        <Avatar person={{ id: authorId ?? author, name: author, avatarUrl: authorFace }} size="h-7 w-7" />
+      ) : null}
       <div className={`max-w-[78%] ${mine ? "items-end" : "items-start"}`}>
         {!mine && author ? (
           <p className="mb-0.5 px-1 text-[10px] font-semibold text-faint">{author}</p>

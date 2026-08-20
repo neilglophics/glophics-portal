@@ -6,6 +6,7 @@ import { Empty, Page, StatTile } from "@/components/ui/Layout";
 import { RepoStrip } from "@/components/ui/RepoStrip";
 import { Table, Td, Th, Tr } from "@/components/ui/Table";
 import { getBoard } from "@/lib/db/queries/board";
+import { avatarVersions } from "@/lib/db/queries/avatars";
 import { boardSummary } from "@/lib/shared/occupancy";
 import { ENV_STATE, TONE, shortRepo } from "@/lib/shared/tokens";
 import {
@@ -83,10 +84,13 @@ function HeldCard({ row }: { row: EnvRow }) {
 }
 
 export default async function DashboardPage() {
-  const { accounts, environments, claims, directory } = await getBoard();
+  const [{ accounts, environments, claims, directory }, avatars] = await Promise.all([
+    getBoard(),
+    avatarVersions(),
+  ]);
 
   const summary = boardSummary(environments, claims);
-  const rows = envRows(environments, accounts, claims, directory);
+  const rows = envRows(environments, accounts, claims, directory, avatars);
 
   // The three closest to freeing up, of whatever is not free.
   const held = rows
@@ -94,7 +98,7 @@ export default async function DashboardPage() {
     .sort((a, b) => nullsLast(minutesLeft(a.soonest ?? {})) - nullsLast(minutesLeft(b.soonest ?? {})))
     .slice(0, 3);
 
-  const tickets = claimRows(environments, accounts, claims, directory);
+  const tickets = claimRows(environments, accounts, claims, directory, avatars);
   const topTickets = tickets.slice(0, 5);
 
   const repoOffline = environments.reduce(

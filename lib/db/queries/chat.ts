@@ -32,7 +32,7 @@ export interface ConversationSummary {
   title: string;
   createdAt: string;
   lastMessageAt: string | null;
-  members: { id: AuthUserId; displayName: string }[];
+  members: { id: AuthUserId; displayName: string; avatarUrl: string | null }[];
   unreadCount: number;
   lastMessagePreview: string | null;
   muted: boolean;
@@ -108,9 +108,16 @@ export async function listConversations(viewerId: AuthUserId): Promise<Conversat
              WHERE m.conversation_id = c.id AND m.deleted_at IS NULL
              ORDER BY m.id DESC LIMIT 1) AS last_preview,
            COALESCE(
-             (SELECT json_agg(json_build_object('id', u.id, 'displayName', u.display_name)
+             (SELECT json_agg(json_build_object(
+                        'id', u.id,
+                        'displayName', u.display_name,
+                        -- The version, not a URL: the shape of the URL belongs in
+                        -- application code, not in SQL.
+                        'avatarVersion', av.updated_at)
                               ORDER BY u.display_name)
-                FROM chat_members mm JOIN auth_users u ON u.id = mm.user_id
+                FROM chat_members mm
+                JOIN auth_users u ON u.id = mm.user_id
+                LEFT JOIN auth_user_avatars av ON av.user_id = u.id
                WHERE mm.conversation_id = c.id),
              '[]'::json
            ) AS members
@@ -126,11 +133,17 @@ export async function listConversations(viewerId: AuthUserId): Promise<Conversat
     muted: boolean;
     unread_count: number;
     last_preview: string | null;
-    members: { id: string; displayName: string }[];
+    members: { id: string; displayName: string; avatarVersion: string | null }[];
   }[];
 
   return rows.map((r) => {
-    const members = r.members ?? [];
+    const members = (r.members ?? []).map((m) => ({
+      id: m.id,
+      displayName: m.displayName,
+      avatarUrl: m.avatarVersion
+        ? `/api/avatar/${m.id}?v=${encodeURIComponent(m.avatarVersion)}`
+        : null,
+    }));
     // A DM has no stored title — it *is* the other person. Falls back to the
     // viewer's own name for a self-DM, and to "Conversation" if the other member
     // has been removed.
@@ -459,18 +472,30 @@ export async function totalUnread(viewerId: AuthUserId): Promise<number> {
 /** Everyone with a login who could be messaged. Excludes the viewer. */
 export async function messageableUsers(
   viewerId: AuthUserId,
-): Promise<{ id: string; displayName: string; username: string; role: string }[]> {
+): Promise<
+  { id: string; displayName: string; username: string; role: string; avatarUrl: string | null }[]
+> {
   const rows = (await sql`
-    SELECT id, display_name, username, role
-      FROM auth_users
-     WHERE active = true AND id <> ${viewerId}
-     ORDER BY display_name
-  `) as { id: string; display_name: string; username: string; role: string }[];
+    SELECT u.id, u.display_name, u.username, u.role, av.updated_at AS avatar_version
+      FROM auth_users u
+      LEFT JOIN auth_user_avatars av ON av.user_id = u.id
+     WHERE u.active = true AND u.id <> ${viewerId}
+     ORDER BY u.display_name
+  `) as {
+    id: string;
+    display_name: string;
+    username: string;
+    role: string;
+    avatar_version: string | null;
+  }[];
 
   return rows.map((r) => ({
     id: r.id,
     displayName: r.display_name,
     username: r.username,
     role: r.role,
+    avatarUrl: r.avatar_version
+      ? `/api/avatar/${r.id}?v=${encodeURIComponent(r.avatar_version)}`
+      : null,
   }));
 }

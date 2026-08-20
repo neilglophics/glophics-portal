@@ -2,6 +2,7 @@ import { TicketTable } from "@/components/TicketTable";
 import { Notice, Page, PageHead } from "@/components/ui/Layout";
 import { currentUserOrNull } from "@/lib/auth/require";
 import { getBoard, getJiraIssues } from "@/lib/db/queries/board";
+import { avatarVersions } from "@/lib/db/queries/avatars";
 import { claimIsMine, identityValues } from "@/lib/shared/mine";
 import { boardRows, claimRows } from "@/lib/shared/view-model";
 
@@ -15,16 +16,17 @@ import { boardRows, claimRows } from "@/lib/shared/view-model";
 export const metadata = { title: "My tickets · Glophics Portal" };
 
 export default async function MyTicketsPage() {
-  const [{ accounts, environments, claims, directory }, issues, user] = await Promise.all([
+  const [{ accounts, environments, claims, directory }, issues, user, avatars] = await Promise.all([
     getBoard(),
     getJiraIssues(),
     currentUserOrNull(),
+    avatarVersions(),
   ]);
 
   const values = identityValues(user, directory);
   const all = [
-    ...claimRows(environments, accounts, claims, directory),
-    ...boardRows(issues, environments, accounts, directory),
+    ...claimRows(environments, accounts, claims, directory, avatars),
+    ...boardRows(issues, environments, accounts, directory, avatars),
   ];
   const rows = all.filter((row) => claimIsMine(row.claim, values, directory));
 

@@ -125,7 +125,7 @@ export function NewConversationDialog({
                   on ? "bg-brand-soft" : "hover:bg-surface"
                 }`}
               >
-                <Avatar person={{ id: p.id, name: p.displayName }} size="h-8 w-8" />
+                <Avatar person={{ id: p.id, name: p.displayName, avatarUrl: p.avatarUrl }} size="h-8 w-8" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-semibold">{p.displayName}</span>
                   <span className="block truncate text-[11px] text-faint">@{p.username}</span>

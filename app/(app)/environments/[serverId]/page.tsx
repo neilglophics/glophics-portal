@@ -7,6 +7,7 @@ import { Table, Td, Th, Tr } from "@/components/ui/Table";
 import { AssignButton, ForceFreeClaimButton, ForceFreeServerButton, NoteButton } from "@/components/env/EnvActions";
 import { currentUserOrNull, can } from "@/lib/auth/require";
 import { getBoard } from "@/lib/db/queries/board";
+import { avatarVersions } from "@/lib/db/queries/avatars";
 import { agoText, formatDateTime } from "@/lib/shared/format";
 import { shortRepo } from "@/lib/shared/tokens";
 import { envRow, isUrgent, leftText, minutesLeft, peopleOf } from "@/lib/shared/view-model";
@@ -35,13 +36,17 @@ export default async function EnvironmentDetailPage({
   const { serverId } = await params;
   const id = decodeURIComponent(serverId);
 
-  const [board, user] = await Promise.all([getBoard(), currentUserOrNull()]);
+  const [board, user, avatars] = await Promise.all([
+    getBoard(),
+    currentUserOrNull(),
+    avatarVersions(),
+  ]);
   const { accounts, environments, claims, directory, settings } = board;
 
   const env = environments.find((e) => e.id === id);
   if (!env) notFound();
 
-  const row = envRow(env, accounts, claims, directory);
+  const row = envRow(env, accounts, claims, directory, avatars);
   const mayClaim = can(user, "claim");
 
   return (
@@ -93,7 +98,7 @@ export default async function EnvironmentDetailPage({
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {row.repos.map((repo) => {
           const holders = repoClaims(claims, row.id, repo.repoName);
-          const people = peopleOf(holders, directory);
+          const people = peopleOf(holders, directory, avatars);
 
           return (
             <Card key={repo.repoName}>
@@ -191,7 +196,7 @@ export default async function EnvironmentDetailPage({
           }
         >
           {row.claims.map((claim) => {
-            const people = peopleOf([claim], directory);
+            const people = peopleOf([claim], directory, avatars);
             const minutes = minutesLeft(claim);
 
             return (
