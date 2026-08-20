@@ -19,6 +19,8 @@ const sql = neon(requireEnv("DATABASE_URL"));
 
 const {
   assertMember,
+  conversationUnread,
+  notificationTargets,
   dmKey,
   listConversations,
   listMessages,
@@ -131,6 +133,36 @@ try {
   check("conversation appears in the member's list", list.some((c) => c.id === first.id));
   check("a DM is titled with the other person", list.find((c) => c.id === first.id)?.title === "Verify a");
   check("carol sees no conversations", (await listConversations(carol)).length === 0);
+
+  // ---- notification targeting ----
+  // Bob's watermark was advanced above, so send something new before asserting
+  // that unread is counted — otherwise zero is the correct answer and the check
+  // proves nothing.
+  await sendMessage(first.id, alice, { clientMsgId: "notify-1", body: "ping" });
+  const perThread = await conversationUnread(first.id, bob);
+  const overall = await totalUnread(bob);
+  check("per-conversation unread is counted separately from the total",
+    perThread > 0 && overall >= perThread, `thread=${perThread} total=${overall}`);
+  check("the sender counts none of it as unread", (await conversationUnread(first.id, alice)) === 0);
+
+  const targets = await notificationTargets(first.id, alice);
+  check("targets exclude the sender", !targets.recipients.includes(alice));
+  check("targets include the other member", targets.recipients.includes(bob));
+  check("a DM reports kind=dm", targets.kind === "dm");
+
+  // Mute is honoured on the SERVER, so a muted thread costs no Pusher message
+  // at all rather than being filtered in the client.
+  await sql`
+    UPDATE chat_members SET muted = true
+     WHERE conversation_id = ${first.id} AND user_id = ${bob}
+  `;
+  const muted = await notificationTargets(first.id, alice);
+  check("a MUTED member is not a notification target", !muted.recipients.includes(bob),
+    JSON.stringify(muted.recipients));
+  await sql`
+    UPDATE chat_members SET muted = false
+     WHERE conversation_id = ${first.id} AND user_id = ${bob}
+  `;
 
   // ---- rate limiting actually refuses ----
   let allowed = 0;

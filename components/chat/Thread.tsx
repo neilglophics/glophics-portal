@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
 import { useRealtime } from "@/components/providers/PusherProvider";
 import { usePresence } from "@/components/providers/PresenceProvider";
+import { useUnread } from "@/components/providers/UnreadProvider";
 import { conversationChannel } from "@/lib/realtime/channels";
 import { getPusher, realtimeHeaders } from "@/lib/realtime/client";
 import { dropConfirmedPending, mergeMessages } from "@/lib/chat/merge";
@@ -71,6 +72,7 @@ export function Thread({
 }) {
   const { state: connectionState } = useRealtime();
   const { online, tracking } = usePresence();
+  const { clear: clearUnread } = useUnread();
 
   const [confirmed, setConfirmed] = useState<MessageRow[]>(initialMessages);
   const [pending, setPending] = useState<Pending[]>([]);
@@ -162,6 +164,9 @@ export function Thread({
 
     const timer = setTimeout(() => {
       readReported.current = newestId;
+      // Locally first, so the badge drops the moment the thread is read rather
+      // than waiting for the round trip to come back.
+      clearUnread(conversationId);
       void fetch(`/api/chat/conversations/${conversationId}/read`, {
         method: "POST",
         headers: { ...realtimeHeaders(), "Content-Type": "application/json" },
@@ -173,7 +178,7 @@ export function Thread({
     }, 600);
 
     return () => clearTimeout(timer);
-  }, [conversationId, newestId]);
+  }, [conversationId, newestId, clearUnread]);
 
   // ---------- live events ----------
 

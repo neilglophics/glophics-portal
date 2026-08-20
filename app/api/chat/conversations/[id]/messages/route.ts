@@ -1,5 +1,11 @@
 import { readJson, requireUser, withApi } from "@/lib/auth/require";
-import { listMessages, sendMessage, totalUnread } from "@/lib/db/queries/chat";
+import {
+  conversationUnread,
+  listMessages,
+  notificationTargets,
+  sendMessage,
+  totalUnread,
+} from "@/lib/db/queries/chat";
 import { requireWithinLimit } from "@/lib/rate-limit";
 import {
   conversationChannel,
@@ -79,15 +85,35 @@ export const POST = withApi(async (req: Request, ctx: Ctx) => {
 
     // One batched call rather than one per recipient: a ten-person group would
     // otherwise multiply every message by ten separate API round trips.
-    if (result.notify.length) {
-      const unreads = await Promise.all(
-        result.notify.map(async (memberId) => ({
+    //
+    // Recipients come from notificationTargets rather than result.notify, because
+    // that query already excludes anyone who muted the conversation — a muted
+    // thread then costs no Pusher message at all, which is the point of honouring
+    // mute on the server rather than in the client.
+    const targets = await notificationTargets(id, user.id);
+    const preview = result.message.body.slice(0, 140);
+
+    if (targets.recipients.length) {
+      const items = await Promise.all(
+        targets.recipients.map(async (memberId) => ({
           channel: userChannel(memberId),
           name: "unread.changed",
-          data: { conversationId: id, unreadCount: await totalUnread(memberId) },
+          data: {
+            conversationId: id,
+            // The title as THIS recipient sees it: a group's own name, or — for a
+            // DM — the person who just wrote to them.
+            conversationTitle:
+              targets.kind === "group"
+                ? (targets.title ?? "Group")
+                : (result.message.senderName ?? "Someone"),
+            senderName: result.message.senderName,
+            preview,
+            unreadCount: await conversationUnread(id, memberId),
+            totalUnread: await totalUnread(memberId),
+          },
         })),
       );
-      await publishBatch(unreads);
+      await publishBatch(items);
     }
   }
 

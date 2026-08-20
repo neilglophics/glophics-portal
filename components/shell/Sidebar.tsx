@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Icon } from "@/components/ui/Icon";
 import { BADGE_TONES, GROUP_LABELS, NAV, type NavCounts, type NavGroup, type NavItem } from "@/lib/shared/nav";
 import { roleCan } from "@/lib/shared/roles";
+import { useUnread } from "@/components/providers/UnreadProvider";
 import type { EnvStatus, RoleId } from "@/lib/types";
 
 /**
@@ -23,9 +24,11 @@ export interface AccountRollup {
   worst: EnvStatus;
 }
 
-function Badge({ item, counts }: { item: NavItem; counts: NavCounts }) {
+function Badge({ item, counts, liveUnread }: { item: NavItem; counts: NavCounts; liveUnread: number }) {
   if (!item.badge) return null;
-  const count = counts[item.badge];
+  // The chat badge is the one count that must change the instant an event lands,
+  // rather than on the next server render. Everything else is fine server-side.
+  const count = item.badge === "unreadChats" ? liveUnread : counts[item.badge];
   if (!count) return null;
 
   return (
@@ -35,7 +38,17 @@ function Badge({ item, counts }: { item: NavItem; counts: NavCounts }) {
   );
 }
 
-function NavLink({ item, counts, active }: { item: NavItem; counts: NavCounts; active: boolean }) {
+function NavLink({
+  item,
+  counts,
+  active,
+  liveUnread,
+}: {
+  item: NavItem;
+  counts: NavCounts;
+  active: boolean;
+  liveUnread: number;
+}) {
   return (
     <Link
       href={item.href}
@@ -47,7 +60,7 @@ function NavLink({ item, counts, active }: { item: NavItem; counts: NavCounts; a
     >
       <Icon name={item.icon} className="h-4.5 w-4.5 shrink-0" />
       <span className="flex-1">{item.label}</span>
-      <Badge item={item} counts={counts} />
+      <Badge item={item} counts={counts} liveUnread={liveUnread} />
     </Link>
   );
 }
@@ -62,6 +75,7 @@ export function Sidebar({
   accounts: AccountRollup[];
 }) {
   const pathname = usePathname();
+  const { total: liveUnread } = useUnread();
   const visible = NAV.filter((item) => !item.requires || roleCan(role, item.requires));
 
   const groups: NavGroup[] = ["overview", "activity", "settings"];
@@ -96,6 +110,7 @@ export function Sidebar({
                     // startsWith so a detail route keeps its parent highlighted,
                     // but guarded so /health never lights up /health-something.
                     active={pathname === item.href || pathname.startsWith(`${item.href}/`)}
+                    liveUnread={liveUnread}
                   />
                 ))}
               </nav>

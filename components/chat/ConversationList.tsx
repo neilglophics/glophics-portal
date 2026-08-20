@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
 import { agoText } from "@/lib/shared/format";
 import { usePresence } from "@/components/providers/PresenceProvider";
+import { useUnread } from "@/components/providers/UnreadProvider";
 import { NewConversationDialog } from "./NewConversationDialog";
 import type { ConversationSummary } from "@/lib/db/queries/chat";
 
@@ -37,6 +38,7 @@ export function ConversationList({
   viewerId: string;
 }) {
   const { online, tracking } = usePresence();
+  const { byConversation } = useUnread();
   const params = useParams<{ conversationId?: string }>();
   const activeId = params?.conversationId;
   const [composing, setComposing] = useState(false);
@@ -55,6 +57,10 @@ export function ConversationList({
           conversations.map((c) => {
             const active = c.id === activeId;
             const other = c.kind === "dm" ? c.members.find((m) => m.id !== viewerId) : undefined;
+            // Live count when one has arrived this session, otherwise the
+            // server's. `?? ` and not `||`, so a live zero — a thread just read
+            // — correctly beats a stale non-zero from the last render.
+            const unread = byConversation[c.id] ?? c.unreadCount;
             return (
               <Link
                 key={c.id}
@@ -82,7 +88,7 @@ export function ConversationList({
                   <div className="flex items-baseline gap-2">
                     <p
                       className={`min-w-0 flex-1 truncate text-sm ${
-                        c.unreadCount ? "font-bold text-ink" : "font-semibold text-ink-2"
+                        unread ? "font-bold text-ink" : "font-semibold text-ink-2"
                       }`}
                     >
                       {c.title}
@@ -95,14 +101,14 @@ export function ConversationList({
                   <div className="mt-0.5 flex items-center gap-2">
                     <p
                       className={`min-w-0 flex-1 truncate text-[11px] ${
-                        c.unreadCount ? "font-medium text-body" : "text-faint"
+                        unread ? "font-medium text-body" : "text-faint"
                       }`}
                     >
                       {c.lastMessagePreview ?? "No messages yet"}
                     </p>
-                    {c.unreadCount ? (
+                    {unread ? (
                       <span className="shrink-0 rounded-full bg-brand-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
-                        {c.unreadCount > 99 ? "99+" : c.unreadCount}
+                        {unread > 99 ? "99+" : unread}
                       </span>
                     ) : null}
                   </div>

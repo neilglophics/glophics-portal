@@ -474,6 +474,61 @@ export async function conversationReadState(
   return Object.fromEntries(rows.map((r) => [r.user_id, Number(r.last_read)]));
 }
 
+/**
+ * Unread in one conversation, for one person.
+ *
+ * Separate from totalUnread because a toast wants both: "3 in this thread" and
+ * "7 altogether". Computing the first from the second is not possible.
+ */
+export async function conversationUnread(
+  conversationId: string,
+  viewerId: AuthUserId,
+): Promise<number> {
+  const rows = (await sql`
+    SELECT count(*)::int AS n
+      FROM chat_messages m
+      JOIN chat_members me
+        ON me.conversation_id = m.conversation_id AND me.user_id = ${viewerId}
+     WHERE m.conversation_id = ${conversationId}
+       AND m.deleted_at IS NULL
+       AND m.sender_id IS DISTINCT FROM ${viewerId}
+       AND m.id > COALESCE(me.last_read_message_id, 0)
+  `) as { n: number }[];
+
+  return rows[0]?.n ?? 0;
+}
+
+/**
+ * The bare facts a notification needs about a conversation, and who is muted.
+ *
+ * Muted members are excluded here rather than filtered later, so a muted
+ * conversation costs no Pusher message at all — quota is the reason mute exists
+ * to be honoured on the server side.
+ */
+export async function notificationTargets(
+  conversationId: string,
+  senderId: AuthUserId,
+): Promise<{ kind: "dm" | "group"; title: string | null; recipients: AuthUserId[] }> {
+  const rows = (await sql`
+    SELECT c.kind, c.title,
+           COALESCE(
+             array_agg(m.user_id) FILTER (WHERE m.user_id <> ${senderId} AND m.muted = false),
+             '{}'
+           ) AS recipients
+      FROM chat_conversations c
+      JOIN chat_members m ON m.conversation_id = c.id
+     WHERE c.id = ${conversationId}
+     GROUP BY c.kind, c.title
+  `) as { kind: "dm" | "group"; title: string | null; recipients: string[] }[];
+
+  const row = rows[0];
+  return {
+    kind: row?.kind ?? "dm",
+    title: row?.title ?? null,
+    recipients: row?.recipients ?? [],
+  };
+}
+
 /** Total unread across every conversation, for the nav badge. */
 export async function totalUnread(viewerId: AuthUserId): Promise<number> {
   const rows = (await sql`
