@@ -7,6 +7,8 @@ import { getBoard, getJiraSkippedCount, getJiraSyncState } from "@/lib/db/querie
 import { currentUserOrNull } from "@/lib/auth/require";
 import { displayStatus } from "@/lib/shared/occupancy";
 import { myClaims } from "@/lib/shared/mine";
+import { totalUnread } from "@/lib/db/queries/chat";
+import { roleCan } from "@/lib/shared/roles";
 import type { NavCounts } from "@/lib/shared/nav";
 import type { EnvStatus } from "@/lib/types";
 
@@ -26,10 +28,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // through here on every navigation.
   if (!user) redirect("/login?expired=1");
 
-  const [board, syncState, skipped] = await Promise.all([
+  const [board, syncState, skipped, unreadChats] = await Promise.all([
     getBoard(),
     getJiraSyncState(),
     getJiraSkippedCount(),
+    // Skipped entirely for a role without `chat`: there is no badge to show, and
+    // counting would be a query answering a question nobody asked.
+    roleCan(user.role, "chat") ? totalUnread(user.id) : Promise.resolve(0),
   ]);
 
   const { accounts, environments, claims, directory, settings } = board;
@@ -47,7 +52,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     repoOffline,
     reposHeld,
     skipped,
-    unreadChats: 0, // Phase 12
+    unreadChats,
   };
 
   // Per-account rollup for the sidebar: how many of an account's environments

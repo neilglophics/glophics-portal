@@ -27,5 +27,16 @@ export const GET = withApi(async (req: Request) => {
      RETURNING username
   `) as unknown[];
 
-  return Response.json({ ok: true, sessionsPruned: sessions, lockoutsCleared: lockouts.length });
+  // Rows for windows nobody is inside any more. The limiter itself restarts an
+  // elapsed window on next use, so these are dead weight rather than state.
+  const limits = (await sql`
+    DELETE FROM rate_limits WHERE window_start < now() - interval '1 day' RETURNING key
+  `) as unknown[];
+
+  return Response.json({
+    ok: true,
+    sessionsPruned: sessions,
+    lockoutsCleared: lockouts.length,
+    rateLimitRowsCleared: limits.length,
+  });
 });

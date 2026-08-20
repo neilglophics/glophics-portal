@@ -21,8 +21,8 @@
  */
 
 import Pusher from "pusher";
-import { BOARD_CHANNEL, userChannel } from "./channels";
-import type { BoardEvents, UserEvents } from "./events";
+import { BOARD_CHANNEL, conversationChannel, userChannel } from "./channels";
+import type { BoardEvents, ConversationEvents, UserEvents } from "./events";
 
 let client: Pusher | null = null;
 let checked = false;
@@ -107,6 +107,59 @@ export async function publishToUser<E extends keyof UserEvents>(
 ): Promise<void> {
   await send(userChannel(userId), event, payload, options);
 }
+
+/**
+ * Something only a conversation's members should hear about.
+ *
+ * Safe to call with member data because the channel itself is gated: nobody can
+ * subscribe to `private-conv-<id>` without a chat_members row, checked by
+ * /api/pusher/auth. That check is the reason this function can carry a message
+ * body at all.
+ */
+export async function publishToConversation<E extends keyof ConversationEvents>(
+  conversationId: string,
+  event: E,
+  payload: ConversationEvents[E],
+  options?: PublishOptions,
+): Promise<void> {
+  await send(conversationChannel(conversationId), event, payload, options);
+}
+
+/**
+ * Several publishes in one API call rather than one round trip each.
+ *
+ * The case this exists for is `unread.changed`, which goes to every non-sender
+ * in a conversation: a ten-person group would otherwise multiply every message
+ * by ten separate calls. Pusher accepts up to 10 events per batch (*verify*), so
+ * this chunks.
+ */
+export async function publishBatch(
+  items: { channel: string; name: string; data: unknown }[],
+  options?: PublishOptions,
+): Promise<void> {
+  const instance = pusher();
+  if (!instance || !items.length) return;
+
+  const CHUNK = 10;
+  for (let i = 0; i < items.length; i += CHUNK) {
+    const chunk = items.slice(i, i + CHUNK).map((item) => ({
+      channel: item.channel,
+      name: item.name,
+      data: item.data,
+      ...(options?.socketId ? { socket_id: options.socketId } : {}),
+    }));
+
+    try {
+      await instance.triggerBatch(chunk);
+    } catch (err) {
+      console.error("[realtime] failed to publish batch:", (err as Error).message);
+    }
+  }
+}
+
+/** Channel-name builders, re-exported so route handlers building a batch do not
+ *  have to import from two modules. */
+export { conversationChannel, userChannel } from "./channels";
 
 /**
  * Reads the acting client's socket id off a request.
