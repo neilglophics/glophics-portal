@@ -112,7 +112,7 @@ const notes: string[] = [];
 
 // ---------- writing ----------
 
-async function importAll(client: PoolClient, truncate: boolean) {
+async function importAll(client: PoolClient, truncate: boolean, resetLogins: boolean) {
   const board = {
     users: readJsonFile<LegacyUser[]>(path.join(DATA_DIR, "users.json"), []),
     accounts: readJsonFile<LegacyAccount[]>(path.join(DATA_DIR, "accounts.json"), []),
@@ -139,17 +139,54 @@ async function importAll(client: PoolClient, truncate: boolean) {
   const settings = board.settings as Record<string, unknown>;
 
   if (truncate) {
-    // Order does not matter with CASCADE, and auth_users is included so a
-    // re-import does not collide on usernames.
+    /**
+     * Clears the BOARD, and deliberately not the logins.
+     *
+     * Re-seeding environments and claims is a routine thing to do; losing
+     * everyone's password is not. An earlier version truncated auth_users too,
+     * which meant a board re-import silently restored whatever hash happened to
+     * be in config/auth.json and locked out anyone whose password had been
+     * changed since. Use --reset-logins for that, explicitly.
+     *
+     * DELETE rather than TRUNCATE, for a reason that is easy to miss:
+     * TRUNCATE ... CASCADE truncates every table with a foreign key INTO the
+     * named ones, so `TRUNCATE directory_users CASCADE` would take auth_users
+     * with it regardless of that column being ON DELETE SET NULL. DELETE honours
+     * the declared action instead — logins survive with their link nulled, and
+     * the import below re-links them. These tables are small, so the cost of
+     * DELETE over TRUNCATE is irrelevant.
+     *
+     * Order is children-before-parents, since there is no CASCADE to lean on.
+     */
     await client.query(`
-      TRUNCATE claims, claim_repos, claim_assignees, claim_raw_assignees,
-               server_repos, servers, account_repositories, accounts,
-               directory_user_jira_names, directory_users,
-               jira_issues, jira_skipped, jira_sync_state, settings,
-               auth_sessions, auth_users, auth_login_attempts
-      CASCADE
+      DELETE FROM claim_raw_assignees;
+      DELETE FROM claim_assignees;
+      DELETE FROM claim_repos;
+      DELETE FROM claims;
+      DELETE FROM jira_issues;
+      DELETE FROM jira_skipped;
+      DELETE FROM jira_sync_state;
+      DELETE FROM server_repos;
+      DELETE FROM servers;
+      DELETE FROM account_repositories;
+      DELETE FROM accounts;
+      DELETE FROM directory_user_jira_names;
+      DELETE FROM directory_users;
+      DELETE FROM settings;
     `);
-    notes.push("Truncated existing board and auth tables before import.");
+    notes.push("Cleared the existing board. Logins were left alone (--reset-logins to include them).");
+
+    if (resetLogins) {
+      await client.query(`
+        DELETE FROM auth_sessions;
+        DELETE FROM auth_login_attempts;
+        DELETE FROM auth_users;
+      `);
+      notes.push(
+        "Also cleared logins. Every account is restored from config/auth.json with ITS ORIGINAL " +
+          "password — any password changed since is gone, and everyone must sign in again.",
+      );
+    }
   }
 
   // ---- directory people ----
@@ -364,6 +401,8 @@ async function importAll(client: PoolClient, truncate: boolean) {
 
 async function main() {
   const truncate = process.argv.includes("--truncate");
+  // Wiping logins is a separate, louder decision than re-seeding the board.
+  const resetLogins = process.argv.includes("--reset-logins");
   const connectionString = requireEnv(
     "DATABASE_URL_UNPOOLED",
     "Use the DIRECT (non-pooler) Neon connection string for the import.",
@@ -380,7 +419,7 @@ async function main() {
     // The whole import is one transaction: a half-imported board is worse than
     // no board, because it looks like a real one.
     await client.query("BEGIN");
-    const counts = await importAll(client, truncate);
+    const counts = await importAll(client, truncate, resetLogins);
     await client.query("COMMIT");
 
     console.log("\n  Imported");
