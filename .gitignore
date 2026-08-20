@@ -36,3 +36,6 @@ next-env.d.ts
 # Local env files
 .env
 .env*.local
+
+# Build artifact, not source.
+tsconfig.tsbuildinfo
