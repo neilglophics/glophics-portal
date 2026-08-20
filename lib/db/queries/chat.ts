@@ -453,6 +453,27 @@ export async function markRead(
   return { lastReadMessageId: Number(rows[0]?.last_read_message_id ?? 0) };
 }
 
+/**
+ * Each member's read position, keyed by user id.
+ *
+ * Seeds the thread so read state is right on first paint rather than only after
+ * the next read.changed event — which for a conversation nobody is actively
+ * looking at would be never.
+ */
+export async function conversationReadState(
+  conversationId: string,
+  viewerId: AuthUserId,
+): Promise<Record<string, number>> {
+  await assertMember(conversationId, viewerId);
+
+  const rows = (await sql`
+    SELECT user_id, COALESCE(last_read_message_id, 0) AS last_read
+      FROM chat_members WHERE conversation_id = ${conversationId}
+  `) as { user_id: string; last_read: string | number }[];
+
+  return Object.fromEntries(rows.map((r) => [r.user_id, Number(r.last_read)]));
+}
+
 /** Total unread across every conversation, for the nav badge. */
 export async function totalUnread(viewerId: AuthUserId): Promise<number> {
   const rows = (await sql`

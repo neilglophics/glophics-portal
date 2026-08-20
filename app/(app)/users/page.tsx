@@ -2,6 +2,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { Chip, Muted, RoleChip } from "@/components/ui/Chips";
 import { Card, Empty, Notice, Page, PageHead, StatTile } from "@/components/ui/Layout";
 import { Table, Td, Th, Tr } from "@/components/ui/Table";
+import { PresenceCell } from "@/components/users/PresenceCell";
 import {
   LoginDialogButton,
   PersonDialogButton,
@@ -189,6 +190,7 @@ export default async function UsersPage() {
               <Th>Person</Th>
               <Th>Jira assignee</Th>
               <Th>Sign-in</Th>
+              <Th className="whitespace-nowrap">Presence</Th>
               <Th className="whitespace-nowrap">Last sign-in</Th>
               <Th className="text-right" />
             </>
@@ -264,6 +266,14 @@ export default async function UsersPage() {
                       people={directory}
                       presetPersonId={person!.id}
                     />
+                  )}
+                </Td>
+
+                <Td>
+                  {login ? (
+                    <PresenceCell userId={login.id} lastSeenAt={login.lastSeenAt} />
+                  ) : (
+                    <Muted>—</Muted>
                   )}
                 </Td>
 

@@ -7,6 +7,7 @@ import { Field, FormError } from "@/components/ui/Form";
 import { Modal } from "@/components/ui/Modal";
 import { RoleChip } from "@/components/ui/Chips";
 import { realtimeHeaders } from "@/lib/realtime/client";
+import { usePresence } from "@/components/providers/PresenceProvider";
 import type { Person } from "./ConversationList";
 
 /**
@@ -25,6 +26,7 @@ export function NewConversationDialog({
   onClose: () => void;
 }) {
   const router = useRouter();
+  const { online, tracking } = usePresence();
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [title, setTitle] = useState("");
@@ -125,7 +127,11 @@ export function NewConversationDialog({
                   on ? "bg-brand-soft" : "hover:bg-surface"
                 }`}
               >
-                <Avatar person={{ id: p.id, name: p.displayName, avatarUrl: p.avatarUrl }} size="h-8 w-8" />
+                <Avatar
+                  person={{ id: p.id, name: p.displayName, avatarUrl: p.avatarUrl }}
+                  size="h-8 w-8"
+                  online={tracking ? online.has(p.id) : undefined}
+                />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-semibold">{p.displayName}</span>
                   <span className="block truncate text-[11px] text-faint">@{p.username}</span>

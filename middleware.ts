@@ -43,8 +43,21 @@ if (allowlist.open) {
   );
 }
 
-/** Paths that must stay reachable without a session. */
-const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/auth/logout", "/api/auth/me"];
+/**
+ * Paths that must stay reachable without a session.
+ *
+ * The Pusher webhook is here because it has no session to present: it is
+ * authenticated by an HMAC of its raw body against PUSHER_SECRET, verified in the
+ * handler. Leaving it out would mean middleware answering 401 to Pusher, which
+ * would then back off from delivering presence events at all.
+ */
+const PUBLIC_PATHS = [
+  "/login",
+  "/api/auth/login",
+  "/api/auth/logout",
+  "/api/auth/me",
+  "/api/pusher/webhook",
+];
 
 /** Cron routes authenticate with CRON_SECRET, not a cookie. */
 const isCron = (pathname: string) => pathname.startsWith("/api/cron/");

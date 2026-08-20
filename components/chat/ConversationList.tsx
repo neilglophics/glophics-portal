@@ -7,6 +7,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
 import { agoText } from "@/lib/shared/format";
+import { usePresence } from "@/components/providers/PresenceProvider";
 import { NewConversationDialog } from "./NewConversationDialog";
 import type { ConversationSummary } from "@/lib/db/queries/chat";
 
@@ -35,6 +36,7 @@ export function ConversationList({
   people: Person[];
   viewerId: string;
 }) {
+  const { online, tracking } = usePresence();
   const params = useParams<{ conversationId?: string }>();
   const activeId = params?.conversationId;
   const [composing, setComposing] = useState(false);
@@ -52,6 +54,7 @@ export function ConversationList({
         {conversations.length ? (
           conversations.map((c) => {
             const active = c.id === activeId;
+            const other = c.kind === "dm" ? c.members.find((m) => m.id !== viewerId) : undefined;
             return (
               <Link
                 key={c.id}
@@ -67,12 +70,12 @@ export function ConversationList({
                   person={{
                     id: c.id,
                     name: c.title,
-                    avatarUrl:
-                      c.kind === "dm"
-                        ? (c.members.find((m) => m.id !== viewerId)?.avatarUrl ?? null)
-                        : null,
+                    avatarUrl: other?.avatarUrl ?? null,
                   }}
                   size="h-9 w-9"
+                  // A dot only where it means something: on one identifiable
+                  // person, and only when presence is actually being tracked.
+                  online={tracking && other ? online.has(other.id) : undefined}
                 />
 
                 <div className="min-w-0 flex-1">

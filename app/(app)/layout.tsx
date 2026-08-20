@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { Sidebar, type AccountRollup } from "@/components/shell/Sidebar";
 import { Topbar } from "@/components/shell/Topbar";
 import { PusherProvider } from "@/components/providers/PusherProvider";
+import { PresenceProvider } from "@/components/providers/PresenceProvider";
 import { getBoard, getJiraSkippedCount, getJiraSyncState } from "@/lib/db/queries/board";
 import { currentUserOrNull } from "@/lib/auth/require";
 import { displayStatus } from "@/lib/shared/occupancy";
@@ -80,6 +81,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     // sign-in screen — there is no session to authorize a subscription with, and
     // a connection attempt there would only fail noisily.
     <PusherProvider userId={user.id}>
+      {/* Inside PusherProvider, because it shares the one connection. */}
+      <PresenceProvider canChat={roleCan(user.role, "chat")}>
       <div className="flex h-full">
         <Sidebar role={user.role} counts={counts} accounts={rollups} />
 
@@ -97,6 +100,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <main className="no-scrollbar min-h-0 flex-1 overflow-y-auto pt-5">{children}</main>
         </div>
       </div>
+      </PresenceProvider>
     </PusherProvider>
   );
 }
