@@ -151,6 +151,19 @@ const Model = (() => {
     return [...claimRows(), ...boardRows()];
   }
 
+  // ---------- latest Jira activity ----------
+
+  // The most recently updated Jira-sourced tickets, holding a repository or
+  // not — what the dashboard's "Latest Jira updates" panel reads. A manual
+  // claim was never touched by a sync pass and carries no updatedAt, so it
+  // has nothing to report here.
+  function latestJiraUpdates(limit) {
+    return ticketRows()
+      .filter((r) => r.claim.source === "jira" && r.claim.updatedAt)
+      .sort((a, b) => new Date(b.claim.updatedAt) - new Date(a.claim.updatedAt))
+      .slice(0, limit || 8);
+  }
+
   // ---------- assignees ----------
 
   /**
@@ -366,7 +379,7 @@ const Model = (() => {
 
   return {
     envRow, envRows, filteredEnvRows,
-    repoRows, claimRepoRows, claimRows, boardRows, ticketRows, allClaims,
+    repoRows, claimRepoRows, claimRows, boardRows, ticketRows, allClaims, latestJiraUpdates,
     assigneeRows, unmatchedAssignees, unmatchedNames, namesWithoutAccount,
     claimAssigneeNames, ticketsForNames,
     minutesLeft, leftText, progress, isUrgent, peopleOf, summary

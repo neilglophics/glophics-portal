@@ -131,6 +131,7 @@ function extractTicketFields(issue, fieldMap) {
     summary: f.summary || "",
     status: f.status ? f.status.name : "Unknown",
     statusCategory: f.status ? f.status.statusCategory.key : "new",
+    updated: f.updated || null,
     ticketAssignees: pickFieldValue(f, fieldMap["ticket assignee"]) || [],
     accountName: firstOf(pickFieldValue(f, fieldMap["account name"])),
     branch: firstOf(pickFieldValue(f, fieldMap["branch"])),
@@ -189,7 +190,7 @@ async function runJiraSync(force) {
 
   try {
     const fieldMap = await loadFieldIdMap(config);
-    const fieldIds = new Set(["summary", "status"]);
+    const fieldIds = new Set(["summary", "status", "updated"]);
     AUTOFILL_FIELD_NAMES.forEach((name) => (fieldMap[name] || []).forEach((id) => fieldIds.add(id)));
 
     /**
@@ -236,6 +237,7 @@ async function runJiraSync(force) {
         rawAssignees: t.ticketAssignees,
         status: t.status,
         summary: t.summary,
+        updatedAt: t.updated || null,
         // Dates as Jira has them. Nothing is being held, so unlike a claim
         // there is no "it started now" to fall back on.
         startTime: t.startDate ? new Date(`${t.startDate}T09:00`).toISOString() : null,
@@ -255,6 +257,7 @@ async function runJiraSync(force) {
         if (!statusFrees(jira, t.status)) {
           existing.status = t.status;
           existing.summary = t.summary;
+          existing.updatedAt = t.updated || null;
           existing.lastSyncedAt = new Date().toISOString();
           if (!canPlace) return;
 
@@ -321,6 +324,7 @@ async function runJiraSync(force) {
         rawAssignees: t.ticketAssignees,
         status: t.status,
         summary: t.summary,
+        updatedAt: t.updated || null,
         note: null,
         startTime: claimStart(t, null),
         endTime: claimEnd(t),

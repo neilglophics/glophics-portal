@@ -174,10 +174,13 @@ ${url}`)}"
   const tr = (cells, data, extraClass = "") =>
     `<tr ${attrs(data)} class="transition hover:bg-subtle/60 ${extraClass}">${cells}</tr>`;
 
-  const table = (head, rows, emptyMessage) => rows.length ? `
+  // `narrow` drops the 880px floor for a table sharing a row with other
+  // panels (e.g. a dashboard side column) — full-width tables want the
+  // floor so columns don't crush; a side panel wants to fit its column.
+  const table = (head, rows, emptyMessage, opts = {}) => rows.length ? `
     <div class="overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line">
       <div class="overflow-x-auto">
-        <table class="w-full min-w-[880px] text-left">
+        <table class="w-full text-left ${opts.narrow ? "" : "min-w-[880px]"}">
           <thead><tr class="border-b border-line text-[10px] font-bold tracking-[0.12em] text-faint">${head}</tr></thead>
           <tbody class="divide-y divide-line-soft">${rows.join("")}</tbody>
         </table>
