@@ -32,8 +32,5 @@ module.exports = {
   SHARED_DIR: path.join(ROOT, "shared"),
 
   // Credentials and connection settings. Written at runtime, never served.
-  CONFIG_DIR: path.join(ROOT, "config"),
-
-  // The board, one file per section. Never served.
-  DATA_DIR: path.join(ROOT, "shared-data")
+  CONFIG_DIR: path.join(ROOT, "config")
 };

@@ -1,24 +1,37 @@
-# Jira credentials — real API token, never commit.
-# Copy jira-config.example.json to jira-config.json and fill it in locally.
+# DATABASE_URL, and anything else loaded via config/.env — real credentials,
+# per-deployment, never committed.
 .env
+config/.env
+
+# Generated at first run when APP_SECRET_KEY is not set in the environment.
+# Encrypts the Jira token stored in the `secrets` table; losing it means
+# re-entering that token, so it is convenience-only in development and must
+# be an explicit env var (not this file) anywhere that matters.
+config/secret.key
+
+# Jira credentials — real API token, never commit. Superseded by the
+# `secrets` table (server/services/secrets-service.js); this file is only
+# read once, by server/cli/import-legacy.js, and only if still present from
+# before this rewrite.
 jira-config.json
 
 # Who may reach the portal at all. Real office/VPN addresses, and a list
 # that differs per deployment — copy allowed-ips.example.json instead.
 allowed-ips.json
 
-# Sign-in credentials and live sessions. server.js seeds a super admin into
-# this on first run and prints the password once; password hashes and
-# session tokens live here, so it never belongs in the repo.
+# Sign-in credentials and sessions from before the move to the database.
+# Password hashes and (plaintext, pre-rewrite) session tokens live here, so
+# it never belongs in the repo. Only read once, by
+# server/cli/import-legacy.js; delete once its board has been imported.
 auth.json
 
-# Runtime state: the board, one file per section. state-store.js recreates it
-# from the seed in js/data.js on first run, and it accumulates live ticket
-# data, internal URLs and names.
+# The board as JSON files, from before the move to the database. Only read
+# once, by server/cli/import-legacy.js; delete once imported.
 shared-data/
 shared-data.unreadable*/
 
-# The single file the board used to live in, kept after it is split.
+# The single file the board used to live in, before it was split into the
+# directory above.
 shared-state*.json*
 
 node_modules/

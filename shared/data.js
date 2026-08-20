@@ -502,6 +502,12 @@ const AUTH_ROLES = [
   }
 ];
 
+// Every capability any role can hold, derived from the table above rather than
+// written out again. The server's route table checks each route's declared
+// capability against this list at startup, so a typo in a route is a boot
+// failure instead of a permission that silently never matches.
+const ALL_CAPABILITIES = [...new Set(AUTH_ROLES.flatMap((r) => r.capabilities))];
+
 function getRole(roleId) {
   return AUTH_ROLES.find((r) => r.id === roleId) || null;
 }
@@ -529,6 +535,6 @@ if (typeof module !== "undefined" && module.exports) {
     statusIn, statusFrees, statusIsTerminal,
     JIRA_DERIVED_KEYS, withoutJiraDerived,
     matchRepositoriesToKeys, matchUserIdsByLabels, userJiraNames, findServerForTicket,
-    AUTH_ROLES, getRole, roleCan, roleLabel, isValidRole
+    AUTH_ROLES, ALL_CAPABILITIES, getRole, roleCan, roleLabel, isValidRole
   };
 }

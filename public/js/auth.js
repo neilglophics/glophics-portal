@@ -14,15 +14,31 @@
 const Auth = (() => {
   let current = null;
 
+  // Minted with the session and required back on every mutating request —
+  // see server/http/csrf.js. GET /api/auth/me and POST /api/auth/login both
+  // hand back a fresh one, so it is always current without a page reload.
+  let csrfToken = null;
+
+  function csrfHeader(method) {
+    if (!csrfToken || !method || method === "GET" || method === "HEAD") return {};
+    return { "X-CSRF-Token": csrfToken };
+  }
+
   async function api(path, options = {}) {
+    const method = options.method || "GET";
+    const headers = {
+      ...(options.body ? { "Content-Type": "application/json" } : null),
+      ...csrfHeader(method)
+    };
     const res = await fetch(path, {
       credentials: "same-origin",
-      headers: options.body ? { "Content-Type": "application/json" } : undefined,
-      ...options
+      ...options,
+      headers
     });
     // Handlers answer with a body on both success and failure, so the body
     // is the answer and the status only says which kind it is.
     const data = await res.json().catch(() => ({}));
+    if (data.csrfToken) csrfToken = data.csrfToken;
     return { status: res.status, ...data };
   }
 
@@ -93,6 +109,14 @@ const Auth = (() => {
     return (current && current.directoryUserId) || null;
   }
 
+  // Whether this login must set a new password before it may do anything
+  // else — true for a just-seeded or just-reset account. app.js prompts for
+  // it once, right after sign-in, using the same change-password modal the
+  // avatar menu already offers.
+  function mustChangePassword() {
+    return !!(current && current.mustChangePassword);
+  }
+
   // ---------- managing other people's credentials (super admin) ----------
 
   async function listUsers() {
@@ -121,7 +145,8 @@ const Auth = (() => {
 
   return {
     refresh, signIn, signOut, changeOwnPassword,
-    user, isSignedIn, can, roleName, roles, jiraNames, directoryUserId,
-    listUsers, createUser, updateUser, removeUser, setPassword
+    user, isSignedIn, can, roleName, roles, jiraNames, directoryUserId, mustChangePassword,
+    listUsers, createUser, updateUser, removeUser, setPassword,
+    csrfHeader
   };
 })();
