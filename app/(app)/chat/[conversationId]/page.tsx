@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { Thread } from "@/components/chat/Thread";
 import { requireUser } from "@/lib/auth/require";
 import { HttpError } from "@/lib/auth/require";
-import { listConversations, listMessages } from "@/lib/db/queries/chat";
+import { conversationReadState, listConversations, listMessages } from "@/lib/db/queries/chat";
 
 /**
  * One conversation, server-rendered once and then owned by the client.
@@ -42,8 +42,12 @@ export default async function ConversationPage({
   if (!conversation) notFound();
 
   let initial;
+  let readUpTo: Record<string, number> = {};
   try {
-    initial = await listMessages(conversationId, user.id, {});
+    [initial, readUpTo] = await Promise.all([
+      listMessages(conversationId, user.id, {}),
+      conversationReadState(conversationId, user.id),
+    ]);
   } catch (err) {
     // assertMember answers 404 for a non-member. Belt and braces — the list
     // lookup above has already established membership.
@@ -61,6 +65,7 @@ export default async function ConversationPage({
       // oldest-first, so it is reversed once here rather than in the client.
       initialMessages={[...initial.messages].reverse()}
       initialHasMore={initial.hasMore}
+      initialReadUpTo={readUpTo}
     />
   );
 }

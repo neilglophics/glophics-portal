@@ -7,6 +7,7 @@ import { RepoStrip } from "@/components/ui/RepoStrip";
 import { Table, Td, Th, Tr } from "@/components/ui/Table";
 import { currentUserOrNull } from "@/lib/auth/require";
 import { getBoard } from "@/lib/db/queries/board";
+import { avatarVersions } from "@/lib/db/queries/avatars";
 import { myClaims } from "@/lib/shared/mine";
 import { ENV_STATE } from "@/lib/shared/tokens";
 import {
@@ -155,10 +156,14 @@ function EnvironmentRow({ row }: { row: EnvRow }) {
 
 export default async function EnvironmentsPage({ searchParams }: { searchParams: Promise<Search> }) {
   const search = await searchParams;
-  const [board, user] = await Promise.all([getBoard(), currentUserOrNull()]);
+  const [board, user, avatars] = await Promise.all([
+    getBoard(),
+    currentUserOrNull(),
+    avatarVersions(),
+  ]);
   const { accounts, environments, claims, directory } = board;
 
-  const all = envRows(environments, accounts, claims, directory);
+  const all = envRows(environments, accounts, claims, directory, avatars);
   const counts = statusCounts(all);
 
   const mineIds = new Set(myClaims(claims, user, directory).map((c) => c.id));

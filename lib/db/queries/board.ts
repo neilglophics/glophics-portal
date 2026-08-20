@@ -161,7 +161,7 @@ export async function getClaims(): Promise<Claim[]> {
 
 export async function getDirectoryUsers(): Promise<DirectoryUser[]> {
   const rows = (await sql`
-    SELECT d.id, d.name, d.job_role,
+    SELECT d.id, d.name, d.job_role, u.id AS avatar_user_id,
            COALESCE(
              array_agg(n.jira_name ORDER BY n.jira_name)
                FILTER (WHERE n.jira_name IS NOT NULL),
@@ -169,15 +169,23 @@ export async function getDirectoryUsers(): Promise<DirectoryUser[]> {
            ) AS jira_names
       FROM directory_users d
       LEFT JOIN directory_user_jira_names n ON n.directory_user_id = d.id
-     GROUP BY d.id, d.name, d.job_role
+      LEFT JOIN auth_users u ON u.directory_user_id = d.id AND u.active = true
+     GROUP BY d.id, d.name, d.job_role, u.id
      ORDER BY d.name
-  `) as { id: string; name: string; job_role: string; jira_names: string[] }[];
+  `) as {
+    id: string;
+    name: string;
+    job_role: string;
+    jira_names: string[];
+    avatar_user_id: string | null;
+  }[];
 
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
     jobRole: r.job_role,
     jiraNames: r.jira_names ?? [],
+    avatarUserId: r.avatar_user_id,
   }));
 }
 

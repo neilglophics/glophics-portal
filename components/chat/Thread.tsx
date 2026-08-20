@@ -5,6 +5,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
 import { useRealtime } from "@/components/providers/PusherProvider";
+import { usePresence } from "@/components/providers/PresenceProvider";
 import { conversationChannel } from "@/lib/realtime/channels";
 import { getPusher, realtimeHeaders } from "@/lib/realtime/client";
 import { dropConfirmedPending, mergeMessages } from "@/lib/chat/merge";
@@ -42,6 +43,7 @@ interface Pending {
 interface Member {
   id: string;
   displayName: string;
+  avatarUrl?: string | null;
 }
 
 const TYPING_PING_MS = 3000;
@@ -56,6 +58,7 @@ export function Thread({
   viewerId,
   initialMessages,
   initialHasMore,
+  initialReadUpTo,
 }: {
   conversationId: string;
   title: string;
@@ -63,8 +66,11 @@ export function Thread({
   viewerId: string;
   initialMessages: MessageRow[];
   initialHasMore: boolean;
+  /** Each other member's last-read message id, from chat_members. */
+  initialReadUpTo: Record<string, number>;
 }) {
   const { state: connectionState } = useRealtime();
+  const { online, tracking } = usePresence();
 
   const [confirmed, setConfirmed] = useState<MessageRow[]>(initialMessages);
   const [pending, setPending] = useState<Pending[]>([]);
@@ -73,6 +79,12 @@ export function Thread({
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [typing, setTyping] = useState<Record<string, number>>({});
+  /**
+   * Each member's read position. A watermark per person, not a receipt per
+   * message (ADR-006) — so "read" is answered by comparing one number against a
+   * message id rather than by looking up a row.
+   */
+  const [readUpTo, setReadUpTo] = useState<Record<string, number>>(initialReadUpTo);
   const [missed, setMissed] = useState(0);
 
   const scroller = useRef<HTMLDivElement>(null);
@@ -81,11 +93,24 @@ export function Thread({
   const readReported = useRef(0);
   const hasConnected = useRef(false);
 
+  const dmPartner = members.length === 2 ? members.find((m) => m.id !== viewerId) : undefined;
+
+  // The newest message the viewer sent — the only one that carries a receipt.
+  const lastMineId = confirmed.reduce(
+    (best, m) => (m.senderId === viewerId && m.id > best ? m.id : best),
+    0,
+  );
+
   const newestId = confirmed.length ? confirmed[confirmed.length - 1]!.id : 0;
   const oldestId = confirmed.length ? confirmed[0]!.id : 0;
 
   const memberName = useCallback(
     (id: string | null) => members.find((m) => m.id === id)?.displayName ?? "Former member",
+    [members],
+  );
+
+  const memberFace = useCallback(
+    (id: string | null) => members.find((m) => m.id === id)?.avatarUrl ?? null,
     [members],
   );
 
@@ -175,14 +200,24 @@ export function Thread({
       setTyping((prev) => ({ ...prev, [userId]: Date.now() }));
     };
 
+    const onRead = ({ userId, lastReadMessageId }: { userId: string; lastReadMessageId: number }) => {
+      // Monotonic, matching the server's GREATEST: an out-of-order event from a
+      // second tab must not walk somebody's read position backwards.
+      setReadUpTo((prev) =>
+        (prev[userId] ?? 0) >= lastReadMessageId ? prev : { ...prev, [userId]: lastReadMessageId },
+      );
+    };
+
     channel.bind("message.new", onMessage);
     channel.bind("message.edited", onMessage);
     channel.bind("typing.start", onTyping);
+    channel.bind("read.changed", onRead);
 
     return () => {
       channel.unbind("message.new", onMessage);
       channel.unbind("message.edited", onMessage);
       channel.unbind("typing.start", onTyping);
+      channel.unbind("read.changed", onRead);
       pusher.unsubscribe(conversationChannel(conversationId));
     };
   }, [conversationId, viewerId]);
@@ -336,11 +371,25 @@ export function Thread({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line">
       <div className="flex shrink-0 items-center gap-3 border-b border-line px-4 py-3">
-        <Avatar person={{ id: conversationId, name: title }} size="h-9 w-9" />
+        <Avatar
+          person={{
+            id: conversationId,
+            name: title,
+            avatarUrl: dmPartner?.avatarUrl ?? null,
+          }}
+          size="h-9 w-9"
+          online={tracking && dmPartner ? online.has(dmPartner.id) : undefined}
+        />
         <div className="min-w-0">
           <p className="truncate text-sm font-bold">{title}</p>
           <p className="truncate text-[11px] text-faint">
-            {members.length} member{members.length === 1 ? "" : "s"}
+            {dmPartner
+              ? tracking
+                ? online.has(dmPartner.id)
+                  ? "Online"
+                  : "Offline"
+                : `${members.length} members`
+              : `${members.length} member${members.length === 1 ? "" : "s"}`}
           </p>
         </div>
       </div>
@@ -368,8 +417,19 @@ export function Thread({
           {confirmed.map((m) => (
             <Bubble
               key={m.id}
+              // Only on the newest message you sent: a tick under every line is
+              // noise, and the last one answers the actual question.
+              readBy={
+                m.senderId === viewerId && m.id === lastMineId
+                  ? members
+                      .filter((x) => x.id !== viewerId && (readUpTo[x.id] ?? 0) >= m.id)
+                      .map((x) => x.displayName)
+                  : undefined
+              }
               mine={m.senderId === viewerId}
               author={memberName(m.senderId)}
+              authorId={m.senderId}
+              authorFace={memberFace(m.senderId)}
               body={m.body}
               at={m.createdAt}
               deleted={!!m.deletedAt}
@@ -460,22 +520,34 @@ export function Thread({
 function Bubble({
   mine,
   author,
+  authorId,
+  authorFace,
   body,
   at,
   state,
   deleted,
+  readBy,
   onRetry,
 }: {
   mine: boolean;
   author: string;
+  authorId?: string | null;
+  authorFace?: string | null;
   body: string;
   at: string | null;
   state?: "sending" | "failed";
   deleted?: boolean;
+  /** Names of the other members who have read this. Undefined on messages that
+   *  carry no receipt, which is all of them except your latest. */
+  readBy?: string[];
   onRetry?: () => void;
 }) {
   return (
-    <div className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+    <div className={`flex items-end gap-2 ${mine ? "justify-end" : "justify-start"}`}>
+      {/* Only on the other side: your own face beside your own words is noise. */}
+      {!mine && author ? (
+        <Avatar person={{ id: authorId ?? author, name: author, avatarUrl: authorFace }} size="h-7 w-7" />
+      ) : null}
       <div className={`max-w-[78%] ${mine ? "items-end" : "items-start"}`}>
         {!mine && author ? (
           <p className="mb-0.5 px-1 text-[10px] font-semibold text-faint">{author}</p>
@@ -505,7 +577,21 @@ function Bubble({
           ) : state === "sending" ? (
             <span className="text-[10px] text-faintest">Sending…</span>
           ) : at ? (
-            <span className="text-[10px] text-faintest">{formatDateTime(at)}</span>
+            <>
+              <span className="text-[10px] text-faintest">{formatDateTime(at)}</span>
+              {readBy ? (
+                <span
+                  className="text-[10px] font-medium text-brand-fg"
+                  title={readBy.length ? `Read by ${readBy.join(", ")}` : "Not read yet"}
+                >
+                  {readBy.length
+                    ? readBy.length === 1
+                      ? `Read by ${readBy[0]}`
+                      : `Read by ${readBy.length}`
+                    : "Sent"}
+                </span>
+              ) : null}
+            </>
           ) : null}
         </div>
       </div>

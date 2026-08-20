@@ -78,8 +78,8 @@ describe("matchRepositoriesToKeys", () => {
 
 describe("matchUserIdsByLabels", () => {
   const people: DirectoryUser[] = [
-    { id: "sem", name: "[BE]_Sem", jobRole: "Backend", jiraNames: ["[BE]_Sem", "[BE]_Sem_R"] },
-    { id: "jerome", name: "[QA]_Jerome", jobRole: "QA", jiraNames: [] },
+    { id: "sem", name: "[BE]_Sem", jobRole: "Backend", jiraNames: ["[BE]_Sem", "[BE]_Sem_R"], avatarUserId: null },
+    { id: "jerome", name: "[QA]_Jerome", jobRole: "QA", jiraNames: [], avatarUserId: null },
   ];
 
   it("matches any of a person's several labels", () => {

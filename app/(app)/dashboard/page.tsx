@@ -7,6 +7,7 @@ import { RepoStrip } from "@/components/ui/RepoStrip";
 import { Table, Td, Th, Tr } from "@/components/ui/Table";
 import { currentUserOrNull } from "@/lib/auth/require";
 import { getBoard, getJiraIssues } from "@/lib/db/queries/board";
+import { avatarVersions } from "@/lib/db/queries/avatars";
 import { boardSummary } from "@/lib/shared/occupancy";
 import { jiraActivity } from "@/lib/shared/activity";
 import { agoText } from "@/lib/shared/format";
@@ -150,6 +151,7 @@ function HeldCard({ row }: { row: EnvRow }) {
   );
 }
 
+<<<<<<< HEAD
 /** One row of the Latest Jira updates panel — Ticket (+ activity badge and
  *  message), Assignee, Status, Branch, Repos. */
 function JiraUpdateRow({
@@ -208,10 +210,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     getBoard(),
     getJiraIssues(),
     currentUserOrNull(),
+=======
+export default async function DashboardPage() {
+  const [{ accounts, environments, claims, directory }, avatars] = await Promise.all([
+    getBoard(),
+    avatarVersions(),
+>>>>>>> ab53915d99a23ee162ace7f28e721abda4b66974
   ]);
 
   const summary = boardSummary(environments, claims);
-  const rows = envRows(environments, accounts, claims, directory);
+  const rows = envRows(environments, accounts, claims, directory, avatars);
 
   // The three closest to freeing up, of whatever is not free.
   const held = rows
@@ -219,6 +227,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     .sort((a, b) => nullsLast(minutesLeft(a.soonest ?? {})) - nullsLast(minutesLeft(b.soonest ?? {})))
     .slice(0, 3);
 
+<<<<<<< HEAD
   const tickets = claimRows(environments, accounts, claims, directory);
   const active = paginate(tickets, search.activePage);
 
@@ -229,6 +238,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     .filter((r) => r.claim.source === "jira" && r.claim.jiraUpdatedAt)
     .sort((a, b) => new Date(b.claim.jiraUpdatedAt!).getTime() - new Date(a.claim.jiraUpdatedAt!).getTime());
   const updates = paginate(jiraUpdates, search.updatesPage);
+=======
+  const tickets = claimRows(environments, accounts, claims, directory, avatars);
+  const topTickets = tickets.slice(0, 5);
+>>>>>>> ab53915d99a23ee162ace7f28e721abda4b66974
 
   const repoOffline = environments.reduce(
     (n, env) => n + env.repos.filter((r) => r.health === "offline").length,

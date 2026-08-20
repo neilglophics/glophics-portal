@@ -7,6 +7,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
 import { agoText } from "@/lib/shared/format";
+import { usePresence } from "@/components/providers/PresenceProvider";
 import { NewConversationDialog } from "./NewConversationDialog";
 import type { ConversationSummary } from "@/lib/db/queries/chat";
 
@@ -15,6 +16,7 @@ export interface Person {
   displayName: string;
   username: string;
   role: string;
+  avatarUrl?: string | null;
 }
 
 /**
@@ -28,10 +30,13 @@ export interface Person {
 export function ConversationList({
   conversations,
   people,
+  viewerId,
 }: {
   conversations: ConversationSummary[];
   people: Person[];
+  viewerId: string;
 }) {
+  const { online, tracking } = usePresence();
   const params = useParams<{ conversationId?: string }>();
   const activeId = params?.conversationId;
   const [composing, setComposing] = useState(false);
@@ -49,6 +54,7 @@ export function ConversationList({
         {conversations.length ? (
           conversations.map((c) => {
             const active = c.id === activeId;
+            const other = c.kind === "dm" ? c.members.find((m) => m.id !== viewerId) : undefined;
             return (
               <Link
                 key={c.id}
@@ -57,7 +63,20 @@ export function ConversationList({
                   active ? "bg-brand-soft" : "hover:bg-subtle"
                 }`}
               >
-                <Avatar person={{ id: c.id, name: c.title }} size="h-9 w-9" />
+                {/* For a DM this is the other member's face; a group falls back
+                    to initials of its name, which reads as a group rather than
+                    as a person. */}
+                <Avatar
+                  person={{
+                    id: c.id,
+                    name: c.title,
+                    avatarUrl: other?.avatarUrl ?? null,
+                  }}
+                  size="h-9 w-9"
+                  // A dot only where it means something: on one identifiable
+                  // person, and only when presence is actually being tracked.
+                  online={tracking && other ? online.has(other.id) : undefined}
+                />
 
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline gap-2">

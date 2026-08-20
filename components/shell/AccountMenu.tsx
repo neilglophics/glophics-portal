@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/ui/Avatar";
 import { Icon } from "@/components/ui/Icon";
 import { roleLabel } from "@/lib/shared/roles";
+import { useIsOnline } from "@/components/providers/PresenceProvider";
 import { ChangePasswordDialog } from "./ChangePasswordDialog";
+import { AvatarDialog } from "./AvatarDialog";
 import type { AuthUser } from "@/lib/types";
 
 /**
@@ -16,12 +18,14 @@ import type { AuthUser } from "@/lib/types";
  * it — that problem was an artifact of re-rendering the button out from under the
  * click, which React does not do here, so a plain listener is enough.
  */
-export function AccountMenu({ user }: { user: AuthUser }) {
+export function AccountMenu({ user, avatarUrl }: { user: AuthUser; avatarUrl: string | null }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const [avatarOpen, setAvatarOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const hostRef = useRef<HTMLDivElement>(null);
+  const online = useIsOnline(user.id);
 
   useEffect(() => {
     if (!open) return;
@@ -60,7 +64,7 @@ export function AccountMenu({ user }: { user: AuthUser }) {
           onClick={() => setOpen((v) => !v)}
           className="flex shrink-0 items-center gap-3 rounded-full pl-0 pr-1 transition hover:opacity-80"
         >
-          <Avatar person={{ id: user.id, name: user.displayName }} size="h-10 w-10" />
+          <Avatar person={{ id: user.id, name: user.displayName, avatarUrl }} size="h-10 w-10" online={online} />
           <span className="hidden text-left lg:block">
             <span className="block text-sm font-semibold leading-tight">{user.displayName}</span>
             <span className="block text-[10px] font-semibold uppercase tracking-wide text-faint">
@@ -79,6 +83,17 @@ export function AccountMenu({ user }: { user: AuthUser }) {
               <p className="truncate text-[11px] text-faint">@{user.username}</p>
             </div>
             <div className="pt-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  setAvatarOpen(true);
+                }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-body transition hover:bg-subtle hover:text-ink"
+              >
+                <Icon name="users" className="h-3.5 w-3.5 shrink-0 text-faint" />
+                Profile picture
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -103,6 +118,15 @@ export function AccountMenu({ user }: { user: AuthUser }) {
           </div>
         ) : null}
       </div>
+
+      {avatarOpen ? (
+        <AvatarDialog
+          user={user}
+          currentUrl={avatarUrl}
+          onClose={() => setAvatarOpen(false)}
+          onDone={() => router.refresh()}
+        />
+      ) : null}
 
       {passwordOpen ? (
         <ChangePasswordDialog

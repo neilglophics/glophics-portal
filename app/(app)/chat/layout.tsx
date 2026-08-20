@@ -20,7 +20,7 @@ export default async function ChatLayout({ children }: { children: React.ReactNo
   return (
     <div className="flex h-full min-h-0 gap-0 px-4 pb-4 sm:px-6 lg:px-7">
       <div className="hidden w-72 shrink-0 md:block">
-        <ConversationList conversations={conversations} people={people} />
+        <ConversationList conversations={conversations} people={people} viewerId={user.id} />
       </div>
       <div className="min-w-0 flex-1 md:pl-4">{children}</div>
     </div>
