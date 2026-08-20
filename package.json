@@ -16,7 +16,8 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "auth:list": "tsx scripts/set-password.ts list",
     "auth:set-password": "tsx scripts/set-password.ts set-password",
-    "verify:chat": "tsx scripts/verify-chat.mts"
+    "verify:chat": "tsx scripts/verify-chat.mts",
+    "verify:chat:http": "tsx scripts/verify-chat-http.mts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
