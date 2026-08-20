@@ -73,15 +73,6 @@
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
-  #confetti-canvas {
-    position: fixed;
-    inset: 0;
-    z-index: 100;
-    width: 100vw;
-    height: 100vh;
-    pointer-events: none;
-  }
-
   /* Dark mode: only the variables change. `html.dark` outranks the `:root`
      the theme block emits, whichever order the CDN injects its stylesheet. */
   html.dark {
@@ -340,8 +331,6 @@
 
 <div id="modal-host"></div>
 
-<canvas id="confetti-canvas" aria-hidden="true"></canvas>
-
 <!-- Data layer: seed + migrations, persistence, and the single source of
      truth. Shared with the server via data.js's module.exports. -->
 <!-- The one module both sides run. Served from shared/, not public/. -->
@@ -372,8 +361,6 @@
 <script src="js/ui/page-not-tracked.js"></script>
 <script src="js/ui/page-settings.js"></script>
 <script src="js/ui/page-users.js"></script>
-
-<script src="js/confetti.js"></script>
 
 <script src="js/app.js"></script>
 </body>
