@@ -166,6 +166,32 @@
   /* Applied before first paint by the inline script below. */
   html { color-scheme: light; }
   html.dark { color-scheme: dark; }
+
+  #sidebar { width: 15rem; transition: width 180ms ease; }
+  #sidebar[data-minimized="true"] { width: 5rem; }
+  #sidebar[data-minimized="true"] .sidebar-label,
+  #sidebar[data-minimized="true"] .sidebar-heading,
+  #sidebar[data-minimized="true"] .sidebar-account-count { display: none; }
+  #sidebar[data-minimized="true"] .sidebar-logo { justify-content: center; padding-inline: 0.75rem; }
+  #sidebar[data-minimized="true"] .sidebar-scroll,
+  #sidebar[data-minimized="true"] .sidebar-footer { padding-inline: 0.75rem; }
+  .sidebar-account-alias { display: none; }
+  #sidebar[data-minimized="true"] [data-sidebar-link] { justify-content: center; gap: 0; }
+  #sidebar[data-minimized="true"] [data-sidebar-account] { justify-content: flex-start; gap: 0.375rem; }
+  #sidebar[data-minimized="true"] .sidebar-account-alias { display: inline; }
+  #sidebar[data-minimized="true"] [data-sidebar-badge] {
+    position: absolute;
+    right: 0.125rem;
+    top: 0.125rem;
+    min-width: 1rem;
+    padding-inline: 0.25rem;
+    text-align: center;
+  }
+  #sidebar[data-minimized="true"] .sidebar-toggle-icon { transform: rotate(180deg); }
+
+  @media (prefers-reduced-motion: reduce) {
+    #sidebar { transition: none; }
+  }
 </style>
 
 <script>
@@ -217,38 +243,47 @@
   <div class="flex h-full w-full overflow-hidden bg-surface">
 
     <!-- ═══ SIDEBAR ═══ -->
-    <aside class="flex h-full w-60 shrink-0 flex-col border-r border-line">
-      <a href="#dashboard" class="flex shrink-0 items-center gap-2.5 px-6 pt-6">
+    <aside id="sidebar" data-minimized="false" class="relative flex h-full shrink-0 flex-col border-r border-line">
+      <a href="#dashboard" title="Dashboard" class="sidebar-logo flex shrink-0 items-center gap-2.5 px-6 pt-6">
         <span class="grid h-9 w-9 place-items-center rounded-xl bg-brand-500 text-white shadow-lg shadow-brand-500/30">
           <svg class="h-4.5 w-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
             <rect x="3" y="4" width="18" height="6" rx="2"></rect><rect x="3" y="14" width="18" height="6" rx="2"></rect>
             <path d="M7 7h.01M7 17h.01"></path>
           </svg>
         </span>
-        <span class="text-[17px] font-bold tracking-tight">Glophics</span>
+        <span class="sidebar-label text-[17px] font-bold tracking-tight">Glophics</span>
       </a>
+
+      <button type="button" data-action="toggle-sidebar" aria-controls="sidebar" aria-expanded="true"
+              title="Minimize sidebar"
+              class="absolute -right-3 top-7 z-20 grid h-7 w-7 place-items-center rounded-full bg-surface text-faint shadow-sm ring-1 ring-line-2 transition hover:bg-brand-soft hover:text-brand-fg">
+        <svg class="sidebar-toggle-icon h-3.5 w-3.5 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m15 18-6-6 6-6"></path>
+        </svg>
+        <span class="sr-only">Minimize sidebar</span>
+      </button>
 
       <!-- Only this middle column scrolls. The logo above and the settings
            group below stay pinned however long the account list grows. -->
-      <div class="no-scrollbar min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-8">
+      <div class="sidebar-scroll no-scrollbar min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-8">
         <nav>
-          <p class="px-3 pb-2 text-[10px] font-bold tracking-[0.14em] text-faint">OVERVIEW</p>
+          <p class="sidebar-heading px-3 pb-2 text-[10px] font-bold tracking-[0.14em] text-faint">OVERVIEW</p>
           <div class="space-y-1" data-nav-group="overview"></div>
         </nav>
 
         <nav class="mt-7">
-          <p class="px-3 pb-2 text-[10px] font-bold tracking-[0.14em] text-faint">ACTIVITY</p>
+          <p class="sidebar-heading px-3 pb-2 text-[10px] font-bold tracking-[0.14em] text-faint">ACTIVITY</p>
           <div class="space-y-1" data-nav-group="activity"></div>
         </nav>
 
         <div class="mt-7">
-          <p class="px-3 pb-2 text-[10px] font-bold tracking-[0.14em] text-faint">ACCOUNTS</p>
+          <p class="sidebar-heading px-3 pb-2 text-[10px] font-bold tracking-[0.14em] text-faint">ACCOUNTS</p>
           <div class="space-y-0.5" id="nav-accounts"></div>
         </div>
       </div>
 
-      <div class="shrink-0 space-y-1 px-5 pb-6 pt-2">
-        <p class="px-3 pb-2 text-[10px] font-bold tracking-[0.14em] text-faint">SETTINGS</p>
+      <div class="sidebar-footer shrink-0 space-y-1 px-5 pb-6 pt-2">
+        <p class="sidebar-heading px-3 pb-2 text-[10px] font-bold tracking-[0.14em] text-faint">SETTINGS</p>
         <div class="space-y-1" data-nav-group="settings"></div>
       </div>
     </aside>
