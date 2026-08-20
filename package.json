@@ -20,7 +20,8 @@
     "verify:chat:http": "tsx scripts/verify-chat-http.mts",
     "verify:avatar": "tsx scripts/verify-avatar.mts",
     "verify:presence": "tsx scripts/verify-presence.mts",
-    "auth:unlock": "tsx scripts/set-password.ts unlock"
+    "auth:unlock": "tsx scripts/set-password.ts unlock",
+    "verify:pusher": "tsx scripts/verify-pusher.mts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

@@ -44,7 +44,7 @@ const LABELS: Record<string, { dot: string; text: string; title: string }> = {
 };
 
 export function ConnectionDot() {
-  const { state, enabled } = useRealtime();
+  const { state, enabled, subscriptionFailed } = useRealtime();
 
   if (!enabled) {
     return (
@@ -54,6 +54,25 @@ export function ConnectionDot() {
       >
         <span className="h-2 w-2 shrink-0 rounded-full bg-faintest" />
         <span className="truncate">Not live</span>
+      </div>
+    );
+  }
+
+  /**
+   * A refused subscription outranks a healthy socket.
+   *
+   * Reporting "Live" while nothing is delivered is worse than reporting nothing:
+   * it sends somebody looking for a bug in the feature instead of in the
+   * configuration.
+   */
+  if (subscriptionFailed) {
+    return (
+      <div
+        title='Connected to the realtime service, but it refused the subscription, so no live updates arrive. Usually a wrong PUSHER_SECRET. Run: npm run verify:pusher'
+        className="hidden shrink-0 items-center gap-2 text-xs font-medium text-bad md:flex"
+      >
+        <span className="h-2 w-2 shrink-0 rounded-full bg-bad" />
+        <span className="truncate">Not delivering</span>
       </div>
     );
   }
