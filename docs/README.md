@@ -3,8 +3,9 @@
 Planning and context for the migration to **Next.js + Vercel + Neon Postgres + Pusher + Vercel Blob**,
 and for the chat/realtime features being built on top of it.
 
-**Nothing here is implemented yet.** The app running today is the vanilla Node/JSON-file version
-described in doc 00. No application code has been changed.
+**Status: phases 1-6 are built.** The Next.js app in `app/` + `lib/` covers the board, auth, Jira
+sync and cron. Realtime (phase 7) and chat (phases 8-12) are not started, and the legacy tree in
+`server/` + `public/` is still present until cutover. See `CLAUDE.md` for what works today.
 
 ## Read in this order
 

@@ -13,15 +13,51 @@ free*.
 
 ## Current state — read this before assuming anything
 
-There are **two architectures** in play, and mixing them up is the main hazard:
+There are **two codebases in this repo**, and mixing them up is the main hazard.
 
-| | |
+| | Where | State |
+|---|---|---|
+| **New — build here** | `app/`, `lib/`, `components/`, `middleware.ts`, `scripts/` | Next.js 15 + TypeScript + Neon Postgres. Board, auth, Jira and cron are ported and building. |
+| **Legacy — do not extend** | `server/`, `public/`, `shared/`, `shared-data/`, `config/` | The original zero-dependency Node app. Still runnable with `npm run legacy`. Kept only as a reference and a data source until cutover. |
+
+**Default to the new codebase.** The legacy tree is deleted at Phase 13 of
+`docs/04-MIGRATION-PLAN.md`; anything added to it is thrown away. Read the old files freely — they are
+the best documentation of intended behaviour — but write in `app/` and `lib/`.
+
+### What is done, and what is not
+
+| Phase | |
 |---|---|
-| **Running today** | Zero-dependency Node 24 + vanilla JS + JSON files on disk + SSE. `server/`, `public/`, `shared/`, `shared-data/`, `config/`. Fully working. |
-| **Planned** | Next.js + Vercel + Neon Postgres + Pusher + Vercel Blob. **Documented in `docs/`. Not implemented. No code written yet.** |
+| 1–6 | ✅ Scaffold, schema, import script, auth + gate, board read/write, Jira sync + cron |
+| 7 | ⬜ Pusher realtime. **Not started.** No live updates yet — a change needs a refresh in other tabs. |
+| 8–12 | ⬜ Chat, presence, attachments, notifications |
+| 13 | ⬜ Cutover and deleting the legacy tree |
 
-If you are asked to build a feature, ask which architecture it targets. Adding to the old one is
-usually wasted work — see `docs/04-MIGRATION-PLAN.md`.
+Two things are genuinely missing rather than merely unbuilt:
+
+- **Nothing writes repository health.** A serverless function cannot reach `*.internal`, so every
+  repo reads "Never checked". The UI says so honestly instead of showing a false `offline`, which
+  would outrank claim state and paint the whole board red. Blocked on
+  `docs/06-OPEN-QUESTIONS.md` **Q1**.
+- **No realtime.** Mutations call `revalidatePath`, which refreshes the acting tab only.
+
+## Running the new app
+
+```bash
+npm run dev
+```
+
+Needs a Neon branch. Copy `.env.example` to `.env.local`, then:
+
+```bash
+npm run db:migrate      # apply lib/db/migrations/*.sql
+npm run db:import       # load shared-data/ + config/auth.json into Postgres
+npm test                # 29 tests, node:test via tsx
+npm run typecheck
+```
+
+`db:import` refuses rather than guesses — duplicate Jira labels and claims naming missing
+environments are reported for a human. Re-run with `--truncate` after fixing them.
 
 ## Documentation map
 
@@ -35,16 +71,13 @@ usually wasted work — see `docs/04-MIGRATION-PLAN.md`.
 | `docs/05-DECISIONS.md` | Tempted to do something differently — check whether it was already decided and why |
 | `docs/06-OPEN-QUESTIONS.md` | Blocked on a product decision |
 
-## Running the current app
+## Running the legacy app (reference only)
 
 ```bash
-npm start          # node server/index.js → http://localhost:4000
+npm run legacy     # node server/index.js → http://localhost:4000
 ```
 
-Node 18+ (uses built-in `fetch`). No build step, no dependencies, no `node_modules`.
-First run seeds a super admin and prints the credentials.
-
-`npm test` is a stub (`exit 1`). **There are no tests.**
+It reads `config/` and `shared-data/` directly, so running it will not disturb Postgres.
 
 ## Invariants — do not break these without a decision recorded in `docs/05-DECISIONS.md`
 
@@ -68,7 +101,8 @@ First run seeds a super admin and prints the credentials.
 
 | | Auth account | Directory person |
 |---|---|---|
-| Where | `config/auth.json` | `shared-data/users.json` |
+| Table | `auth_users` (was `config/auth.json`) | `directory_users` (was `shared-data/users.json`) |
+| Id | `uuid` | slug — `"sem"`, `"jerome"` |
 | Means | **can sign in** | **can be assigned a claim** |
 | Coverage | a minority of the team | everyone on the board |
 
@@ -77,38 +111,40 @@ A login reads its Jira assignee labels *through* that link rather than storing i
 
 Before writing anything that says "user", decide which of these two you mean.
 
-## Known problems (do not rediscover these)
+## Legacy problems the migration already fixed
 
-Full list in `docs/00-CONTEXT-CURRENT-SYSTEM.md`. The load-bearing ones:
+Do not "fix" these again; they are gone in `app/` + `lib/`.
 
-- `POST /api/state` replaces the **whole board**, last-write-wins, no concurrency control. `setFilter`
-  calls the same path, so typing in the search box POSTs the entire board.
-- The SSE channel has **no addressing**, so it cannot carry anything private.
-- No SSE heartbeat, no replay on reconnect, and an open stream is never re-authenticated.
-- `config/auth.json` is read synchronously on every authenticated request and written non-atomically.
-- No rate limiting except the login lockout. No CSRF tokens (`SameSite=Lax` carries it, so every
-  state-changing route must stay a POST).
-- `package-lock.json` is stale: it declares `@neondatabase/serverless` and the name `server-manager`,
-  while `package.json` declares no dependencies and the name `server-management`.
-- `README.md` links `DEPLOY.md`, which does not exist.
+- Whole-board `POST /api/state`, last-write-wins. Replaced by granular endpoints in transactions.
+- `config/auth.json` read synchronously per request and written non-atomically. Now indexed queries.
+- Live session tokens stored in plaintext. Now SHA-256 hashes in `auth_sessions`.
+- In-memory login lockout. Now `auth_login_attempts`.
+- Tailwind compiled in the browser from a CDN. Now a build step.
+- Stale `package-lock.json`, and `npm test` as a stub. Both fixed.
 
-## Conventions in the current codebase
+Still true, and still worth knowing:
 
-- Server: CommonJS, `require`. Client: IIFE modules on `window` globals, load order fixed in
-  `public/index.html`.
-- Strict UI layering: `tokens` → `model` → `html` → `page-*`. Each layer knows only the one below.
-- A page is `{ label, render() }` returning a **string** and touching no DOM. Adding one = one file +
-  one `NAV` entry in `shell.js`.
-- **One** delegated click listener, in `actions.js`, dispatching on `data-action`.
-- Semantic colour tokens only (`bg-surface`, `text-muted`). No literal colours, no `dark:` variants —
-  dark mode is one set of CSS variable overrides.
-- Comments in this codebase explain **why**, often at length. Match that when editing; it is the
-  repo's main form of documentation.
+- **No CSRF tokens.** `SameSite=Lax` carries it, so **every state-changing route must stay a non-GET
+  method**. A mutation on a GET silently loses the protection.
+- **No rate limiting** except the login lockout. Chat will need it (`docs/03-REALTIME-SPEC.md` §10).
+- `README.md` still links `DEPLOY.md`, which does not exist.
+
+## Conventions
+
+**New codebase.** TypeScript, App Router, Server Components by default — `"use client"` only where
+there is real interaction. Reads go through `lib/db/queries/*`; those modules are the only place
+snake_case appears. Mutations go through granular route handlers, each calling
+`requireUser(capability)` first and a `revalidate*` helper last. Semantic colour tokens only
+(`bg-surface`, `text-muted`) — no literal colours and no `dark:` variants, because dark mode is one
+set of CSS variable overrides in `app/globals.css`.
+
+**Both.** Comments explain **why**, often at length. That is this repo's main form of documentation —
+match it. When porting, carry the original's reasoning across rather than just its behaviour.
 
 ## Working style
 
-- Prefer reading the source over assuming. This codebase is unusually well commented and the comments
-  are accurate.
-- Do not add dependencies to the current app — zero dependencies is deliberate. The new stack changes
-  this, but only within `docs/`-planned work.
-- Don't touch `config/` or `shared-data/` — credentials and live state, both gitignored.
+- Prefer reading the source over assuming. The legacy code is unusually well commented and the
+  comments are accurate; it is the best spec for what a ported feature should do.
+- Don't touch `config/` or `shared-data/` — credentials and legacy state, both gitignored. They are
+  the import script's input.
+- Check `docs/06-OPEN-QUESTIONS.md` before building anything that depends on a blocked decision.
