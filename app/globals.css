@@ -1,0 +1,259 @@
+@import "tailwindcss";
+
+/*
+  Ported verbatim from the <style type="text/tailwindcss"> block in the legacy
+  public/index.html — same values, now compiled at build time instead of by the
+  Tailwind CDN in the browser.
+
+  The palette is semantic, not literal: components ask for `bg-surface` and
+  `text-muted`, never a hex or a colour name. Dark mode and the alternate
+  palettes are then a single set of variable overrides — no `dark:` variant on
+  any component, and nothing to keep in sync when a colour changes.
+
+  This works because Tailwind v4 emits `var(--color-x)` in the utilities rather
+  than inlining the value, so redefining the variable on `html.dark` restyles
+  everything that referenced it.
+*/
+@theme {
+  /* Glophics brand: teal, charcoal, cool gray and white. */
+  --color-brand-50: #effbf8;
+  --color-brand-100: #d8f5ef;
+  --color-brand-200: #a8e7da;
+  --color-brand-300: #54cfba;
+  --color-brand-500: #007f6d;
+  --color-brand-600: #006b5c;
+  --color-brand-700: #00584c;
+
+  /* surfaces */
+  --color-canvas: #ecefee; /* behind the shell */
+  --color-surface: #ffffff; /* cards, table bodies */
+  --color-panel: #f7f9f8; /* the main content area */
+  --color-subtle: #f4f7f6; /* inputs, inset blocks */
+  --color-subtle-2: #edf2f0; /* tab strips, quiet badges */
+
+  /* lines */
+  --color-line: #e5ebe9;
+  --color-line-2: #d1d8d5;
+  --color-line-soft: #edf1f0;
+
+  /* type */
+  --color-ink: #333333;
+  --color-ink-2: #454545;
+  --color-body: #53615d;
+  --color-muted: #64716d;
+  --color-faint: #87938f;
+  --color-faintest: #bcc5c2;
+
+  /* the high-contrast action colour (dark pill buttons) */
+  --color-accent: #3d3d3d;
+  --color-accent-2: #505050;
+  --color-on-accent: #ffffff;
+
+  /* status — `-soft` is the chip background, the bare name is the text */
+  --color-ok: #047857;
+  --color-ok-soft: #ecfdf5;
+  --color-ok-strong: #047857;
+  --color-warn: #b45309;
+  --color-warn-soft: #fffbeb;
+  --color-warn-strong: #92400e;
+  --color-bad: #be123c;
+  --color-bad-soft: #fff1f2;
+  --color-bad-strong: #be123c;
+  --color-info: #007f6d;
+  --color-info-soft: #effbf8;
+  --color-alt: #3d3d3d;
+  --color-alt-soft: #eeeeee;
+  --color-secondary: #3d3d3d;
+  --color-secondary-soft: #eeeeee;
+  --color-brand-fg: #007f6d;
+  --color-brand-soft: #effbf8;
+  --color-neutral: #646b69;
+  --color-neutral-soft: #eef0ef;
+
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Dark mode: only the variables change. */
+html.dark {
+  --color-canvas: #0e1211;
+  --color-surface: #181d1c;
+  --color-panel: #131817;
+  --color-subtle: #202725;
+  --color-subtle-2: #29312f;
+
+  --color-line: #29312f;
+  --color-line-2: #39433f;
+  --color-line-soft: #222a28;
+
+  --color-ink: #f3f5f4;
+  --color-ink-2: #d1d7d5;
+  --color-body: #adb8b4;
+  --color-muted: #929f9a;
+  --color-faint: #707d78;
+  --color-faintest: #4f5c57;
+
+  --color-accent: #e7e9e8;
+  --color-accent-2: #cfd4d2;
+  --color-on-accent: #222625;
+
+  --color-ok: #4ade80;
+  --color-ok-soft: #10291d;
+  --color-warn: #fbbf24;
+  --color-warn-soft: #2a2010;
+  --color-bad: #fb7185;
+  --color-bad-soft: #2c1218;
+  --color-info: #54cfba;
+  --color-info-soft: #0b2923;
+  --color-alt: #d1d2d3;
+  --color-alt-soft: #292b2b;
+  --color-secondary: #d1d2d3;
+  --color-secondary-soft: #292b2b;
+  --color-brand-fg: #54cfba;
+  --color-brand-soft: #0b2923;
+  --color-neutral: #929f9a;
+  --color-neutral-soft: #29312f;
+
+  --color-brand-50: #0b2923;
+  --color-brand-100: #103a31;
+  --color-brand-200: #155144;
+}
+
+html[data-theme="ocean"] {
+  --color-brand-50: #e8f7fc;
+  --color-brand-100: #d2f0f9;
+  --color-brand-200: #a8e1f1;
+  --color-brand-300: #67c9e4;
+  --color-brand-500: #0369a1;
+  --color-brand-600: #075985;
+  --color-brand-700: #0c4a6e;
+  --color-canvas: #eaf1f5;
+  --color-surface: #ffffff;
+  --color-panel: #f4f9fb;
+  --color-subtle: #f0f7fa;
+  --color-subtle-2: #e4f0f5;
+  --color-line: #e4f0f5;
+  --color-line-2: #cbdde5;
+  --color-line-soft: #edf5f8;
+  --color-ink: #102a36;
+  --color-ink-2: #234554;
+  --color-body: #42616e;
+  --color-muted: #587683;
+  --color-faint: #7994a0;
+  --color-faintest: #aec1c9;
+  --color-accent: #102a36;
+  --color-accent-2: #234554;
+  --color-on-accent: #ffffff;
+  --color-brand-fg: #0369a1;
+  --color-brand-soft: #e8f7fc;
+  --color-neutral: #587683;
+  --color-neutral-soft: #e4f0f5;
+}
+
+html[data-theme="ocean"].dark {
+  --color-brand-50: #0b2834;
+  --color-brand-100: #103746;
+  --color-brand-200: #164b5d;
+  --color-brand-300: #38b9d6;
+  --color-brand-500: #0369a1;
+  --color-brand-600: #075985;
+  --color-brand-700: #0c4a6e;
+  --color-canvas: #061015;
+  --color-surface: #0e1b22;
+  --color-panel: #09161c;
+  --color-subtle: #14252d;
+  --color-subtle-2: #1b3039;
+  --color-line: #1b3039;
+  --color-line-2: #29434e;
+  --color-line-soft: #12232b;
+  --color-ink: #e5f3f7;
+  --color-ink-2: #c2dae3;
+  --color-body: #9ebbc6;
+  --color-muted: #82a3af;
+  --color-faint: #648894;
+  --color-faintest: #426570;
+  --color-accent: #e5f3f7;
+  --color-accent-2: #c2dae3;
+  --color-on-accent: #061015;
+  --color-brand-fg: #67c9e4;
+  --color-brand-soft: #0b2834;
+  --color-neutral: #82a3af;
+  --color-neutral-soft: #1b3039;
+}
+
+html[data-theme="emerald"] {
+  --color-brand-50: #ecfdf5;
+  --color-brand-100: #d1fae5;
+  --color-brand-200: #a7f3d0;
+  --color-brand-300: #6ee7b7;
+  --color-brand-500: #047857;
+  --color-brand-600: #065f46;
+  --color-brand-700: #064e3b;
+  --color-canvas: #eaf2ef;
+  --color-surface: #ffffff;
+  --color-panel: #f4f9f7;
+  --color-subtle: #f0f8f5;
+  --color-subtle-2: #e3f0eb;
+  --color-line: #e3f0eb;
+  --color-line-2: #c9ded6;
+  --color-line-soft: #edf6f2;
+  --color-ink: #102c23;
+  --color-ink-2: #284a3f;
+  --color-body: #46675c;
+  --color-muted: #5d7d72;
+  --color-faint: #7f9a91;
+  --color-faintest: #b2c6bf;
+  --color-accent: #102c23;
+  --color-accent-2: #284a3f;
+  --color-on-accent: #ffffff;
+  --color-brand-fg: #047857;
+  --color-brand-soft: #ecfdf5;
+  --color-neutral: #5d7d72;
+  --color-neutral-soft: #e3f0eb;
+}
+
+html[data-theme="emerald"].dark {
+  --color-brand-50: #0b2b21;
+  --color-brand-100: #103b2d;
+  --color-brand-200: #16513d;
+  --color-brand-300: #5bd4aa;
+  --color-brand-500: #047857;
+  --color-brand-600: #065f46;
+  --color-brand-700: #064e3b;
+  --color-canvas: #07110e;
+  --color-surface: #0f1d18;
+  --color-panel: #0a1713;
+  --color-subtle: #152820;
+  --color-subtle-2: #1d342b;
+  --color-line: #1d342b;
+  --color-line-2: #2b493e;
+  --color-line-soft: #13261f;
+  --color-ink: #e6f4ef;
+  --color-ink-2: #c4ddd4;
+  --color-body: #a1beb4;
+  --color-muted: #85a69a;
+  --color-faint: #688b7f;
+  --color-faintest: #466b5e;
+  --color-accent: #e6f4ef;
+  --color-accent-2: #c4ddd4;
+  --color-on-accent: #07110e;
+  --color-brand-fg: #6ee7b7;
+  --color-brand-soft: #0b2b21;
+  --color-neutral: #85a69a;
+  --color-neutral-soft: #1d342b;
+}
+
+/* Applied before first paint by the inline script in app/layout.tsx. */
+html {
+  color-scheme: light;
+}
+html.dark {
+  color-scheme: dark;
+}

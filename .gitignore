@@ -27,3 +27,15 @@ node_modules/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Next.js
+.next/
+next-env.d.ts
+.vercel
+
+# Local env files
+.env
+.env*.local
+
+# Build artifact, not source.
+tsconfig.tsbuildinfo

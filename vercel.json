@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/cron/jira-sync",
+      "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/cron/expiry",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/retention",
+      "schedule": "0 4 * * *"
+    }
+  ]
+}
