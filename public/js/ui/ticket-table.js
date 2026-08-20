@@ -221,7 +221,7 @@ const TicketTable = (() => {
     </p>`;
   }
 
-  return { statusOf, matches, filter, options, chips, table, statusNote, isHidden, setShown };
+  return { statusOf, matches, filter, options, chips, table, statusNote, isHidden, setShown, repos };
 })();
 
 /* The chips above every ticket table. Narrowing is view state, so these
