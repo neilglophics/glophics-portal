@@ -163,7 +163,7 @@ const TicketTable = (() => {
       name: r,
       url: ((server && server.repos[r]) || {}).url,
       state: holding ? "held" : "named on the ticket, not held at this status",
-      cls: holding ? "bg-amber-500/85 text-white" : "bg-line-2 text-muted"
+      cls: holding ? "bg-warn-strong/85 text-white" : "bg-line-2 text-muted"
     })).join("")}</div>`;
   }
 

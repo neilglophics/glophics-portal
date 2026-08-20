@@ -35,7 +35,7 @@ const Modals = (() => {
               ${H.btn("Cancel", { variant: "ghost", data: { "data-modal-close": "" } })}
               <button type="submit"
                 class="rounded-full px-4 py-2.5 text-xs font-semibold transition ${
-                  variant === "danger" ? "bg-rose-600 text-white hover:bg-rose-700" : "bg-accent text-on-accent hover:bg-accent-2"}">
+                  variant === "danger" ? "bg-bad-strong text-white hover:brightness-110" : "bg-accent text-on-accent hover:bg-accent-2"}">
                 ${H.esc(submitLabel || "Save")}</button>
             </div>
           </form>

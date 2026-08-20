@@ -19,48 +19,49 @@
     component, and nothing to keep in sync when a colour changes.
   */
   @theme {
-    /* brand — fixed in both themes, it is the identity */
-    --color-brand-50:  #f1efff;
-    --color-brand-100: #e6e2ff;
-    --color-brand-200: #d3ccff;
-    --color-brand-300: #b9aefb;
-    --color-brand-500: #6d5be7;
-    --color-brand-600: #5b48d8;
-    --color-brand-700: #4b3ac0;
+    /* Glophics brand: teal, charcoal, cool gray and white. */
+    --color-brand-50:  #effbf8;
+    --color-brand-100: #d8f5ef;
+    --color-brand-200: #a8e7da;
+    --color-brand-300: #54cfba;
+    --color-brand-500: #007f6d;
+    --color-brand-600: #006b5c;
+    --color-brand-700: #00584c;
 
     /* surfaces */
-    --color-canvas:    #eceef4;   /* behind the shell */
+    --color-canvas:    #ecefee;   /* behind the shell */
     --color-surface:   #ffffff;   /* cards, table bodies */
-    --color-panel:     #f7f8fc;   /* the main content area */
-    --color-subtle:    #f8fafc;   /* inputs, inset blocks */
-    --color-subtle-2:  #f1f5f9;   /* tab strips, quiet badges */
+    --color-panel:     #f7f9f8;   /* the main content area */
+    --color-subtle:    #f4f7f6;   /* inputs, inset blocks */
+    --color-subtle-2:  #edf2f0;   /* tab strips, quiet badges */
 
     /* lines */
-    --color-line:      #f1f5f9;
-    --color-line-2:    #e2e8f0;
-    --color-line-soft: #f1f5f9;
+    --color-line:      #e5ebe9;
+    --color-line-2:    #d1d8d5;
+    --color-line-soft: #edf1f0;
 
     /* type */
-    --color-ink:       #0f172a;
-    --color-ink-2:     #334155;
-    --color-body:      #475569;
-    --color-muted:     #64748b;
-    --color-faint:     #94a3b8;
-    --color-faintest:  #cbd5e1;
+    --color-ink:       #333333;
+    --color-ink-2:     #454545;
+    --color-body:      #53615d;
+    --color-muted:     #64716d;
+    --color-faint:     #87938f;
+    --color-faintest:  #bcc5c2;
 
     /* the high-contrast action colour (dark pill buttons) */
-    --color-accent:    #0f172a;
-    --color-accent-2:  #1e293b;
+    --color-accent:    #3d3d3d;
+    --color-accent-2:  #505050;
     --color-on-accent: #ffffff;
 
     /* status — `-soft` is the chip background, the bare name is the text */
-    --color-ok:        #047857;  --color-ok-soft:      #ecfdf5;
-    --color-warn:      #b45309;  --color-warn-soft:    #fffbeb;
-    --color-bad:       #be123c;  --color-bad-soft:     #fff1f2;
-    --color-info:      #1d4ed8;  --color-info-soft:    #eff6ff;
-    --color-alt:       #6d28d9;  --color-alt-soft:     #f5f3ff;
-    --color-brand-fg:  #5b48d8;  --color-brand-soft:   #f1efff;
-    --color-neutral:   #64748b;  --color-neutral-soft: #f1f5f9;
+    --color-ok:        #047857;  --color-ok-soft:      #ecfdf5; --color-ok-strong:   #047857;
+    --color-warn:      #b45309;  --color-warn-soft:    #fffbeb; --color-warn-strong: #92400e;
+    --color-bad:       #be123c;  --color-bad-soft:     #fff1f2; --color-bad-strong:  #be123c;
+    --color-info:      #007f6d;  --color-info-soft:    #effbf8;
+    --color-alt:       #3d3d3d;  --color-alt-soft:     #eeeeee;
+    --color-secondary: #3d3d3d;  --color-secondary-soft: #eeeeee;
+    --color-brand-fg:  #007f6d;  --color-brand-soft:   #effbf8;
+    --color-neutral:   #646b69;  --color-neutral-soft: #eef0ef;
   }
 </style>
 
@@ -75,51 +76,128 @@
   /* Dark mode: only the variables change. `html.dark` outranks the `:root`
      the theme block emits, whichever order the CDN injects its stylesheet. */
   html.dark {
-    --color-canvas:    #090b10;
-    --color-surface:   #14161d;
-    --color-panel:     #0f1117;
-    --color-subtle:    #1a1d26;
-    --color-subtle-2:  #232733;
+    --color-canvas:    #0e1211;
+    --color-surface:   #181d1c;
+    --color-panel:     #131817;
+    --color-subtle:    #202725;
+    --color-subtle-2:  #29312f;
 
-    --color-line:      #232733;
-    --color-line-2:    #2e3342;
-    --color-line-soft: #1c1f28;
+    --color-line:      #29312f;
+    --color-line-2:    #39433f;
+    --color-line-soft: #222a28;
 
-    --color-ink:       #e8eaf2;
-    --color-ink-2:     #c8cddb;
-    --color-body:      #a8b0c2;
-    --color-muted:     #8b93a7;
-    --color-faint:     #6b7386;
-    --color-faintest:  #4a5162;
+    --color-ink:       #f3f5f4;
+    --color-ink-2:     #d1d7d5;
+    --color-body:      #adb8b4;
+    --color-muted:     #929f9a;
+    --color-faint:     #707d78;
+    --color-faintest:  #4f5c57;
 
-    --color-accent:    #e8eaf2;
-    --color-accent-2:  #cdd3e0;
-    --color-on-accent: #0b0d12;
+    --color-accent:    #e7e9e8;
+    --color-accent-2:  #cfd4d2;
+    --color-on-accent: #222625;
 
     --color-ok:        #4ade80;  --color-ok-soft:      #10291d;
     --color-warn:      #fbbf24;  --color-warn-soft:    #2a2010;
     --color-bad:       #fb7185;  --color-bad-soft:     #2c1218;
-    --color-info:      #7aa5f0;  --color-info-soft:    #131f36;
-    --color-alt:       #b39ef5;  --color-alt-soft:     #1e1832;
-    --color-brand-fg:  #a99bf5;  --color-brand-soft:   #1c1836;
-    --color-neutral:   #8b93a7;  --color-neutral-soft: #232733;
+    --color-info:      #54cfba;  --color-info-soft:    #0b2923;
+    --color-alt:       #d1d2d3;  --color-alt-soft:     #292b2b;
+    --color-secondary: #d1d2d3;  --color-secondary-soft: #292b2b;
+    --color-brand-fg:  #54cfba;  --color-brand-soft:   #0b2923;
+    --color-neutral:   #929f9a;  --color-neutral-soft: #29312f;
 
-    --color-brand-50:  #1c1836;
-    --color-brand-100: #262046;
-    --color-brand-200: #332a5e;
+    --color-brand-50:  #0b2923;
+    --color-brand-100: #103a31;
+    --color-brand-200: #155144;
+  }
+
+  html[data-theme="ocean"] {
+    --color-brand-50: #e8f7fc; --color-brand-100: #d2f0f9; --color-brand-200: #a8e1f1;
+    --color-brand-300: #67c9e4; --color-brand-500: #0369a1; --color-brand-600: #075985; --color-brand-700: #0c4a6e;
+    --color-canvas: #eaf1f5; --color-surface: #ffffff; --color-panel: #f4f9fb;
+    --color-subtle: #f0f7fa; --color-subtle-2: #e4f0f5;
+    --color-line: #e4f0f5; --color-line-2: #cbdde5; --color-line-soft: #edf5f8;
+    --color-ink: #102a36; --color-ink-2: #234554; --color-body: #42616e;
+    --color-muted: #587683; --color-faint: #7994a0; --color-faintest: #aec1c9;
+    --color-accent: #102a36; --color-accent-2: #234554; --color-on-accent: #ffffff;
+    --color-brand-fg: #0369a1; --color-brand-soft: #e8f7fc;
+    --color-neutral: #587683; --color-neutral-soft: #e4f0f5;
+  }
+
+  html[data-theme="ocean"].dark {
+    --color-brand-50: #0b2834; --color-brand-100: #103746; --color-brand-200: #164b5d;
+    --color-brand-300: #38b9d6; --color-brand-500: #0369a1; --color-brand-600: #075985; --color-brand-700: #0c4a6e;
+    --color-canvas: #061015; --color-surface: #0e1b22; --color-panel: #09161c;
+    --color-subtle: #14252d; --color-subtle-2: #1b3039;
+    --color-line: #1b3039; --color-line-2: #29434e; --color-line-soft: #12232b;
+    --color-ink: #e5f3f7; --color-ink-2: #c2dae3; --color-body: #9ebbc6;
+    --color-muted: #82a3af; --color-faint: #648894; --color-faintest: #426570;
+    --color-accent: #e5f3f7; --color-accent-2: #c2dae3; --color-on-accent: #061015;
+    --color-brand-fg: #67c9e4; --color-brand-soft: #0b2834;
+    --color-neutral: #82a3af; --color-neutral-soft: #1b3039;
+  }
+
+  html[data-theme="emerald"] {
+    --color-brand-50: #ecfdf5; --color-brand-100: #d1fae5; --color-brand-200: #a7f3d0;
+    --color-brand-300: #6ee7b7; --color-brand-500: #047857; --color-brand-600: #065f46; --color-brand-700: #064e3b;
+    --color-canvas: #eaf2ef; --color-surface: #ffffff; --color-panel: #f4f9f7;
+    --color-subtle: #f0f8f5; --color-subtle-2: #e3f0eb;
+    --color-line: #e3f0eb; --color-line-2: #c9ded6; --color-line-soft: #edf6f2;
+    --color-ink: #102c23; --color-ink-2: #284a3f; --color-body: #46675c;
+    --color-muted: #5d7d72; --color-faint: #7f9a91; --color-faintest: #b2c6bf;
+    --color-accent: #102c23; --color-accent-2: #284a3f; --color-on-accent: #ffffff;
+    --color-brand-fg: #047857; --color-brand-soft: #ecfdf5;
+    --color-neutral: #5d7d72; --color-neutral-soft: #e3f0eb;
+  }
+
+  html[data-theme="emerald"].dark {
+    --color-brand-50: #0b2b21; --color-brand-100: #103b2d; --color-brand-200: #16513d;
+    --color-brand-300: #5bd4aa; --color-brand-500: #047857; --color-brand-600: #065f46; --color-brand-700: #064e3b;
+    --color-canvas: #07110e; --color-surface: #0f1d18; --color-panel: #0a1713;
+    --color-subtle: #152820; --color-subtle-2: #1d342b;
+    --color-line: #1d342b; --color-line-2: #2b493e; --color-line-soft: #13261f;
+    --color-ink: #e6f4ef; --color-ink-2: #c4ddd4; --color-body: #a1beb4;
+    --color-muted: #85a69a; --color-faint: #688b7f; --color-faintest: #466b5e;
+    --color-accent: #e6f4ef; --color-accent-2: #c4ddd4; --color-on-accent: #07110e;
+    --color-brand-fg: #6ee7b7; --color-brand-soft: #0b2b21;
+    --color-neutral: #85a69a; --color-neutral-soft: #1d342b;
   }
 
   /* Applied before first paint by the inline script below. */
+  html { color-scheme: light; }
   html.dark { color-scheme: dark; }
 </style>
 
 <script>
   // Runs before the body renders so a dark-mode user never sees a white flash.
   try {
-    var saved = localStorage.getItem("serverManager.theme");
-    var dark = saved ? saved === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
-    if (dark) document.documentElement.classList.add("dark");
-  } catch (e) { /* storage blocked — light is a fine default */ }
+    var palettes = ["violet", "ocean", "emerald", "custom"];
+    var modes = ["system", "light", "dark"];
+    var palette = localStorage.getItem("serverManager.colorTheme");
+    var mode = localStorage.getItem("serverManager.theme");
+    if (palettes.indexOf(palette) < 0) palette = "violet";
+    if (modes.indexOf(mode) < 0) mode = "system";
+    var dark = mode === "dark" || (mode === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.documentElement.dataset.theme = palette;
+    document.documentElement.classList.toggle("dark", dark);
+    if (palette === "custom") {
+      var stored_tokens = JSON.parse(localStorage.getItem("serverManager.customThemeTokens") || "null");
+      var custom_tokens = stored_tokens && stored_tokens[dark ? "dark" : "light"];
+      if (!custom_tokens) {
+        document.documentElement.dataset.theme = "violet";
+      } else {
+        Object.keys(custom_tokens).forEach(function (property) {
+          var value = custom_tokens[property];
+          if (property.indexOf("--color-") === 0 && /^#[0-9a-f]{6}$/i.test(value)) {
+            document.documentElement.style.setProperty(property, value);
+          }
+        });
+      }
+    }
+  } catch (e) {
+    document.documentElement.dataset.theme = "violet";
+    document.documentElement.classList.toggle("dark", matchMedia("(prefers-color-scheme: dark)").matches);
+  }
 </script>
 </head>
 
@@ -195,8 +273,13 @@
           </svg>
         </button>
 
-        <button id="theme-toggle" data-action="toggle-theme"
-                class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-surface text-muted shadow-sm ring-1 ring-line transition hover:text-brand-fg"></button>
+        <div id="appearance-switcher" class="relative shrink-0">
+          <button id="theme-toggle" type="button" data-action="toggle-appearance"
+                  aria-label="Open appearance settings" aria-haspopup="true"
+                  aria-expanded="false" aria-controls="appearance-popover"
+                  class="grid h-11 w-11 place-items-center rounded-full bg-surface text-muted shadow-sm ring-1 ring-line transition hover:text-brand-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-panel"></button>
+          <div id="appearance-popover" hidden></div>
+        </div>
 
         <div class="h-8 w-px shrink-0 bg-line-2"></div>
 

@@ -90,10 +90,10 @@ Router.register(HEALTH_PAGE, {
   // Health-only strip: colour reflects reachability, never occupancy.
   strip(repos) {
     return `<div class="flex gap-1">` + repos.map((r) => {
-      const cls = r.health === "offline" ? "bg-rose-500/85 text-white"
+      const cls = r.health === "offline" ? "bg-bad-strong/85 text-white"
         : r.health === "unconfigured" ? "bg-line-2 text-muted"
         : r.health === "checking" ? "bg-faint text-white"
-        : "bg-emerald-500/85 text-white";
+        : "bg-ok-strong/85 text-white";
       return H.repoChip({ name: r.name, url: r.url, cls, state: Tokens.HEALTH[r.health] ? Tokens.HEALTH[r.health].label.toLowerCase() : r.health });
     }).join("") + `</div>`;
   },
@@ -101,10 +101,10 @@ Router.register(HEALTH_PAGE, {
   envRow({ row, repos, offline, unconfigured, online }) {
     const open = EnvDetail.isOpen(HEALTH_PAGE, row.id);
     const token = offline
-      ? { chip: "bg-bad-soft text-bad", dot: "bg-rose-500", label: `${offline} offline` }
+      ? { chip: "bg-bad-soft text-bad", dot: "bg-bad", label: `${offline} offline` }
       : unconfigured
         ? { chip: "bg-subtle-2 text-muted", dot: "bg-faintest", label: `${unconfigured} no URL` }
-        : { chip: "bg-ok-soft text-ok", dot: "bg-emerald-500", label: "All responding" };
+        : { chip: "bg-ok-soft text-ok", dot: "bg-ok", label: "All responding" };
     const holders = Model.peopleOf(repos.flatMap((r) => r.claims));
 
     const summary = H.tr(
@@ -137,10 +137,10 @@ Router.register(HEALTH_PAGE, {
 
   repoBlock(row, r) {
     const token = Tokens.HEALTH[r.health] || Tokens.HEALTH.checking;
-    const chipCls = r.health === "offline" ? "bg-rose-500/85 text-white"
+    const chipCls = r.health === "offline" ? "bg-bad-strong/85 text-white"
       : r.health === "unconfigured" ? "bg-line-2 text-muted"
       : r.health === "checking" ? "bg-faint text-white"
-      : "bg-emerald-500/85 text-white";
+      : "bg-ok-strong/85 text-white";
 
     return `<div class="flex flex-wrap items-center gap-3 rounded-xl bg-surface px-3 py-2.5 ring-1 ring-line">
       <div class="flex w-40 shrink-0 items-center gap-2.5">

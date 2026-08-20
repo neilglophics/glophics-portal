@@ -72,10 +72,10 @@ ${url}`)}"
   const repoStrip = (row) => `<div class="flex gap-1">` + row.repoNames.map((name) => {
     const repo = row.server.repos[name];
     const held = State.getRepoClaims(row.id, name).length > 0;
-    const cls = repo.health === "offline" ? "bg-rose-500/85 text-white"
+    const cls = repo.health === "offline" ? "bg-bad-strong/85 text-white"
       : (!repo.url || repo.health === "unconfigured") ? "bg-line-2 text-muted"
-      : held ? "bg-amber-500/85 text-white"
-      : "bg-emerald-500/85 text-white";
+      : held ? "bg-warn-strong/85 text-white"
+      : "bg-ok-strong/85 text-white";
     const state = repo.health === "offline" ? "offline" : (!repo.url ? "no URL configured" : held ? "held" : "free");
     return repoChip({ name, cls, state, url: repo.url });
   }).join("") + `</div>`;
@@ -210,7 +210,7 @@ ${url}`)}"
 
   const toggle = (on, data) =>
     `<button type="button" role="switch" aria-checked="${on ? "true" : "false"}" ${attrs(data)}
-       class="relative h-6 w-11 shrink-0 rounded-full transition ${on ? "bg-emerald-500" : "bg-line-2"}">
+       class="relative h-6 w-11 shrink-0 rounded-full transition ${on ? "bg-ok-strong" : "bg-line-2"}">
        <span class="absolute top-1 h-4 w-4 rounded-full bg-surface shadow transition-all ${on ? "left-6" : "left-1"}"></span></button>`;
 
   const checkbox = (label, hint, on, data) => `
