@@ -24,8 +24,14 @@ export const runtime = "nodejs";
  *     `user_info` is broadcast to every other presence member, so no username,
  *     no email, no session detail.
  *
- * Answers 403 rather than 401 for a signed-out caller: pusher-js treats any
- * non-200 as a failed subscription, and a 401 here invites a redirect loop.
+ * Answers 403 rather than 401 for a caller whose cookie does not resolve, so
+ * nothing downstream mistakes a failed subscription for "go and sign in".
+ *
+ * With no cookie at all, middleware answers 401 before this handler runs. That
+ * is fine — pusher-js treats any non-200 as a failed subscription — and it only
+ * happens in a state where the page itself has already been redirected to
+ * /login. The case this handler actually sees is the interesting one: a cookie
+ * that is present but dead.
  */
 export const POST = withApi(async (req: Request) => {
   if (!isRealtimeConfigured()) {
