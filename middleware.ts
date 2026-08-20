@@ -44,26 +44,45 @@ if (allowlist.open) {
 }
 
 /**
- * Paths that must stay reachable without a session.
+ * Paths a person may reach without a session — the sign-in handshake, and the
+ * screen it happens on.
  *
- * The Pusher webhook is here because it has no session to present: it is
- * authenticated by an HMAC of its raw body against PUSHER_SECRET, verified in the
- * handler. Leaving it out would mean middleware answering 401 to Pusher, which
- * would then back off from delivering presence events at all.
+ * Machine-authenticated endpoints are NOT here; they short-circuit earlier, in
+ * isMachineAuthenticated(), because they need to skip the IP gate as well.
  */
 const PUBLIC_PATHS = [
   "/login",
   "/api/auth/login",
   "/api/auth/logout",
   "/api/auth/me",
-  "/api/pusher/webhook",
 ];
 
-/** Cron routes authenticate with CRON_SECRET, not a cookie. */
-const isCron = (pathname: string) => pathname.startsWith("/api/cron/");
+/**
+ * Endpoints called by a machine, not a person, and authenticated by a secret
+ * rather than by where the request came from.
+ *
+ * These are exempt from the IP allowlist, and that is a deliberate ordering
+ * decision rather than an oversight. The allowlist exists to control which
+ * *humans* can reach the portal; it cannot be used to gate a callback whose
+ * source addresses belong to Pusher or to Vercel's own scheduler. Applying it
+ * would mean the Pusher webhook getting a bare 403 and Pusher backing off from
+ * delivering presence at all, and cron jobs silently never running.
+ *
+ * What replaces the network check is stronger, not weaker:
+ *   /api/pusher/webhook  HMAC-SHA256 of the raw body against PUSHER_SECRET
+ *   /api/cron/*          a bearer CRON_SECRET, and the route REFUSES when unset
+ *
+ * An IP is spoofable and a shared secret is not, so this is the right way round.
+ */
+function isMachineAuthenticated(pathname: string): boolean {
+  return pathname === "/api/pusher/webhook" || pathname.startsWith("/api/cron/");
+}
 
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
+
+  // Ahead of the IP gate, because these have no allowlistable origin. See above.
+  if (isMachineAuthenticated(pathname)) return NextResponse.next();
 
   // ---- 1. the gate ----
   if (!allowsIp(clientIp(req.headers), allowlist, failClosedWhenUnset)) {
@@ -74,8 +93,6 @@ export function middleware(req: NextRequest) {
       headers: { "Content-Type": "text/plain; charset=utf-8" },
     });
   }
-
-  if (isCron(pathname)) return NextResponse.next();
 
   const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
   const hasCookie = req.cookies.has(SESSION_COOKIE);
