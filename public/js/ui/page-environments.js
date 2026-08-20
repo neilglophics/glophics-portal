@@ -19,6 +19,9 @@ Router.register("environments", {
     const filtered = rows.length !== all.length;
     const signedInUserId = State.getSignedInUserId();
     const showingMine = !!signedInUserId && filters.userId === signedInUserId;
+    const myServerCount = signedInUserId
+      ? all.filter((row) => row.claims.some((claim) => claim.userIds.includes(signedInUserId))).length
+      : 0;
     const anyOpen = EnvDetail.openCount("environments") > 0;
 
     const statusChip = (key, label, count) => {
@@ -44,7 +47,7 @@ Router.register("environments", {
               showingMine ? "bg-accent text-on-accent" : signedInUserId
                 ? "bg-surface text-muted ring-1 ring-line-2 hover:text-ink"
                 : "cursor-not-allowed bg-subtle-2 text-faintest"}">
-            My servers</button>
+              My servers ${myServerCount}</button>
         ${filtered ? `<button data-action="clear-filters"
             class="ml-1 text-[11px] font-semibold text-brand-fg hover:underline">Clear filters</button>` : ""}
       </div>
