@@ -83,14 +83,20 @@ export function middleware(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Already signed in and looking at the sign-in screen: go to the board.
-  if (pathname === "/login" && hasCookie) {
-    const url = req.nextUrl.clone();
-    url.pathname = "/dashboard";
-    url.search = "";
-    return NextResponse.redirect(url);
-  }
-
+  /**
+   * There is deliberately NO "already has a cookie, bounce /login to the board"
+   * rule here, and it must not be added back.
+   *
+   * Middleware only knows whether a cookie *exists*; the app layout knows
+   * whether it *resolves*. A cookie that is present but dead — expired, revoked,
+   * or pointing at a row that no longer exists after a re-import — makes those
+   * two disagree, and if both redirect the disagreement becomes an infinite
+   * loop: the layout sends /dashboard to /login, and this would send /login
+   * straight back to /dashboard.
+   *
+   * So the "you are already signed in" redirect lives in app/login/page.tsx,
+   * where the session is actually resolved. One authority, no loop.
+   */
   return NextResponse.next();
 }
 

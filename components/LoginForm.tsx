@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Field, FormError } from "@/components/ui/Form";
 import { Icon } from "@/components/ui/Icon";
@@ -10,10 +10,22 @@ import { Icon } from "@/components/ui/Icon";
  * The one form that has to work before anything else does, so it owns its own
  * state and posts directly rather than going through a shared data layer.
  */
-export function LoginForm({ next }: { next?: string }) {
+export function LoginForm({ next, expired }: { next?: string; expired?: boolean }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+
+  /**
+   * We got here carrying a cookie that did not resolve. Clear it.
+   *
+   * A Server Component cannot delete a cookie — only a Route Handler or Server
+   * Action can — so the sign-out endpoint does it. Left in place, the dead cookie
+   * would cost a redirect through the app layout on every single navigation.
+   */
+  useEffect(() => {
+    if (!expired) return;
+    fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+  }, [expired]);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -64,6 +76,12 @@ export function LoginForm({ next }: { next?: string }) {
 
       <h1 className="mt-8 text-2xl font-bold tracking-tight lg:mt-0">Sign in</h1>
       <p className="mt-1.5 text-sm text-faint">Use the credentials your super admin gave you.</p>
+
+      {expired ? (
+        <p className="mt-4 rounded-xl bg-warn-soft px-3.5 py-2.5 text-xs font-medium text-warn">
+          Your session has ended — sign in again.
+        </p>
+      ) : null}
 
       <div className="mt-7 space-y-4">
         <Field

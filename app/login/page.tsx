@@ -1,5 +1,7 @@
+import { redirect } from "next/navigation";
 import { Icon } from "@/components/ui/Icon";
 import { LoginForm } from "@/components/LoginForm";
+import { getCurrentUser } from "@/lib/auth/session";
 
 /**
  * The sign-in gate. Outside the (app) route group on purpose: pages in there
@@ -46,15 +48,26 @@ function BrandPanel() {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: Promise<{ next?: string; expired?: string }>;
 }) {
-  const { next } = await searchParams;
+  const { next, expired } = await searchParams;
+
+  /**
+   * The "you are already signed in" redirect lives here, not in middleware.
+   *
+   * Middleware can only see that a cookie exists. This resolves it, which is the
+   * only check that can tell a live session from a dead one — and having both
+   * redirect on different information is what caused an infinite /login ⇄
+   * /dashboard loop. One authority decides.
+   */
+  const user = await getCurrentUser();
+  if (user) redirect("/dashboard");
 
   return (
     <div className="grid h-full lg:grid-cols-2">
       <BrandPanel />
       <div className="flex items-center justify-center bg-surface px-6 py-12 sm:px-12">
-        <LoginForm next={next} />
+        <LoginForm next={next} expired={expired === "1"} />
       </div>
     </div>
   );

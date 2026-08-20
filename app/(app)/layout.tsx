@@ -19,7 +19,11 @@ import type { EnvStatus } from "@/lib/types";
  */
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await currentUserOrNull();
-  if (!user) redirect("/login");
+  // `expired` tells the sign-in screen that a cookie arrived and did not
+  // resolve, so it can clear the dead one and say what happened. Without it a
+  // stale cookie would be carried around silently, costing a wasted bounce
+  // through here on every navigation.
+  if (!user) redirect("/login?expired=1");
 
   const [board, syncState, skipped] = await Promise.all([
     getBoard(),
