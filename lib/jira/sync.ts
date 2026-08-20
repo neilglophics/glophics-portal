@@ -74,6 +74,10 @@ interface TicketFields {
   repository: string[];
   startDate: string | null;
   dueDate: string | null;
+  /** Jira's own instants — system fields, not custom ones, so no fieldMap
+   *  lookup is needed for these two. */
+  updated: string | null;
+  created: string | null;
 }
 
 function buildJql(settings: Settings, heldKeys: string[]): string {
@@ -134,6 +138,8 @@ function extractFields(
   const f = issue.fields as Record<string, unknown> & {
     summary?: string;
     status?: { name?: string };
+    updated?: string;
+    created?: string;
   };
 
   return {
@@ -146,6 +152,8 @@ function extractFields(
     repository: asStringArray(pickFieldValue(f, fieldMap["repository"])),
     startDate: firstOf(pickFieldValue(f, fieldMap["start date"])),
     dueDate: firstOf(pickFieldValue(f, fieldMap["due date"])),
+    updated: f.updated ?? null,
+    created: f.created ?? null,
   };
 }
 
@@ -187,7 +195,7 @@ export async function runJiraSync(force: boolean): Promise<SyncResult> {
 
   try {
     const fieldMap = await loadFieldIdMap(config);
-    const fieldIds = new Set(["summary", "status"]);
+    const fieldIds = new Set(["summary", "status", "updated", "created"]);
     for (const name of AUTOFILL_FIELD_NAMES) {
       for (const id of fieldMap[name] ?? []) fieldIds.add(id);
     }
@@ -251,13 +259,21 @@ async function applySync(
     repos: string[];
     userIds: string[];
     rawAssignees: string[];
+    jiraCreatedAt: string | null;
+    jiraUpdatedAt: string | null;
   }
 
   const skipped: Skipped[] = [];
   const onBoard: OnBoard[] = [];
   const toClaim: (OnBoard & { repos: string[] })[] = [];
   const toRelease: string[] = [];
-  const toRefresh: { key: string; status: string; summary: string }[] = [];
+  const toRefresh: {
+    key: string;
+    status: string;
+    summary: string;
+    jiraCreatedAt: string | null;
+    jiraUpdatedAt: string | null;
+  }[] = [];
 
   /**
    * Everything the sync saw that is not an active claim, in the shape the ticket
@@ -286,6 +302,8 @@ async function applySync(
       repos,
       userIds: matchUserIdsByLabels(t.ticketAssignees, directory).matched,
       rawAssignees: t.ticketAssignees,
+      jiraCreatedAt: t.created,
+      jiraUpdatedAt: t.updated,
     });
   };
 
@@ -297,8 +315,16 @@ async function applySync(
     if (held.has(t.key)) {
       if (!statusFrees(settings.jira, t.status)) {
         // Sticky: repos/serverId/userIds do not move mid-claim — only the
-        // display-facing fields refresh each pass.
-        toRefresh.push({ key: t.key, status: t.status, summary: t.summary });
+        // display-facing fields refresh each pass. jiraUpdatedAt moves with
+        // them; jiraCreatedAt never changes but is refreshed too, so a claim
+        // synced before this field existed backfills on its next pass.
+        toRefresh.push({
+          key: t.key,
+          status: t.status,
+          summary: t.summary,
+          jiraCreatedAt: t.created,
+          jiraUpdatedAt: t.updated,
+        });
         continue;
       }
       // Released: it stops holding repositories. It stays in the tables at its
@@ -373,14 +399,19 @@ async function applySync(
       repos: repoCheck.matched,
       userIds: matchUserIdsByLabels(t.ticketAssignees, directory).matched,
       rawAssignees: t.ticketAssignees,
+      jiraCreatedAt: t.created,
+      jiraUpdatedAt: t.updated,
     });
   }
 
   await withTransaction(async (client) => {
-    for (const { key, status, summary } of toRefresh) {
+    for (const { key, status, summary, jiraCreatedAt, jiraUpdatedAt } of toRefresh) {
       await client.query(
-        "UPDATE claims SET status = $2, summary = $3, last_synced_at = now() WHERE id = $1",
-        [key, status, summary],
+        `UPDATE claims
+            SET status = $2, summary = $3, jira_created_at = $4, jira_updated_at = $5,
+                last_synced_at = now()
+          WHERE id = $1`,
+        [key, status, summary, jiraCreatedAt, jiraUpdatedAt],
       );
     }
 
@@ -391,10 +422,12 @@ async function applySync(
     for (const claim of toClaim) {
       await client.query(
         `INSERT INTO claims (id, source, server_id, account_name, branch, status, summary,
-                             start_time, end_time, claimed_at, last_synced_at)
-         VALUES ($1, 'jira', $2, $3, $4, $5, $6, $7, $8, now(), now())
+                             start_time, end_time, jira_created_at, jira_updated_at,
+                             claimed_at, last_synced_at)
+         VALUES ($1, 'jira', $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), now())
          ON CONFLICT (id) DO UPDATE
-           SET status = EXCLUDED.status, summary = EXCLUDED.summary, last_synced_at = now()`,
+           SET status = EXCLUDED.status, summary = EXCLUDED.summary,
+               jira_updated_at = EXCLUDED.jira_updated_at, last_synced_at = now()`,
         [
           claim.key,
           claim.serverId,
@@ -404,6 +437,8 @@ async function applySync(
           claim.summary,
           claim.startTime,
           claim.endTime,
+          claim.jiraCreatedAt,
+          claim.jiraUpdatedAt,
         ],
       );
 
@@ -436,8 +471,9 @@ async function applySync(
     for (const row of onBoard) {
       await client.query(
         `INSERT INTO jira_issues (key, server_id, account_name, branch, status, summary,
-                                  start_time, end_time, repos, user_ids, raw_assignees, synced_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10::text[], $11::text[], now())
+                                  start_time, end_time, repos, user_ids, raw_assignees,
+                                  jira_created_at, jira_updated_at, synced_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10::text[], $11::text[], $12, $13, now())
          ON CONFLICT (key) DO NOTHING`,
         [
           row.key,
@@ -451,6 +487,8 @@ async function applySync(
           row.repos,
           row.userIds,
           row.rawAssignees,
+          row.jiraCreatedAt,
+          row.jiraUpdatedAt,
         ],
       );
     }

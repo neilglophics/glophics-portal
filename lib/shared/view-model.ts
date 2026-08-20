@@ -286,6 +286,8 @@ export function boardRows(
         endTime: issue.endTime,
         claimedAt: "",
         lastSyncedAt: null,
+        jiraCreatedAt: issue.jiraCreatedAt,
+        jiraUpdatedAt: issue.jiraUpdatedAt,
       };
 
       return {

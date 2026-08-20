@@ -101,6 +101,7 @@ export async function getClaims(): Promise<Claim[]> {
   const rows = (await sql`
     SELECT c.id, c.source, c.server_id, c.account_name, c.branch, c.status,
            c.summary, c.note, c.start_time, c.end_time, c.claimed_at, c.last_synced_at,
+           c.jira_created_at, c.jira_updated_at,
            COALESCE(
              (SELECT array_agg(cr.repo_name ORDER BY cr.repo_name)
                 FROM claim_repos cr WHERE cr.claim_id = c.id), '{}'
@@ -128,6 +129,8 @@ export async function getClaims(): Promise<Claim[]> {
     end_time: string | null;
     claimed_at: string;
     last_synced_at: string | null;
+    jira_created_at: string | null;
+    jira_updated_at: string | null;
     repos: string[];
     user_ids: string[];
     raw_assignees: string[];
@@ -149,6 +152,8 @@ export async function getClaims(): Promise<Claim[]> {
     endTime: r.end_time,
     claimedAt: r.claimed_at,
     lastSyncedAt: r.last_synced_at,
+    jiraCreatedAt: r.jira_created_at,
+    jiraUpdatedAt: r.jira_updated_at,
   }));
 }
 
@@ -210,7 +215,8 @@ export async function getSettings(): Promise<Settings> {
 export async function getJiraIssues(): Promise<JiraIssue[]> {
   const rows = (await sql`
     SELECT key, server_id, account_name, branch, status, summary,
-           start_time, end_time, repos, user_ids, raw_assignees
+           start_time, end_time, repos, user_ids, raw_assignees,
+           jira_created_at, jira_updated_at
       FROM jira_issues
      ORDER BY key
   `) as {
@@ -225,6 +231,8 @@ export async function getJiraIssues(): Promise<JiraIssue[]> {
     repos: string[];
     user_ids: string[];
     raw_assignees: string[];
+    jira_created_at: string | null;
+    jira_updated_at: string | null;
   }[];
 
   return rows.map((r) => ({
@@ -239,6 +247,8 @@ export async function getJiraIssues(): Promise<JiraIssue[]> {
     summary: r.summary,
     startTime: r.start_time,
     endTime: r.end_time,
+    jiraCreatedAt: r.jira_created_at,
+    jiraUpdatedAt: r.jira_updated_at,
   }));
 }
 

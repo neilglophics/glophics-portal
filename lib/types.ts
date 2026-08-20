@@ -97,6 +97,11 @@ export interface Claim {
   endTime: string | null;
   claimedAt: string;
   lastSyncedAt: string | null;
+  /** Jira's own creation/last-modified instants — null for a manual claim, or a
+   *  Jira claim synced before this field existed. Powers the dashboard's
+   *  New/Claimed/Updated badges; never used for occupancy. */
+  jiraCreatedAt: string | null;
+  jiraUpdatedAt: string | null;
 }
 
 export interface JiraIssue {
@@ -111,6 +116,8 @@ export interface JiraIssue {
   summary: string | null;
   startTime: string | null;
   endTime: string | null;
+  jiraCreatedAt: string | null;
+  jiraUpdatedAt: string | null;
 }
 
 export interface JiraSkipped {

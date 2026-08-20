@@ -1,14 +1,18 @@
 import Link from "next/link";
 import { AvatarStack } from "@/components/ui/Avatar";
-import { JiraChip } from "@/components/ui/Chips";
+import { Chip, Dash, JiraChip } from "@/components/ui/Chips";
 import { Icon } from "@/components/ui/Icon";
 import { Empty, Page, StatTile } from "@/components/ui/Layout";
 import { RepoStrip } from "@/components/ui/RepoStrip";
 import { Table, Td, Th, Tr } from "@/components/ui/Table";
-import { getBoard } from "@/lib/db/queries/board";
+import { currentUserOrNull } from "@/lib/auth/require";
+import { getBoard, getJiraIssues } from "@/lib/db/queries/board";
 import { boardSummary } from "@/lib/shared/occupancy";
+import { jiraActivity } from "@/lib/shared/activity";
+import { agoText } from "@/lib/shared/format";
 import { ENV_STATE, TONE, shortRepo } from "@/lib/shared/tokens";
 import {
+  boardRows,
   claimRows,
   envRows,
   isUrgent,
@@ -17,10 +21,74 @@ import {
   nullsLast,
   progress,
   type EnvRow,
+  type TicketRow,
 } from "@/lib/shared/view-model";
 
 /** Overview of the pool: what's free, what's held, and what frees up next. */
 export const metadata = { title: "Dashboard · Glophics Portal" };
+
+const PAGE_SIZE = 5;
+
+type Search = { activePage?: string; updatesPage?: string };
+
+/** Same "filters live in the URL" idiom as /environments — a Link, not a
+ *  client component, so the page stays server rendered with no client JS. */
+function pageHref(search: Search, patch: Partial<Search>): string {
+  const params = new URLSearchParams();
+  const merged = { ...search, ...patch };
+  for (const [key, value] of Object.entries(merged)) {
+    if (value && value !== "1") params.set(key, value);
+  }
+  const query = params.toString();
+  return query ? `/dashboard?${query}` : "/dashboard";
+}
+
+function paginate<T>(items: T[], pageParam: string | undefined) {
+  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  const requested = Math.max(1, Math.floor(Number(pageParam)) || 1);
+  const page = Math.min(requested, totalPages);
+  const start = (page - 1) * PAGE_SIZE;
+  return { items: items.slice(start, start + PAGE_SIZE), page, totalPages };
+}
+
+function Pager({
+  page,
+  totalPages,
+  search,
+  paramKey,
+}: {
+  page: number;
+  totalPages: number;
+  search: Search;
+  paramKey: keyof Search;
+}) {
+  if (totalPages <= 1) return null;
+
+  const navLink = (dir: "prev" | "next", targetPage: number, disabled: boolean) => (
+    <Link
+      href={pageHref(search, { [paramKey]: String(targetPage) })}
+      aria-disabled={disabled}
+      tabIndex={disabled ? -1 : undefined}
+      className={`grid h-7 w-7 place-items-center rounded-full text-faint ring-1 ring-line-2 transition ${
+        disabled
+          ? "pointer-events-none opacity-40"
+          : "hover:bg-brand-soft hover:text-brand-fg hover:ring-brand-soft"
+      }`}
+    >
+      <Icon name="chevron" className={`h-3 w-3 ${dir === "prev" ? "rotate-180" : ""}`} />
+    </Link>
+  );
+
+  return (
+    <div className="flex items-center justify-end gap-2 pt-3">
+      {navLink("prev", page - 1, page <= 1)}
+      <span className="text-[11px] font-semibold text-faint">
+        Page {page} of {totalPages}
+      </span>
+      {navLink("next", page + 1, page >= totalPages)}
+    </div>
+  );
+}
 
 function Bar({ pct, className }: { pct: number; className: string }) {
   return (
@@ -82,8 +150,65 @@ function HeldCard({ row }: { row: EnvRow }) {
   );
 }
 
-export default async function DashboardPage() {
-  const { accounts, environments, claims, directory } = await getBoard();
+/** One row of the Latest Jira updates panel — Ticket (+ activity badge and
+ *  message), Assignee, Status, Branch, Repos. */
+function JiraUpdateRow({
+  row,
+  activity,
+}: {
+  row: TicketRow;
+  activity: ReturnType<typeof jiraActivity>;
+}) {
+  return (
+    <Tr>
+      <Td>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="whitespace-nowrap text-xs font-bold text-brand-fg">{row.claim.id}</span>
+          {activity ? <Chip className={activity.chipClassName}>{activity.badge}</Chip> : null}
+        </span>
+        {row.claim.jiraUpdatedAt ? (
+          <p className="whitespace-nowrap text-[10px] text-faint">{agoText(row.claim.jiraUpdatedAt)} ago</p>
+        ) : null}
+        {activity ? (
+          <p className="max-w-[11rem] truncate text-[10px] text-muted" title={activity.message}>
+            {activity.message}
+          </p>
+        ) : null}
+      </Td>
+      <Td>
+        <AvatarStack people={row.people} max={2} />
+      </Td>
+      <Td>
+        <JiraChip status={row.claim.status} />
+      </Td>
+      <Td>
+        <p
+          className="max-w-[7rem] truncate text-xs font-medium text-body"
+          title={row.claim.branch ?? row.env}
+        >
+          {row.claim.branch ?? row.env}
+        </p>
+      </Td>
+      <Td>
+        {row.claim.repos.length ? (
+          <Chip className={row.holding ? "bg-warn-soft text-warn" : "bg-subtle-2 text-muted"}>
+            {row.claim.repos.map(shortRepo).join(" ")}
+          </Chip>
+        ) : (
+          <Dash />
+        )}
+      </Td>
+    </Tr>
+  );
+}
+
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<Search> }) {
+  const search = await searchParams;
+  const [{ accounts, environments, claims, directory }, issues, user] = await Promise.all([
+    getBoard(),
+    getJiraIssues(),
+    currentUserOrNull(),
+  ]);
 
   const summary = boardSummary(environments, claims);
   const rows = envRows(environments, accounts, claims, directory);
@@ -95,7 +220,15 @@ export default async function DashboardPage() {
     .slice(0, 3);
 
   const tickets = claimRows(environments, accounts, claims, directory);
-  const topTickets = tickets.slice(0, 5);
+  const active = paginate(tickets, search.activePage);
+
+  // Every Jira-sourced ticket touched recently, holding a repository or not —
+  // most recently updated first. Nothing here is a diff against a previous
+  // sync (see lib/shared/activity.ts); it's just recency.
+  const jiraUpdates = [...tickets, ...boardRows(issues, environments, accounts, directory)]
+    .filter((r) => r.claim.source === "jira" && r.claim.jiraUpdatedAt)
+    .sort((a, b) => new Date(b.claim.jiraUpdatedAt!).getTime() - new Date(a.claim.jiraUpdatedAt!).getTime());
+  const updates = paginate(jiraUpdates, search.updatesPage);
 
   const repoOffline = environments.reduce(
     (n, env) => n + env.repos.filter((r) => r.health === "offline").length,
@@ -192,65 +325,113 @@ export default async function DashboardPage() {
         </div>
       </section>
 
-      <section className="mt-7">
-        <div className="flex flex-wrap items-end justify-between gap-3 pb-4">
-          <div>
-            <h2 className="text-[17px] font-bold tracking-tight">Active tickets</h2>
-            <p className="mt-0.5 text-xs text-faint">
-              {topTickets.length < tickets.length
-                ? `The ${topTickets.length} freeing up first, of ${tickets.length} holding a repository`
-                : `${tickets.length} ticket${tickets.length === 1 ? " is" : "s are"} holding a repository`}
-            </p>
+      <section className="mt-7 flex flex-col gap-5 xl:flex-row">
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-end justify-between gap-3 pb-4">
+            <div>
+              <h2 className="text-[17px] font-bold tracking-tight">Active tickets</h2>
+              <p className="mt-0.5 text-xs text-faint">
+                {tickets.length} ticket{tickets.length === 1 ? " is" : "s are"} holding a repository, soonest
+                to free first
+              </p>
+            </div>
+            <Link href="/tickets" className="text-xs font-semibold text-brand-fg hover:underline">
+              See all
+            </Link>
           </div>
-          <Link href="/tickets" className="text-xs font-semibold text-brand-fg hover:underline">
-            See all
-          </Link>
+
+          <Table
+            isEmpty={!active.items.length}
+            empty="No ticket is holding a repository."
+            head={
+              <>
+                <Th>Holders</Th>
+                <Th>Environment</Th>
+                <Th>Ticket</Th>
+                <Th>Status</Th>
+                <Th>Summary</Th>
+                <Th className="text-right">Frees in</Th>
+              </>
+            }
+          >
+            {active.items.map((row) => (
+              <Tr key={`${row.claim.id}-${row.serverId}`}>
+                <Td>
+                  <AvatarStack people={row.people} />
+                </Td>
+                <Td>
+                  <p className="max-w-[10rem] truncate text-sm font-semibold" title={row.env}>
+                    {row.env}
+                  </p>
+                  <p
+                    className="max-w-[10rem] truncate text-[11px] text-faint"
+                    title={`${row.accountName} · ${row.claim.repos.map(shortRepo).join(", ")}`}
+                  >
+                    {row.accountName} · {row.claim.repos.map(shortRepo).join(", ")}
+                  </p>
+                </Td>
+                <Td>
+                  <span className="text-xs font-semibold text-brand-fg">{row.claim.id}</span>
+                </Td>
+                <Td>
+                  <JiraChip status={row.claim.status} />
+                </Td>
+                <Td>
+                  <p
+                    className="max-w-[260px] truncate text-sm text-body"
+                    title={row.claim.summary || row.claim.note || "—"}
+                  >
+                    {row.claim.summary || row.claim.note || "—"}
+                  </p>
+                </Td>
+                <Td className="text-right">
+                  <span
+                    className={`text-sm font-semibold ${isUrgent(row.minutesLeft) ? "text-warn" : "text-muted"}`}
+                  >
+                    {leftText(row.minutesLeft)}
+                  </span>
+                </Td>
+              </Tr>
+            ))}
+          </Table>
+          <Pager page={active.page} totalPages={active.totalPages} search={search} paramKey="activePage" />
         </div>
 
-        <Table
-          isEmpty={!topTickets.length}
-          empty="No ticket is holding a repository."
-          head={
-            <>
-              <Th>Holders</Th>
-              <Th>Environment</Th>
-              <Th>Ticket</Th>
-              <Th>Status</Th>
-              <Th>Summary</Th>
-              <Th className="text-right">Frees in</Th>
-            </>
-          }
-        >
-          {topTickets.map((row) => (
-            <Tr key={`${row.claim.id}-${row.serverId}`}>
-              <Td>
-                <AvatarStack people={row.people} />
-              </Td>
-              <Td>
-                <p className="text-sm font-semibold">{row.env}</p>
-                <p className="text-[11px] text-faint">
-                  {row.accountName} · {row.claim.repos.map(shortRepo).join(", ")}
-                </p>
-              </Td>
-              <Td>
-                <span className="text-xs font-semibold text-brand-fg">{row.claim.id}</span>
-              </Td>
-              <Td>
-                <JiraChip status={row.claim.status} />
-              </Td>
-              <Td>
-                <span className="text-sm text-body">{row.claim.summary || row.claim.note || "—"}</span>
-              </Td>
-              <Td className="text-right">
-                <span
-                  className={`text-sm font-semibold ${isUrgent(row.minutesLeft) ? "text-warn" : "text-muted"}`}
-                >
-                  {leftText(row.minutesLeft)}
-                </span>
-              </Td>
-            </Tr>
-          ))}
-        </Table>
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-end justify-between gap-3 pb-4">
+            <div>
+              <h2 className="text-[17px] font-bold tracking-tight">Latest Jira updates</h2>
+              <p className="mt-0.5 text-xs text-faint">Most recently updated tickets, synced from Jira</p>
+            </div>
+            <Link href="/tickets" className="text-xs font-semibold text-brand-fg hover:underline">
+              See all
+            </Link>
+          </div>
+
+          <Table
+            isEmpty={!updates.items.length}
+            empty="Nothing from Jira yet — run a sync."
+            minWidth=""
+            head={
+              <>
+                <Th>Ticket</Th>
+                <Th>Assignee</Th>
+                <Th>Status</Th>
+                <Th>Branch</Th>
+                <Th>Repos</Th>
+              </>
+            }
+          >
+            {updates.items.map((row) => (
+              <JiraUpdateRow
+                key={`${row.claim.id}::${row.serverId ?? "none"}`}
+                row={row}
+                activity={jiraActivity(row, directory, user)}
+              />
+            ))}
+          </Table>
+          <Pager page={updates.page} totalPages={updates.totalPages} search={search} paramKey="updatesPage" />
+        </div>
       </section>
     </Page>
   );

@@ -41,6 +41,8 @@ function claim(id: string, serverId: string, repos: string[], endTime: string | 
     endTime,
     claimedAt: "2026-01-01T00:00:00.000Z",
     lastSyncedAt: null,
+    jiraCreatedAt: null,
+    jiraUpdatedAt: null,
   };
 }
 
