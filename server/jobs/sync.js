@@ -24,10 +24,19 @@ const {
 // enters settings.jira.releasingStatuses — or the moment it is closed,
 // cancelled or done, which frees the environment whatever the lists say
 // (see statusFrees in shared/data.js). Any *other* status leaves an
-// already-active claim untouched (e.g. QA FAILED doesn't free the
+// already-active claim in place (e.g. QA FAILED doesn't free the
 // environment — the ticket bounced back, it's still being worked). This
-// means claims are stateful: they live in Board.state.tickets and only sync()
-// adds/removes them, never a plain "recompute from current status" pass.
+// means *whether* a ticket holds anything is stateful: claims live in
+// Board.state.tickets and only sync() adds/removes them, never a plain
+// "recompute from current status" pass.
+//
+// *What* it holds is not stateful. Every pass re-derives the placement —
+// which environment, which repos, which people, which dates — from the
+// ticket's current fields (see placeTicket), so an edit in Jira moves the
+// claim with it. A ticket retargeted from SG_hotfix-2 to SG_hotfix-1 has to
+// stop holding the first and start holding the second on the next pass;
+// leaving it where it was claimed means the old environment reads as held by
+// a ticket that left it, and the new one reads as free.
 //
 // The search window (`updated >= -30d`) is a practical bound, not a
 // guarantee: a claim that's genuinely still open but hasn't been touched
@@ -131,6 +140,43 @@ function extractTicketFields(issue, fieldMap) {
   };
 }
 
+/**
+ * Where a ticket belongs right now, decided only from what Jira currently
+ * says: which environment (Account Name + Branch), which of that
+ * environment's repos (Repository), and who is on it (Ticket Assignee).
+ *
+ * The first claim and every later refresh both go through here, so a ticket
+ * edited after it was claimed is placed by exactly the rules that placed it
+ * the first time — there is no second, more forgiving path that only a
+ * moved ticket takes.
+ *
+ * An `error` means Jira no longer says where this ticket goes. Nothing is
+ * guessed and no earlier answer is reused: the caller reports the reason and
+ * the ticket holds nothing until the fields say where.
+ */
+function placeTicket(t) {
+  const { server, error } = findServerForTicket(t, Board.state.accounts, Board.state.servers);
+  if (error) return { error };
+  if (!t.repository || !t.repository.length) return { error: "Repository field is empty." };
+  const repoCheck = matchRepositoriesToKeys(t.repository, Object.keys(server.repos));
+  if (!repoCheck.matched.length) {
+    return { error: `Repository field ("${t.repository.join(", ")}") doesn't match any repo on ${server.name}.` };
+  }
+  return {
+    server,
+    repos: repoCheck.matched,
+    userIds: matchUserIdsByLabels(t.ticketAssignees, Board.state.users).matched
+  };
+}
+
+// Jira's dates, in the shape a claim stores them. A ticket with no start
+// date keeps the start it already had rather than being re-dated to "now"
+// every pass — that would reset "held since" once a minute.
+const claimStart = (t, previous) =>
+  t.startDate ? new Date(`${t.startDate}T09:00`).toISOString()
+    : (previous || new Date().toISOString());
+const claimEnd = (t) => (t.dueDate ? new Date(`${t.dueDate}T18:00`).toISOString() : null);
+
 async function runJiraSync(force) {
   if (!Board.state.settings.jira.enabled) return { ok: false, reason: "disabled" };
   if (!force && !Board.state.settings.jira.autoSync) return { ok: false, reason: "auto-sync-off" };
@@ -145,6 +191,19 @@ async function runJiraSync(force) {
     const fieldMap = await loadFieldIdMap(config);
     const fieldIds = new Set(["summary", "status"]);
     AUTOFILL_FIELD_NAMES.forEach((name) => (fieldMap[name] || []).forEach((id) => fieldIds.add(id)));
+
+    /**
+     * Whether this pass can actually see the fields a placement is decided
+     * from. loadFieldIdMap answers {} when Jira's field list is unreachable
+     * and nothing is cached yet, and every ticket then looks like one with no
+     * Account Name, Branch or Repository at all.
+     *
+     * Re-deriving placements from that would free every claim on the board
+     * over a network blip. So a pass that cannot ask leaves the claims it has
+     * where they are, and refreshes only what it did read.
+     */
+    const canPlace = ["account name", "branch", "repository"]
+      .every((name) => (fieldMap[name] || []).length);
 
     const jira = Board.state.settings.jira;
     const issues = await fetchJiraSearchIssues(config, fieldIds, buildSyncJql(jira));
@@ -194,11 +253,37 @@ async function runJiraSync(force) {
 
       if (existing) {
         if (!statusFrees(jira, t.status)) {
-          // Sticky: repos/serverId/userIds don't move mid-claim — only the
-          // display-facing fields refresh each pass.
           existing.status = t.status;
           existing.summary = t.summary;
           existing.lastSyncedAt = new Date().toISOString();
+          if (!canPlace) return;
+
+          // Still holding — but holding what the ticket says now, not what
+          // it said when it was claimed. Branch, Account Name, Repository,
+          // Ticket Assignee and the dates all move the claim.
+          const placed = placeTicket(t);
+          if (placed.error) {
+            // Jira has stopped saying where this belongs, so nothing
+            // justifies holding an environment in its name. It drops back to
+            // a listed ticket carrying the reason, and claims again by itself
+            // as soon as the fields say where.
+            skipped.push({ key: t.key, reason: placed.error, status: t.status, accountName: t.accountName, branch: t.branch });
+            Board.state.tickets = Board.state.tickets.filter((tk) => tk !== existing);
+            if (!ignored) record(t);
+            return;
+          }
+
+          existing.serverId = placed.server.id;
+          existing.accountName = t.accountName;
+          existing.branch = t.branch;
+          existing.repos = placed.repos;
+          existing.userIds = placed.userIds;
+          existing.rawAssignees = t.ticketAssignees;
+          existing.startTime = claimStart(t, existing.startTime);
+          existing.endTime = claimEnd(t);
+          // `note` and `claimedAt` are the board's own, not Jira's — a
+          // person typed the one, and the other records when this ticket
+          // first took an environment. Neither is re-derived.
           return;
         }
         // Released: it stops holding repositories. It stays in the tables
@@ -218,43 +303,27 @@ async function runJiraSync(force) {
         return;
       }
 
-      const { server, error } = findServerForTicket(t, Board.state.accounts, Board.state.servers);
-      if (error) {
-        skipped.push({ key: t.key, reason: error, status: t.status, accountName: t.accountName, branch: t.branch });
+      const placed = placeTicket(t);
+      if (placed.error) {
+        skipped.push({ key: t.key, reason: placed.error, status: t.status, accountName: t.accountName, branch: t.branch });
         record(t);
         return;
       }
-
-      if (!t.repository || !t.repository.length) {
-        skipped.push({ key: t.key, reason: "Repository field is empty.", status: t.status, accountName: t.accountName, branch: t.branch });
-        record(t);
-        return;
-      }
-      const repoCheck = matchRepositoriesToKeys(t.repository, Object.keys(server.repos));
-      if (!repoCheck.matched.length) {
-        skipped.push({ key: t.key, reason: `Repository field ("${t.repository.join(", ")}") doesn't match any repo on ${server.name}.`, status: t.status, accountName: t.accountName, branch: t.branch });
-        record(t);
-        return;
-      }
-
-      const userMatch = matchUserIdsByLabels(t.ticketAssignees, Board.state.users);
-      const startTime = t.startDate ? new Date(`${t.startDate}T09:00`).toISOString() : new Date().toISOString();
-      const endTime = t.dueDate ? new Date(`${t.dueDate}T18:00`).toISOString() : null;
 
       Board.state.tickets.push({
         id: t.key,
         source: "jira",
-        serverId: server.id,
+        serverId: placed.server.id,
         accountName: t.accountName,
         branch: t.branch,
-        repos: repoCheck.matched,
-        userIds: userMatch.matched,
+        repos: placed.repos,
+        userIds: placed.userIds,
         rawAssignees: t.ticketAssignees,
         status: t.status,
         summary: t.summary,
         note: null,
-        startTime,
-        endTime,
+        startTime: claimStart(t, null),
+        endTime: claimEnd(t),
         claimedAt: new Date().toISOString(),
         lastSyncedAt: new Date().toISOString()
       });
