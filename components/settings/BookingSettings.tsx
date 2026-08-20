@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { realtimeHeaders } from "@/lib/realtime/client";
 import { useState } from "react";
 import { Card } from "@/components/ui/Layout";
 import { FormError, Select, Toggle } from "@/components/ui/Form";
@@ -22,7 +23,7 @@ export function BookingSettings({ settings }: { settings: Settings }) {
 
     const res = await fetch("/api/settings", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { ...realtimeHeaders(), "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     }).catch(() => null);
 

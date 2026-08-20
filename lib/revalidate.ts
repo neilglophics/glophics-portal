@@ -1,17 +1,23 @@
 import { revalidatePath } from "next/cache";
+import { publishBoard } from "@/lib/realtime/server";
+import type { BoardEvents } from "@/lib/realtime/events";
 
 /**
- * Which cached pages a mutation invalidates.
+ * "This changed — tell everyone." Both halves of that, in one call.
  *
- * Every page reads the board in a Server Component, so a write has to say what
- * it made stale. Listed centrally rather than per route, because the honest
- * answer for most config changes is "nearly everything" — an account rename
- * shows up on six pages — and enumerating that per handler is how one gets
- * forgotten.
+ * There are two audiences and they need different things:
  *
- * Phase 7 replaces this with granular Pusher events, which will let *other*
- * viewers see the change too. Until then this only refreshes the tab that made
- * it; see docs/03-REALTIME-SPEC.md §4.
+ *   revalidatePath  invalidates the Next cache so THIS tab's next render is
+ *                   fresh. Without it the acting user submits a change and sees
+ *                   the old board.
+ *   publishBoard    tells OTHER tabs, which then refresh themselves.
+ *
+ * They are always wanted together, so keeping them apart only created a way to
+ * remember one and forget the other.
+ *
+ * Both are called AFTER the write has committed. A publish inside a transaction
+ * that later rolls back would have every client render something the database
+ * does not have.
  */
 
 /** Pages whose content depends on claims or occupancy. */
@@ -20,17 +26,52 @@ const OCCUPANCY_PAGES = ["/dashboard", "/environments", "/tickets", "/my-tickets
 /** Pages that depend on the shape of the board: accounts, environments, people. */
 const CONFIG_PAGES = [...OCCUPANCY_PAGES, "/health", "/settings", "/users", "/not-tracked"];
 
-export function revalidateOccupancy(serverId?: string): void {
+function revalidateOccupancyPaths(serverId?: string): void {
   for (const path of OCCUPANCY_PAGES) revalidatePath(path);
   if (serverId) revalidatePath(`/environments/${serverId}`);
   else revalidatePath("/environments/[serverId]", "page");
 }
 
-export function revalidateConfig(): void {
+function revalidateConfigPaths(): void {
   for (const path of CONFIG_PAGES) revalidatePath(path);
-  // The detail route is dynamic, so it is invalidated by its route pattern
-  // rather than one path at a time.
   revalidatePath("/environments/[serverId]", "page");
   // The shell shows account rollups and badge counts on every page.
   revalidatePath("/", "layout");
+}
+
+/**
+ * A change to who holds what.
+ *
+ * `socketId` is the acting tab's Pusher socket, read from the request header, so
+ * Pusher excludes it from the fan-out — it has already been revalidated here and
+ * does not need an echo telling it to refresh again.
+ */
+export async function notifyOccupancy<E extends keyof BoardEvents>(
+  event: E,
+  payload: BoardEvents[E],
+  options?: { serverId?: string; socketId?: string | null },
+): Promise<void> {
+  revalidateOccupancyPaths(options?.serverId);
+  await publishBoard(event, payload, { socketId: options?.socketId ?? null });
+}
+
+/** A change to the shape of the board — accounts, environments, people, settings. */
+export async function notifyConfig<E extends keyof BoardEvents>(
+  event: E,
+  payload: BoardEvents[E],
+  options?: { socketId?: string | null },
+): Promise<void> {
+  revalidateConfigPaths();
+  await publishBoard(event, payload, { socketId: options?.socketId ?? null });
+}
+
+/** A Jira sync pass finished. Touches occupancy AND the Not-tracked list. */
+export async function notifyJiraSync(
+  payload: BoardEvents["jira.synced"],
+): Promise<void> {
+  revalidateOccupancyPaths();
+  revalidatePath("/not-tracked");
+  revalidatePath("/", "layout");
+  // No socketId: a cron pass has no acting tab to exclude.
+  await publishBoard("jira.synced", payload);
 }

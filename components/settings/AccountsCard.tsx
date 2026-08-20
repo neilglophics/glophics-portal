@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { realtimeHeaders } from "@/lib/realtime/client";
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chips";
@@ -127,7 +128,7 @@ function AccountDialog({
 
     const res = await fetch(account ? `/api/accounts/${encodeURIComponent(account.id)}` : "/api/accounts", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { ...realtimeHeaders(), "Content-Type": "application/json" },
       body: JSON.stringify({ displayName, repositories: nextRepos }),
     }).catch(() => null);
 
@@ -211,7 +212,7 @@ function RemoveAccountDialog({
     setError(null);
     setPending(true);
 
-    const res = await fetch(`/api/accounts/${encodeURIComponent(account.id)}`, { method: "DELETE" }).catch(
+    const res = await fetch(`/api/accounts/${encodeURIComponent(account.id)}`, { method: "DELETE", headers: realtimeHeaders() }).catch(
       () => null,
     );
     const data = (await res?.json().catch(() => ({}))) as { ok?: boolean; errors?: string[] };

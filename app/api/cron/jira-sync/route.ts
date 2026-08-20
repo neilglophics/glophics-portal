@@ -1,8 +1,7 @@
 import { withApi } from "@/lib/auth/require";
 import { requireCron } from "@/lib/cron";
 import { runJiraSync } from "@/lib/jira/sync";
-import { revalidateOccupancy } from "@/lib/revalidate";
-import { revalidatePath } from "next/cache";
+import { notifyJiraSync } from "@/lib/revalidate";
 
 export const runtime = "nodejs";
 /** The sync pages up to 500 issues plus a field-map lookup. */
@@ -25,9 +24,13 @@ export const GET = withApi(async (req: Request) => {
   const result = await runJiraSync(true);
 
   if (result.ok) {
-    revalidateOccupancy();
-    revalidatePath("/not-tracked");
-    revalidatePath("/", "layout");
+    await notifyJiraSync({
+      lastSyncAt: new Date().toISOString(),
+      issueCount: result.issueCount ?? 0,
+      claimed: result.claimed ?? 0,
+      released: result.released ?? 0,
+      skippedCount: result.skippedCount ?? 0,
+    });
   }
 
   return Response.json(result);

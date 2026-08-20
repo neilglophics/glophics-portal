@@ -5,15 +5,18 @@ import { useEffect, useState } from "react";
 import { Icon } from "@/components/ui/Icon";
 import { agoText } from "@/lib/shared/format";
 import { AccountMenu } from "./AccountMenu";
+import { ConnectionDot } from "./ConnectionDot";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 import type { AuthUser } from "@/lib/types";
 
 /**
- * Search, the sync indicator, appearance, and the account menu.
+ * Search, the live-connection dot, Jira freshness, appearance, and the account
+ * menu.
  *
- * The connection dot is a placeholder until Phase 7 wires Pusher — it shows the
- * Jira sync freshness only. It deliberately does not claim to show a live
- * connection it does not yet have.
+ * The two indicators are deliberately separate. "Live" is whether *other
+ * people's* changes reach this tab; "Synced Nm ago" is how fresh the Jira data
+ * is. One can be fine while the other is not, and a single combined light would
+ * hide that.
  */
 export function Topbar({
   user,
@@ -72,11 +75,13 @@ export function Topbar({
         />
       </label>
 
+      <ConnectionDot />
+
       <div
         title={jiraEnabled ? syncLabel : "Jira integration is off"}
-        className="hidden max-w-[180px] shrink-0 items-center gap-2 text-xs font-medium text-muted md:flex"
+        className="hidden max-w-[160px] shrink-0 items-center gap-2 text-xs font-medium text-faint lg:flex"
       >
-        <span className={`h-2 w-2 shrink-0 rounded-full ${jiraEnabled ? "bg-ok" : "bg-faintest"}`} />
+        <Icon name="refresh" className="h-3.5 w-3.5 shrink-0" />
         <span className="truncate">{syncLabel}</span>
       </div>
 

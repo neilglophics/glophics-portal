@@ -1,5 +1,6 @@
 import { readJson, requireUser, withApi } from "@/lib/auth/require";
 import { setPassword } from "@/lib/db/queries/auth";
+import { publishToUser } from "@/lib/realtime/server";
 
 export const runtime = "nodejs";
 
@@ -14,10 +15,15 @@ export const POST = withApi(async (req: Request, ctx: { params: Promise<{ id: st
   await requireUser("manage-users");
 
   const { id } = await ctx.params;
+  const userId = decodeURIComponent(id);
   const body = await readJson<{ password?: string }>(req);
 
-  const result = await setPassword(decodeURIComponent(id), body.password);
+  const result = await setPassword(userId, body.password);
   if (!result.ok) return Response.json({ ok: false, errors: result.errors }, { status: 400 });
+
+  // Their sessions were dropped by setPassword. Tell any open tab so it
+  // returns to the sign-in screen now rather than on its next request.
+  await publishToUser(userId, "session.revoked", {});
 
   return Response.json({ ok: true });
 });

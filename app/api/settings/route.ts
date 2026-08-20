@@ -1,6 +1,7 @@
 import { readJson, requireUser, withApi } from "@/lib/auth/require";
 import { updateSettings } from "@/lib/db/queries/config";
-import { revalidateConfig } from "@/lib/revalidate";
+import { notifyConfig } from "@/lib/revalidate";
+import { socketIdFrom } from "@/lib/realtime/server";
 import type { JiraSettings, OnExpiry } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -37,6 +38,6 @@ export const POST = withApi(async (req: Request) => {
 
   if (!result.ok) return Response.json({ ok: false, errors: result.errors }, { status: 400 });
 
-  revalidateConfig();
+  await notifyConfig("settings.changed", {}, { socketId: socketIdFrom(req) });
   return Response.json({ ok: true });
 });

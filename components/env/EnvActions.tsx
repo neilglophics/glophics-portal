@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Checkbox, Field, FormError, TextArea } from "@/components/ui/Form";
 import { Modal } from "@/components/ui/Modal";
+import { realtimeHeaders } from "@/lib/realtime/client";
 import { shortRepo } from "@/lib/shared/tokens";
 import type { DirectoryUser, Settings } from "@/lib/types";
 
@@ -21,7 +22,11 @@ import type { DirectoryUser, Settings } from "@/lib/types";
 async function post(url: string, body?: unknown, method = "POST") {
   const res = await fetch(url, {
     method,
-    ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
+    // realtimeHeaders() carries this tab's Pusher socket id, so the server can
+    // exclude it from the fan-out. Without it this tab receives an echo of its
+    // own change and refreshes twice.
+    headers: { ...realtimeHeaders(), ...(body ? { "Content-Type": "application/json" } : {}) },
+    ...(body ? { body: JSON.stringify(body) } : {}),
   });
   const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; errors?: string[] };
   return { ok: res.ok && data.ok !== false, message: [data.error, ...(data.errors ?? [])].filter(Boolean).join(" ") };

@@ -1,6 +1,7 @@
-import { revalidatePath } from "next/cache";
 import { HttpError, readJson, requireUser, withApi } from "@/lib/auth/require";
 import { setRepoNote } from "@/lib/db/queries/claims";
+import { notifyOccupancy } from "@/lib/revalidate";
+import { socketIdFrom } from "@/lib/realtime/server";
 
 export const runtime = "nodejs";
 
@@ -25,9 +26,11 @@ export const POST = withApi(async (req: Request, ctx: { params: Promise<{ id: st
     return Response.json({ ok: false, errors: result.errors }, { status: 400 });
   }
 
-  revalidatePath(`/environments/${serverId}`);
-  revalidatePath("/environments");
-  revalidatePath("/health");
+  await notifyOccupancy(
+    "note.changed",
+    { serverId, repoName: body.repoName },
+    { serverId, socketId: socketIdFrom(req) },
+  );
 
   return Response.json({ ok: true });
 });

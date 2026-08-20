@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Field, FormError, Select } from "@/components/ui/Form";
 import { Modal } from "@/components/ui/Modal";
+import { realtimeHeaders } from "@/lib/realtime/client";
 import { AUTH_ROLES } from "@/lib/shared/roles";
 import type { AuthUser, DirectoryUser } from "@/lib/types";
 
@@ -21,7 +22,8 @@ import type { AuthUser, DirectoryUser } from "@/lib/types";
 async function send(url: string, body?: unknown, method = "POST") {
   const res = await fetch(url, {
     method,
-    ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
+    headers: { ...realtimeHeaders(), ...(body ? { "Content-Type": "application/json" } : {}) },
+    ...(body ? { body: JSON.stringify(body) } : {}),
   });
   const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; errors?: string[] };
   return {

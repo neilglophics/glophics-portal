@@ -1,7 +1,6 @@
 import { requireUser, withApi } from "@/lib/auth/require";
 import { runJiraSync } from "@/lib/jira/sync";
-import { revalidateOccupancy } from "@/lib/revalidate";
-import { revalidatePath } from "next/cache";
+import { notifyJiraSync } from "@/lib/revalidate";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -22,9 +21,13 @@ export const POST = withApi(async () => {
   const result = await runJiraSync(true);
 
   if (result.ok) {
-    revalidateOccupancy();
-    revalidatePath("/not-tracked");
-    revalidatePath("/", "layout");
+    await notifyJiraSync({
+      lastSyncAt: new Date().toISOString(),
+      issueCount: result.issueCount ?? 0,
+      claimed: result.claimed ?? 0,
+      released: result.released ?? 0,
+      skippedCount: result.skippedCount ?? 0,
+    });
   }
 
   return Response.json(result);

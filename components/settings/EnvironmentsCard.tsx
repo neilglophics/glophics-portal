@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { realtimeHeaders } from "@/lib/realtime/client";
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Field, FormError, Select } from "@/components/ui/Form";
@@ -122,7 +123,7 @@ function EnvDialog({
 
     const res = await fetch(env ? `/api/servers/${encodeURIComponent(env.id)}` : "/api/servers", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { ...realtimeHeaders(), "Content-Type": "application/json" },
       body: JSON.stringify({ name, accountId, repoUrls: urls }),
     }).catch(() => null);
 
@@ -136,7 +137,7 @@ function EnvDialog({
 
     // A ticket for this exact account+branch may already be sitting in Jira —
     // ask for a sync now rather than waiting for the next scheduled pass.
-    await fetch("/api/jira/sync-now", { method: "POST" }).catch(() => {});
+    await fetch("/api/jira/sync-now", { method: "POST", headers: realtimeHeaders() }).catch(() => {});
     setPending(false);
     onDone();
   }
@@ -229,7 +230,7 @@ function RemoveEnvDialog({
     setError(null);
     setPending(true);
 
-    const res = await fetch(`/api/servers/${encodeURIComponent(env.id)}`, { method: "DELETE" }).catch(
+    const res = await fetch(`/api/servers/${encodeURIComponent(env.id)}`, { method: "DELETE", headers: realtimeHeaders() }).catch(
       () => null,
     );
     const data = (await res?.json().catch(() => ({}))) as { ok?: boolean; errors?: string[] };

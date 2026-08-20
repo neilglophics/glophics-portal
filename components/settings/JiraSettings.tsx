@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { realtimeHeaders } from "@/lib/realtime/client";
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Chip } from "@/components/ui/Chips";
@@ -40,7 +41,7 @@ export function JiraSettings({
 
     const res = await fetch("/api/settings", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { ...realtimeHeaders(), "Content-Type": "application/json" },
       body: JSON.stringify({ jira: patch }),
     }).catch(() => null);
 
@@ -57,7 +58,7 @@ export function JiraSettings({
   async function test() {
     setTestResult(null);
     setBusy("test");
-    const res = await fetch("/api/jira/test", { method: "POST" }).catch(() => null);
+    const res = await fetch("/api/jira/test", { method: "POST", headers: realtimeHeaders() }).catch(() => null);
     const data = (await res?.json().catch(() => ({}))) as {
       ok?: boolean;
       error?: string;
@@ -69,7 +70,7 @@ export function JiraSettings({
 
   async function syncNow() {
     setBusy("sync");
-    await fetch("/api/jira/sync-now", { method: "POST" }).catch(() => {});
+    await fetch("/api/jira/sync-now", { method: "POST", headers: realtimeHeaders() }).catch(() => {});
     setBusy(null);
     router.refresh();
   }

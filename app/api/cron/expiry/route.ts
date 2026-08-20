@@ -2,7 +2,7 @@ import { withApi } from "@/lib/auth/require";
 import { requireCron } from "@/lib/cron";
 import { getSettings } from "@/lib/db/queries/board";
 import { releaseExpiredClaims } from "@/lib/db/queries/claims";
-import { revalidateOccupancy } from "@/lib/revalidate";
+import { notifyOccupancy } from "@/lib/revalidate";
 
 export const runtime = "nodejs";
 
@@ -20,7 +20,7 @@ export const GET = withApi(async (req: Request) => {
   const settings = await getSettings();
   const released = await releaseExpiredClaims(settings);
 
-  if (released) revalidateOccupancy();
+  if (released) await notifyOccupancy("claims.expired", { count: released });
 
   return Response.json({ ok: true, released, mode: settings.onExpiry });
 });

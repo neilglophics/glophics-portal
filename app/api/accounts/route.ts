@@ -1,6 +1,7 @@
 import { readJson, requireUser, withApi } from "@/lib/auth/require";
 import { createAccount, type AccountInput } from "@/lib/db/queries/config";
-import { revalidateConfig } from "@/lib/revalidate";
+import { notifyConfig } from "@/lib/revalidate";
+import { socketIdFrom } from "@/lib/realtime/server";
 
 export const runtime = "nodejs";
 
@@ -22,6 +23,6 @@ export const POST = withApi(async (req: Request) => {
 
   if (!result.ok) return Response.json({ ok: false, errors: result.errors }, { status: 400 });
 
-  revalidateConfig();
+  await notifyConfig("account.changed", { accountId: result.value.id }, { socketId: socketIdFrom(req) });
   return Response.json({ ok: true, id: result.value.id });
 });
