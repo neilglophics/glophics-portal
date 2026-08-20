@@ -4,37 +4,33 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/ui/Avatar";
 import { Icon } from "@/components/ui/Icon";
-import { roleLabel } from "@/lib/shared/roles";
 import { useIsOnline } from "@/components/providers/PresenceProvider";
-import { ChangePasswordDialog } from "./ChangePasswordDialog";
+import { roleLabel } from "@/lib/shared/roles";
 import { AvatarDialog } from "./AvatarDialog";
+import { ChangePasswordDialog } from "./ChangePasswordDialog";
 import type { AuthUser } from "@/lib/types";
 
-/**
- * The signed-in account dropdown. Ported from Shell.renderAccountMenu.
- *
- * Closes on an outside click and on Escape. The legacy version needed a
- * capture-phase listener to avoid closing itself in the same gesture that opened
- * it — that problem was an artifact of re-rendering the button out from under the
- * click, which React does not do here, so a plain listener is enough.
- */
-export function AccountMenu({ user, avatarUrl }: { user: AuthUser; avatarUrl: string | null }) {
+export function AccountMenu({ user, avatar_url }: { user: AuthUser; avatar_url: string | null }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [passwordOpen, setPasswordOpen] = useState(false);
-  const [avatarOpen, setAvatarOpen] = useState(false);
-  const [signingOut, setSigningOut] = useState(false);
-  const hostRef = useRef<HTMLDivElement>(null);
+  const [password_open, setPasswordOpen] = useState(false);
+  const [avatar_open, setAvatarOpen] = useState(false);
+  const [signing_out, setSigningOut] = useState(false);
+  const host_ref = useRef<HTMLDivElement>(null);
+  const trigger_ref = useRef<HTMLButtonElement>(null);
   const online = useIsOnline(user.id);
 
   useEffect(() => {
     if (!open) return;
 
     function onPointerDown(event: MouseEvent) {
-      if (!hostRef.current?.contains(event.target as Node)) setOpen(false);
+      if (!host_ref.current?.contains(event.target as Node)) setOpen(false);
     }
+
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      trigger_ref.current?.focus();
     }
 
     document.addEventListener("mousedown", onPointerDown);
@@ -48,26 +44,31 @@ export function AccountMenu({ user, avatarUrl }: { user: AuthUser; avatarUrl: st
   async function signOut() {
     setSigningOut(true);
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
-    // A full navigation, not router.push: it drops every cached Server Component
-    // payload along with the session, so nothing from the signed-in board can be
-    // read out of the router cache afterwards.
     window.location.href = "/login";
   }
 
   return (
     <>
-      <div className="relative shrink-0" ref={hostRef}>
+      <div className="relative shrink-0" ref={host_ref}>
         <button
+          ref={trigger_ref}
           type="button"
           aria-haspopup="menu"
           aria-expanded={open}
-          onClick={() => setOpen((v) => !v)}
-          className="flex shrink-0 items-center gap-3 rounded-full pl-0 pr-1 transition hover:opacity-80"
+          aria-label={`${open ? "Close" : "Open"} account menu for ${user.displayName}`}
+          onClick={() => setOpen((value) => !value)}
+          className="flex items-center gap-2 rounded-full p-0.5 transition hover:bg-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
         >
-          <Avatar person={{ id: user.id, name: user.displayName, avatarUrl }} size="h-10 w-10" online={online} />
-          <span className="hidden text-left lg:block">
-            <span className="block text-sm font-semibold leading-tight">{user.displayName}</span>
-            <span className="block text-[10px] font-semibold uppercase tracking-wide text-faint">
+          <Avatar
+            person={{ id: user.id, name: user.displayName, avatarUrl: avatar_url }}
+            size="h-10 w-10"
+            online={online}
+          />
+          <span className="hidden pr-2 text-left xl:block">
+            <span className="block max-w-32 truncate text-xs font-bold leading-tight text-ink-2">
+              {user.displayName}
+            </span>
+            <span className="mt-0.5 block text-[9px] font-semibold uppercase tracking-[0.1em] text-faint">
               {roleLabel(user.role)}
             </span>
           </span>
@@ -76,20 +77,22 @@ export function AccountMenu({ user, avatarUrl }: { user: AuthUser; avatarUrl: st
         {open ? (
           <div
             role="menu"
-            className="absolute right-0 top-full z-40 mt-2 w-56 rounded-2xl bg-surface p-2 shadow-xl ring-1 ring-line"
+            className="absolute right-0 top-full z-50 mt-2 w-60 overflow-hidden rounded-2xl bg-surface shadow-[0_20px_60px_rgba(0,0,0,0.18)] ring-1 ring-line-2"
           >
-            <div className="border-b border-line px-3 pb-2.5 pt-1.5">
-              <p className="truncate text-sm font-semibold">{user.displayName}</p>
-              <p className="truncate text-[11px] text-faint">@{user.username}</p>
+            <div className="border-b border-line bg-panel px-4 py-3">
+              <p className="truncate text-sm font-bold text-ink">{user.displayName}</p>
+              <p className="mt-0.5 truncate text-[11px] text-faint">
+                @{user.username} · {roleLabel(user.role)}
+              </p>
             </div>
-            <div className="pt-1.5">
+            <div className="p-2">
               <button
                 type="button"
                 onClick={() => {
                   setOpen(false);
                   setAvatarOpen(true);
                 }}
-                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-body transition hover:bg-subtle hover:text-ink"
+                className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs font-semibold text-body transition hover:bg-subtle hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
               >
                 <Icon name="users" className="h-3.5 w-3.5 shrink-0 text-faint" />
                 Profile picture
@@ -100,35 +103,38 @@ export function AccountMenu({ user, avatarUrl }: { user: AuthUser; avatarUrl: st
                   setOpen(false);
                   setPasswordOpen(true);
                 }}
-                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-body transition hover:bg-subtle hover:text-ink"
+                className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs font-semibold text-body transition hover:bg-subtle hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
               >
                 <Icon name="key" className="h-3.5 w-3.5 shrink-0 text-faint" />
                 Change password
               </button>
               <button
                 type="button"
-                disabled={signingOut}
+                disabled={signing_out}
                 onClick={signOut}
-                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-body transition hover:bg-subtle hover:text-ink disabled:opacity-50"
+                className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs font-semibold text-body transition hover:bg-bad-soft hover:text-bad focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:opacity-50"
               >
                 <Icon name="logout" className="h-3.5 w-3.5 shrink-0 text-faint" />
-                {signingOut ? "Signing out…" : "Sign out"}
+                {signing_out ? "Signing out…" : "Sign out"}
               </button>
             </div>
           </div>
         ) : null}
       </div>
 
-      {avatarOpen ? (
+      {avatar_open ? (
         <AvatarDialog
           user={user}
-          currentUrl={avatarUrl}
+          currentUrl={avatar_url}
           onClose={() => setAvatarOpen(false)}
-          onDone={() => router.refresh()}
+          onDone={() => {
+            setAvatarOpen(false);
+            router.refresh();
+          }}
         />
       ) : null}
 
-      {passwordOpen ? (
+      {password_open ? (
         <ChangePasswordDialog
           onClose={() => setPasswordOpen(false)}
           onDone={() => {

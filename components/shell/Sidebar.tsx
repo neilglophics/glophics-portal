@@ -1,11 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { useIsOnline } from "@/components/providers/PresenceProvider";
+import { Avatar } from "@/components/ui/Avatar";
 import { Icon } from "@/components/ui/Icon";
 import { BADGE_TONES, GROUP_LABELS, NAV, type NavCounts, type NavGroup, type NavItem } from "@/lib/shared/nav";
-import { roleCan } from "@/lib/shared/roles";
-import type { EnvStatus, RoleId } from "@/lib/types";
+import { roleCan, roleLabel } from "@/lib/shared/roles";
+import { AvatarDialog } from "./AvatarDialog";
+import { ChangePasswordDialog } from "./ChangePasswordDialog";
+import type { AuthUser, EnvStatus } from "@/lib/types";
 
 /**
  * Sidebar navigation and the per-account list.
@@ -35,10 +40,21 @@ function Badge({ item, counts }: { item: NavItem; counts: NavCounts }) {
   );
 }
 
-function NavLink({ item, counts, active }: { item: NavItem; counts: NavCounts; active: boolean }) {
+function NavLink({
+  item,
+  counts,
+  active,
+  onNavigate,
+}: {
+  item: NavItem;
+  counts: NavCounts;
+  active: boolean;
+  onNavigate?: () => void;
+}) {
   return (
     <Link
       href={item.href}
+      onClick={onNavigate}
       className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
         active
           ? "bg-brand-soft font-semibold text-brand-fg"
@@ -53,18 +69,56 @@ function NavLink({ item, counts, active }: { item: NavItem; counts: NavCounts; a
 }
 
 export function Sidebar({
-  role,
+  user,
+  avatar_url,
   counts,
   accounts,
 }: {
-  role: RoleId;
+  user: AuthUser;
+  avatar_url: string | null;
   counts: NavCounts;
   accounts: AccountRollup[];
 }) {
+  const router = useRouter();
   const pathname = usePathname();
-  const visible = NAV.filter((item) => !item.requires || roleCan(role, item.requires));
+  const visible = NAV.filter((item) => !item.requires || roleCan(user.role, item.requires));
+  const online = useIsOnline(user.id);
+  const [user_menu_open, setUserMenuOpen] = useState(false);
+  const [avatar_open, setAvatarOpen] = useState(false);
+  const [password_open, setPasswordOpen] = useState(false);
+  const [signing_out, setSigningOut] = useState(false);
+  const user_menu_ref = useRef<HTMLDivElement>(null);
+  const user_menu_trigger_ref = useRef<HTMLButtonElement>(null);
 
-  const groups: NavGroup[] = ["overview", "activity", "settings"];
+  const groups: NavGroup[] = ["overview", "activity"];
+  const footer_items = visible.filter((item) => item.group === "settings");
+
+  useEffect(() => {
+    if (!user_menu_open) return;
+
+    function onPointerDown(event: MouseEvent) {
+      if (!user_menu_ref.current?.contains(event.target as Node)) setUserMenuOpen(false);
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setUserMenuOpen(false);
+      user_menu_trigger_ref.current?.focus();
+    }
+
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [user_menu_open]);
+
+  async function signOut() {
+    setSigningOut(true);
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    window.location.href = "/login";
+  }
 
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col border-r border-line bg-canvas">
@@ -130,6 +184,121 @@ export function Sidebar({
           )}
         </div>
       </div>
+
+      <div className="relative shrink-0 border-t border-line p-3" ref={user_menu_ref}>
+        {user_menu_open ? (
+          <div
+            id="sidebar-user-navigation"
+            role="menu"
+            className="absolute bottom-full left-3 right-3 z-50 mb-2 overflow-hidden rounded-2xl bg-surface shadow-[0_20px_60px_rgba(0,0,0,0.2)] ring-1 ring-line-2"
+          >
+            <div className="border-b border-line bg-panel px-4 py-3">
+              <p className="truncate text-sm font-bold text-ink">{user.displayName}</p>
+              <p className="mt-0.5 truncate text-[11px] text-faint">
+                @{user.username} · {roleLabel(user.role)}
+              </p>
+            </div>
+
+            {footer_items.length ? (
+              <nav aria-label="User and settings" className="space-y-0.5 border-b border-line p-2">
+                {footer_items.map((item) => (
+                  <NavLink
+                    key={item.href}
+                    item={item}
+                    counts={counts}
+                    active={pathname === item.href || pathname.startsWith(`${item.href}/`)}
+                    onNavigate={() => setUserMenuOpen(false)}
+                  />
+                ))}
+              </nav>
+            ) : null}
+
+            <div className="p-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setUserMenuOpen(false);
+                  setAvatarOpen(true);
+                }}
+                className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs font-semibold text-body transition hover:bg-subtle hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              >
+                <Icon name="users" className="h-3.5 w-3.5 shrink-0 text-faint" />
+                Profile picture
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setUserMenuOpen(false);
+                  setPasswordOpen(true);
+                }}
+                className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs font-semibold text-body transition hover:bg-subtle hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              >
+                <Icon name="key" className="h-3.5 w-3.5 shrink-0 text-faint" />
+                Change password
+              </button>
+              <button
+                type="button"
+                disabled={signing_out}
+                onClick={signOut}
+                className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs font-semibold text-body transition hover:bg-bad-soft hover:text-bad focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:opacity-50"
+              >
+                <Icon name="logout" className="h-3.5 w-3.5 shrink-0 text-faint" />
+                {signing_out ? "Signing out…" : "Sign out"}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        <button
+          ref={user_menu_trigger_ref}
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={user_menu_open}
+          aria-controls="sidebar-user-navigation"
+          onClick={() => setUserMenuOpen((value) => !value)}
+          className="flex w-full items-center gap-2.5 rounded-xl px-2 py-2 text-left transition hover:bg-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+        >
+          <Avatar
+            person={{ id: user.id, name: user.displayName, avatarUrl: avatar_url }}
+            size="h-9 w-9"
+            online={online}
+          />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-xs font-bold leading-tight text-ink-2">{user.displayName}</span>
+            <span className="mt-0.5 block truncate text-[9px] font-semibold uppercase tracking-[0.1em] text-faint">
+              {roleLabel(user.role)}
+            </span>
+          </span>
+          <Icon
+            name="chevron"
+            className={`h-3.5 w-3.5 shrink-0 text-faint transition-transform ${
+              user_menu_open ? "-rotate-90" : "rotate-90"
+            }`}
+          />
+        </button>
+      </div>
+
+      {avatar_open ? (
+        <AvatarDialog
+          user={user}
+          currentUrl={avatar_url}
+          onClose={() => setAvatarOpen(false)}
+          onDone={() => {
+            setAvatarOpen(false);
+            router.refresh();
+          }}
+        />
+      ) : null}
+
+      {password_open ? (
+        <ChangePasswordDialog
+          onClose={() => setPasswordOpen(false)}
+          onDone={() => {
+            setPasswordOpen(false);
+            router.refresh();
+          }}
+        />
+      ) : null}
     </aside>
   );
 }

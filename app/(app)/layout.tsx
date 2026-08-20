@@ -37,8 +37,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     // Skipped entirely for a role without `chat`: there is no badge to show, and
     // counting would be a query answering a question nobody asked.
     roleCan(user.role, "chat") ? totalUnread(user.id) : Promise.resolve(0),
-    // One query for everyone's avatar version, rather than one per face — the
-    // version is what lets the image URL be cached hard and still update.
     avatarVersions(),
   ]);
 
@@ -83,23 +81,28 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <PusherProvider userId={user.id}>
       {/* Inside PusherProvider, because it shares the one connection. */}
       <PresenceProvider canChat={roleCan(user.role, "chat")}>
-      <div className="flex h-full">
-        <Sidebar role={user.role} counts={counts} accounts={rollups} />
+        <div className="flex h-full">
+          <Sidebar
+            user={user}
+            avatar_url={avatarUrl(user.id, avatars)}
+            counts={counts}
+            accounts={rollups}
+          />
 
-        <div className="flex min-w-0 flex-1 flex-col bg-panel">
-          {/* useSearchParams needs a Suspense boundary above it. */}
-          <Suspense fallback={<div className="h-14 shrink-0 border-b border-line bg-panel" />}>
-            <Topbar
-              user={user}
-              avatarUrl={avatarUrl(user.id, avatars)}
-              jiraEnabled={settings.jira.enabled}
-              lastSyncAt={syncState.lastSyncAt}
-            />
-          </Suspense>
+          <div className="flex min-w-0 flex-1 flex-col bg-panel">
+            {/* useSearchParams needs a Suspense boundary above it. */}
+            <Suspense fallback={<div className="h-14 shrink-0 border-b border-line bg-panel" />}>
+              <Topbar
+                user={user}
+                avatar_url={avatarUrl(user.id, avatars)}
+                jiraEnabled={settings.jira.enabled}
+                lastSyncAt={syncState.lastSyncAt}
+              />
+            </Suspense>
 
-          <main className="no-scrollbar min-h-0 flex-1 overflow-y-auto pt-5">{children}</main>
+            <main className="no-scrollbar min-h-0 flex-1 overflow-y-auto pt-5">{children}</main>
+          </div>
         </div>
-      </div>
       </PresenceProvider>
     </PusherProvider>
   );

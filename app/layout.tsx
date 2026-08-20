@@ -33,14 +33,15 @@ try {
   if (palette === "custom") {
     var stored = JSON.parse(localStorage.getItem("serverManager.customThemeTokens") || "null");
     var tokens = stored && stored[dark ? "dark" : "light"];
-    if (!tokens) {
+    var entries = tokens && Object.keys(tokens);
+    var valid = entries && entries.length > 20 && entries.every(function (property) {
+      return property.indexOf("--color-") === 0 && /^#[0-9a-f]{6}$/i.test(tokens[property]);
+    });
+    if (!valid) {
       document.documentElement.dataset.theme = "violet";
     } else {
-      Object.keys(tokens).forEach(function (property) {
-        var value = tokens[property];
-        if (property.indexOf("--color-") === 0 && /^#[0-9a-f]{6}$/i.test(value)) {
-          document.documentElement.style.setProperty(property, value);
-        }
+      entries.forEach(function (property) {
+        document.documentElement.style.setProperty(property, tokens[property]);
       });
     }
   }

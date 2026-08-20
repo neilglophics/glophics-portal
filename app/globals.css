@@ -65,6 +65,8 @@
   --color-alt-soft: #eeeeee;
   --color-secondary: #3d3d3d;
   --color-secondary-soft: #eeeeee;
+  --color-tertiary: #007f6d;
+  --color-tertiary-soft: #effbf8;
   --color-brand-fg: #007f6d;
   --color-brand-soft: #effbf8;
   --color-neutral: #646b69;
@@ -116,6 +118,8 @@ html.dark {
   --color-alt-soft: #292b2b;
   --color-secondary: #d1d2d3;
   --color-secondary-soft: #292b2b;
+  --color-tertiary: #54cfba;
+  --color-tertiary-soft: #0b2923;
   --color-brand-fg: #54cfba;
   --color-brand-soft: #0b2923;
   --color-neutral: #929f9a;
@@ -256,4 +260,15 @@ html {
 }
 html.dark {
   color-scheme: dark;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

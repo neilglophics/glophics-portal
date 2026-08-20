@@ -151,7 +151,6 @@ function HeldCard({ row }: { row: EnvRow }) {
   );
 }
 
-<<<<<<< HEAD
 /** One row of the Latest Jira updates panel — Ticket (+ activity badge and
  *  message), Assignee, Status, Branch, Repos. */
 function JiraUpdateRow({
@@ -206,16 +205,11 @@ function JiraUpdateRow({
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<Search> }) {
   const search = await searchParams;
-  const [{ accounts, environments, claims, directory }, issues, user] = await Promise.all([
+  const [{ accounts, environments, claims, directory }, issues, user, avatars] = await Promise.all([
     getBoard(),
     getJiraIssues(),
     currentUserOrNull(),
-=======
-export default async function DashboardPage() {
-  const [{ accounts, environments, claims, directory }, avatars] = await Promise.all([
-    getBoard(),
     avatarVersions(),
->>>>>>> ab53915d99a23ee162ace7f28e721abda4b66974
   ]);
 
   const summary = boardSummary(environments, claims);
@@ -227,21 +221,16 @@ export default async function DashboardPage() {
     .sort((a, b) => nullsLast(minutesLeft(a.soonest ?? {})) - nullsLast(minutesLeft(b.soonest ?? {})))
     .slice(0, 3);
 
-<<<<<<< HEAD
-  const tickets = claimRows(environments, accounts, claims, directory);
+  const tickets = claimRows(environments, accounts, claims, directory, avatars);
   const active = paginate(tickets, search.activePage);
 
   // Every Jira-sourced ticket touched recently, holding a repository or not —
   // most recently updated first. Nothing here is a diff against a previous
   // sync (see lib/shared/activity.ts); it's just recency.
-  const jiraUpdates = [...tickets, ...boardRows(issues, environments, accounts, directory)]
+  const jiraUpdates = [...tickets, ...boardRows(issues, environments, accounts, directory, avatars)]
     .filter((r) => r.claim.source === "jira" && r.claim.jiraUpdatedAt)
     .sort((a, b) => new Date(b.claim.jiraUpdatedAt!).getTime() - new Date(a.claim.jiraUpdatedAt!).getTime());
   const updates = paginate(jiraUpdates, search.updatesPage);
-=======
-  const tickets = claimRows(environments, accounts, claims, directory, avatars);
-  const topTickets = tickets.slice(0, 5);
->>>>>>> ab53915d99a23ee162ace7f28e721abda4b66974
 
   const repoOffline = environments.reduce(
     (n, env) => n + env.repos.filter((r) => r.health === "offline").length,
