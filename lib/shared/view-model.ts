@@ -303,3 +303,54 @@ export function boardRows(
         nullsLast(a.minutesLeft) - nullsLast(b.minutesLeft) || a.claim.id.localeCompare(b.claim.id),
     );
 }
+
+// ---------- filtering ----------
+
+export interface EnvFilters {
+  status?: string;
+  account?: string;
+  q?: string;
+  /** Only environments held by the signed-in person. */
+  mine?: boolean;
+}
+
+/**
+ * Ported from State.getFilteredServers(). The haystack is deliberately wide —
+ * people search for a ticket key, a repo URL or a colleague's name as readily as
+ * for an environment name, and the legacy version searched all of them.
+ */
+export function filterEnvRows(
+  rows: EnvRow[],
+  filters: EnvFilters,
+  mineIds?: Set<string>,
+): EnvRow[] {
+  const search = (filters.q ?? "").trim().toLowerCase();
+
+  return rows.filter((row) => {
+    if (filters.status && filters.status !== "all" && row.state !== filters.status) return false;
+    if (filters.account && filters.account !== "all" && row.accountId !== filters.account) return false;
+    if (filters.mine && mineIds && !row.claims.some((c) => mineIds.has(c.id))) return false;
+
+    if (!search) return true;
+
+    const haystack = [
+      row.name,
+      row.accountName,
+      row.repos.map((r) => `${r.repoName} ${r.url}`).join(" "),
+      row.repos.map((r) => r.note ?? "").join(" "),
+      row.people.map((p) => p.name).join(" "),
+      row.ticketIds.join(" "),
+      row.claims.map((c) => c.summary ?? "").join(" "),
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    return haystack.includes(search);
+  });
+}
+
+export function statusCounts(rows: EnvRow[]): Record<EnvStatus, number> {
+  const counts: Record<EnvStatus, number> = { free: 0, partial: 0, inuse: 0, issue: 0 };
+  for (const row of rows) counts[row.state] += 1;
+  return counts;
+}
