@@ -73,8 +73,29 @@ export interface UserEvents {
    */
   "session.revoked": Record<string, never>;
 
-  /** Phase 12. Declared now so the client contract is stable. */
-  "unread.changed": { conversationId: string; unreadCount: number };
+  /**
+   * Something arrived for this person.
+   *
+   * Carries enough to render a toast without a fetch — who sent it, a snippet,
+   * and the title as THIS recipient sees it (for a DM that is the sender's name,
+   * for a group the group's). `totalUnread` is the whole-app figure so the nav
+   * badge can be set directly rather than recomputed.
+   *
+   * The snippet is message content on a per-user channel. That is the same
+   * exposure `message.new` already carries and no worse — this channel is only
+   * subscribable by its own user — but it is the same open question either way
+   * (docs/06-OPEN-QUESTIONS.md Q7).
+   */
+  "unread.changed": {
+    conversationId: string;
+    conversationTitle: string;
+    senderName: string | null;
+    preview: string;
+    /** Unread in this conversation. */
+    unreadCount: number;
+    /** Unread across every conversation — what the nav badge shows. */
+    totalUnread: number;
+  };
   "conversation.added": { conversationId: string };
 }
 

@@ -34,11 +34,25 @@ import { getPusher, realtimeEnabled, type ConnectionState } from "@/lib/realtime
 interface RealtimeContextValue {
   state: ConnectionState;
   enabled: boolean;
+  /**
+   * A subscription was refused.
+   *
+   * Tracked separately from `state` because the two fail independently, and
+   * conflating them made a real misconfiguration invisible: the app key is
+   * public and valid for CONNECTING, so the socket opens and the state becomes
+   * "connected" even when PUSHER_SECRET is wrong. Every subscription is then
+   * rejected by Pusher's edge and nothing is delivered — while the indicator
+   * cheerfully said "Live".
+   *
+   * Run "npm run verify:pusher" when this is set; a bad secret is the usual cause.
+   */
+  subscriptionFailed: boolean;
 }
 
 const RealtimeContext = createContext<RealtimeContextValue>({
   state: "initialized",
   enabled: false,
+  subscriptionFailed: false,
 });
 
 export function useRealtime(): RealtimeContextValue {
@@ -52,6 +66,7 @@ export function PusherProvider({ userId, children }: { userId: string; children:
   const router = useRouter();
   const enabled = realtimeEnabled();
   const [state, setState] = useState<ConnectionState>(enabled ? "connecting" : "initialized");
+  const [subscriptionFailed, setSubscriptionFailed] = useState(false);
 
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // A first `connected` needs no catch-up: the page was just rendered by the
@@ -87,6 +102,21 @@ export function PusherProvider({ userId, children }: { userId: string; children:
     const board = pusher.subscribe(BOARD_CHANNEL);
     for (const event of BOARD_EVENT_NAMES) board.bind(event, scheduleRefresh);
 
+    // The board channel is the canary: every signed-in role may subscribe to it,
+    // so a refusal here is a configuration fault rather than a permission one.
+    const onSubError = (err: unknown) => {
+      console.error(
+        '[realtime] subscription refused — run "npm run verify:pusher". ' +
+          "A PUSHER_SECRET that is really the app key is the usual cause.",
+        err,
+      );
+      setSubscriptionFailed(true);
+    };
+    const onSubOk = () => setSubscriptionFailed(false);
+
+    board.bind("pusher:subscription_error", onSubError);
+    board.bind("pusher:subscription_succeeded", onSubOk);
+
     const mine = pusher.subscribe(userChannel(userId));
     mine.bind("session.revoked", () => {
       // A full navigation, not router.push: it drops every cached Server
@@ -99,6 +129,8 @@ export function PusherProvider({ userId, children }: { userId: string; children:
 
     return () => {
       pusher.connection.unbind("state_change", onState);
+      board.unbind("pusher:subscription_error", onSubError);
+      board.unbind("pusher:subscription_succeeded", onSubOk);
       for (const event of BOARD_EVENT_NAMES) board.unbind(event, scheduleRefresh);
       // Unsubscribe, but deliberately do NOT disconnect: the client is a
       // module-level singleton shared across navigations, and tearing the
@@ -109,7 +141,10 @@ export function PusherProvider({ userId, children }: { userId: string; children:
     };
   }, [enabled, userId, scheduleRefresh]);
 
-  const value = useMemo(() => ({ state, enabled }), [state, enabled]);
+  const value = useMemo(
+    () => ({ state, enabled, subscriptionFailed }),
+    [state, enabled, subscriptionFailed],
+  );
 
   return <RealtimeContext.Provider value={value}>{children}</RealtimeContext.Provider>;
 }

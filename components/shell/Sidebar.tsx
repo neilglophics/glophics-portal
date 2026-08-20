@@ -11,6 +11,7 @@ import { roleCan, roleLabel } from "@/lib/shared/roles";
 import { AvatarDialog } from "./AvatarDialog";
 import { ChangePasswordDialog } from "./ChangePasswordDialog";
 import type { AuthUser, EnvStatus } from "@/lib/types";
+import { useUnread } from "@/components/providers/UnreadProvider";
 
 /**
  * Sidebar navigation and the per-account list.
@@ -28,9 +29,11 @@ export interface AccountRollup {
   worst: EnvStatus;
 }
 
-function Badge({ item, counts }: { item: NavItem; counts: NavCounts }) {
+function Badge({ item, counts, liveUnread }: { item: NavItem; counts: NavCounts; liveUnread: number }) {
   if (!item.badge) return null;
-  const count = counts[item.badge];
+  // The chat badge is the one count that must change the instant an event lands,
+  // rather than on the next server render. Everything else is fine server-side.
+  const count = item.badge === "unreadChats" ? liveUnread : counts[item.badge];
   if (!count) return null;
 
   return (
@@ -45,11 +48,13 @@ function NavLink({
   counts,
   active,
   onNavigate,
+  liveUnread,
 }: {
   item: NavItem;
   counts: NavCounts;
   active: boolean;
   onNavigate?: () => void;
+  liveUnread: number;
 }) {
   return (
     <Link
@@ -63,7 +68,7 @@ function NavLink({
     >
       <Icon name={item.icon} className="h-4.5 w-4.5 shrink-0" />
       <span className="flex-1">{item.label}</span>
-      <Badge item={item} counts={counts} />
+      <Badge item={item} counts={counts} liveUnread={liveUnread} />
     </Link>
   );
 }
@@ -89,6 +94,7 @@ export function Sidebar({
   const [signing_out, setSigningOut] = useState(false);
   const user_menu_ref = useRef<HTMLDivElement>(null);
   const user_menu_trigger_ref = useRef<HTMLButtonElement>(null);
+  const { total: liveUnread } = useUnread();
 
   const groups: NavGroup[] = ["overview", "activity"];
   const footer_items = visible.filter((item) => item.group === "settings");
@@ -150,6 +156,7 @@ export function Sidebar({
                     // startsWith so a detail route keeps its parent highlighted,
                     // but guarded so /health never lights up /health-something.
                     active={pathname === item.href || pathname.startsWith(`${item.href}/`)}
+                    liveUnread={liveUnread}
                   />
                 ))}
               </nav>
@@ -208,6 +215,7 @@ export function Sidebar({
                     counts={counts}
                     active={pathname === item.href || pathname.startsWith(`${item.href}/`)}
                     onNavigate={() => setUserMenuOpen(false)}
+                    liveUnread={liveUnread}
                   />
                 ))}
               </nav>

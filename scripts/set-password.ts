@@ -32,6 +32,7 @@ function usage(): never {
   console.log("usage:");
   console.log("  npm run auth:list");
   console.log("  npm run auth:set-password -- <username> <password>");
+  console.log("  npm run auth:unlock -- <username>          (or with no name, everyone)");
   process.exit(1);
 }
 
@@ -78,6 +79,31 @@ async function main() {
 
       console.log(`  ${bits.join("  ")}`);
     }
+    return;
+  }
+
+  /**
+   * Clears the failed-attempt counter.
+   *
+   * The lockout is the app's only brute-force defence, so it is deliberately not
+   * something the UI can waive — but locking out the one super admin who could
+   * fix anything is a corner nobody should have to wait ten minutes out of. This
+   * is the same escape hatch set-password is: reachable when the app itself
+   * cannot help, because signing in is exactly what you cannot do.
+   */
+  if (command === "unlock") {
+    const name = rest[0] ? rest[0].trim().toLowerCase() : null;
+
+    const cleared = (await (name
+      ? sql`DELETE FROM auth_login_attempts WHERE username = ${name} RETURNING username`
+      : sql`DELETE FROM auth_login_attempts RETURNING username`)) as { username: string }[];
+
+    if (!cleared.length) {
+      console.log(name ? `"${name}" was not locked.` : "Nobody was locked.");
+      return;
+    }
+    console.log(`Cleared: ${cleared.map((r) => r.username).join(", ")}`);
+    console.log("Those accounts can try again immediately.");
     return;
   }
 
