@@ -10,16 +10,16 @@ const Tokens = (() => {
 
   // Derived environment status, from State.getDisplayStatus().
   const ENV_STATE = {
-    free:    { label: "Free",        chip: "bg-ok-soft text-ok", dot: "bg-emerald-500", bar: "bg-emerald-500", tone: "ok" },
+    free:    { label: "Free",        chip: "bg-ok-soft text-ok", dot: "bg-ok", bar: "bg-ok", tone: "ok" },
     partial: { label: "Partly free", chip: "bg-brand-soft text-brand-fg",     dot: "bg-brand-500",   bar: "bg-brand-500",   tone: "brand"   },
-    inuse:   { label: "In use",      chip: "bg-warn-soft text-warn",     dot: "bg-amber-500",   bar: "bg-amber-500",   tone: "warn"   },
-    issue:   { label: "Server down", chip: "bg-bad-soft text-bad",       dot: "bg-rose-500",    bar: "bg-rose-500",    tone: "bad"    }
+    inuse:   { label: "In use",      chip: "bg-warn-soft text-warn",     dot: "bg-warn",   bar: "bg-warn",   tone: "warn"   },
+    issue:   { label: "Server down", chip: "bg-bad-soft text-bad",       dot: "bg-bad",    bar: "bg-bad",    tone: "bad"    }
   };
 
   // Per-repo reachability, from server.repos[name].health.
   const HEALTH = {
-    online:       { label: "Online",         chip: "bg-ok-soft text-ok", dot: "bg-emerald-500" },
-    offline:      { label: "Offline",        chip: "bg-bad-soft text-bad",       dot: "bg-rose-500"    },
+    online:       { label: "Online",         chip: "bg-ok-soft text-ok", dot: "bg-ok" },
+    offline:      { label: "Offline",        chip: "bg-bad-soft text-bad",       dot: "bg-bad"    },
     checking:     { label: "Checking",       chip: "bg-subtle-2 text-muted",    dot: "bg-faint"   },
     unconfigured: { label: "No URL set",     chip: "bg-subtle-2 text-muted",    dot: "bg-faintest"   }
   };
@@ -55,12 +55,12 @@ const Tokens = (() => {
   // Avatar colour is derived from the user id so a person keeps the same
   // colour everywhere, across reloads, without storing anything.
   const AVATAR_TONES = [
-    "bg-violet-100 text-alt",
-    "bg-blue-100 text-info",
+    "bg-alt-soft text-alt",
+    "bg-info-soft text-info",
     "bg-ok-soft text-ok",
     "bg-warn-soft text-warn",
     "bg-bad-soft text-bad",
-    "bg-teal-100 text-ok"
+    "bg-brand-soft text-brand-fg"
   ];
 
   function avatarTone(key) {

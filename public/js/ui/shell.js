@@ -71,7 +71,7 @@ const Shell = (() => {
         .filter((s) => s.accountId === account.id)
         .map((s) => State.getDisplayStatus(s));
       const free = rows.filter((s) => s === "free").length;
-      const dot = rows.includes("issue") ? "bg-rose-500" : free ? "bg-emerald-500" : "bg-amber-500";
+      const dot = rows.includes("issue") ? "bg-bad" : free ? "bg-ok" : "bg-warn";
       return `<a href="#environments" data-action="filter-account" data-id="${H.esc(account.id)}"
         class="flex items-center gap-3 rounded-xl px-3 py-2 transition hover:bg-subtle">
         <span class="h-2 w-2 shrink-0 rounded-full ${dot}"></span>
@@ -91,7 +91,7 @@ const Shell = (() => {
       : last ? `Synced ${Format.agoText(last)} ago`
       : "Not synced yet";
     el.innerHTML = `
-      <span class="h-2 w-2 shrink-0 rounded-full ${connected ? "bg-emerald-500" : "bg-faintest"}"></span>
+      <span class="h-2 w-2 shrink-0 rounded-full ${connected ? "bg-ok" : "bg-faintest"}"></span>
       <span class="hidden truncate sm:inline">${H.esc(connected ? label : "Local only")}</span>`;
     el.title = connected ? "Live — changes sync to everyone" : "No server connection; changes stay in this browser";
   }

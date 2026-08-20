@@ -71,7 +71,7 @@ Router.register(PAGE_ID, {
         ? `<span class="text-xs font-semibold text-brand-fg">${H.esc(row.ticketIds[0])}</span>`
         : `<span class="text-xs font-semibold text-body">${row.ticketIds.length} tickets</span>`) +
       H.td(`<p class="text-sm font-semibold ${urgent ? "text-warn" : "text-body"}">${H.esc(Model.leftText(minutes))}</p>
-            ${row.soonest ? `<div class="mt-1.5 w-20">${H.bar(Model.progress(row.soonest), urgent ? "bg-amber-500" : "bg-brand-500")}</div>` : ""}`) +
+            ${row.soonest ? `<div class="mt-1.5 w-20">${H.bar(Model.progress(row.soonest), urgent ? "bg-warn" : "bg-brand-500")}</div>` : ""}`) +
       H.td(H.btn("Force free", { variant: "danger", size: "sm",
         data: { "data-action": "force-free-server", "data-id": row.id } }), "text-right"),
       { "data-action": "toggle-env", "data-id": row.id },

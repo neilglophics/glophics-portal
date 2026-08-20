@@ -40,9 +40,9 @@ const EnvDetail = (() => {
         name: repoName,
         url: repo.url,
         state: repo.health === "offline" ? "offline" : !repo.url ? "no URL configured" : held ? "held" : "free",
-        cls: repo.health === "offline" ? "bg-rose-500/85 text-white"
+        cls: repo.health === "offline" ? "bg-bad-strong/85 text-white"
           : !repo.url ? "bg-line-2 text-muted"
-          : held ? "bg-amber-500/85 text-white" : "bg-emerald-500/85 text-white"
+          : held ? "bg-warn-strong/85 text-white" : "bg-ok-strong/85 text-white"
       })}
       <span class="truncate text-xs font-semibold capitalize text-body">${H.esc(repoName)}</span>
     </div>`;
