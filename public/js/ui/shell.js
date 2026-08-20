@@ -16,6 +16,13 @@ const Shell = (() => {
   // lives here so a repaint (a booking someone else made, say) doesn't
   // snap the menu shut under the pointer.
   let menuOpen = false;
+  let sidebar_minimized = false;
+
+  try {
+    sidebar_minimized = localStorage.getItem("serverManager.sidebarMinimized") === "true";
+  } catch (err) {
+    // Storage may be blocked; the expanded sidebar remains the safe default.
+  }
 
   const NAV = [
     { group: "overview", id: "dashboard",    label: "Dashboard",    icon: "grid" },
@@ -50,13 +57,24 @@ const Shell = (() => {
     const on = item.id === active;
     const count = item.badge ? item.badge(summary) : 0;
     const tone = BADGE_TONES[item.tone || "plain"];
-    return `<a href="#${item.id}"
-      class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
+    return `<a href="#${item.id}" title="${H.esc(item.label)}" data-sidebar-link
+      class="relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
         on ? "bg-brand-soft font-semibold text-brand-fg" : "font-medium text-muted hover:bg-subtle hover:text-ink"}">
       ${H.icon(item.icon, "h-4.5 w-4.5 shrink-0")}
-      <span class="flex-1">${H.esc(item.label)}</span>
-      ${count ? `<span class="rounded-full ${tone} px-2 py-0.5 text-[11px] font-bold">${count}</span>` : ""}
+      <span class="sidebar-label flex-1">${H.esc(item.label)}</span>
+      ${count ? `<span data-sidebar-badge class="rounded-full ${tone} px-2 py-0.5 text-[11px] font-bold">${count}</span>` : ""}
     </a>`;
+  }
+
+  function accountAlias(display_name) {
+    const words = String(display_name || "")
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (!words.length) return "?";
+    if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+    return words.slice(0, 3).map((word) => word[0]).join("").toUpperCase();
   }
 
   function renderAccounts() {
@@ -72,13 +90,39 @@ const Shell = (() => {
         .map((s) => State.getDisplayStatus(s));
       const free = rows.filter((s) => s === "free").length;
       const dot = rows.includes("issue") ? "bg-bad" : free ? "bg-ok" : "bg-warn";
+      const alias = accountAlias(account.displayName);
       return `<a href="#environments" data-action="filter-account" data-id="${H.esc(account.id)}"
+        data-sidebar-link data-sidebar-account title="${H.esc(`${account.displayName}: ${free} of ${rows.length} free`)}"
         class="flex items-center gap-3 rounded-xl px-3 py-2 transition hover:bg-subtle">
         <span class="h-2 w-2 shrink-0 rounded-full ${dot}"></span>
-        <span class="flex-1 truncate text-sm font-medium text-ink-2">${H.esc(account.displayName)}</span>
-        <span class="text-[11px] font-semibold text-faint">${free}/${rows.length}</span>
+        <span class="sidebar-account-alias text-[9px] font-bold tracking-tight text-ink-2" aria-hidden="true">${H.esc(alias)}</span>
+        <span class="sidebar-label flex-1 truncate text-sm font-medium text-ink-2">${H.esc(account.displayName)}</span>
+        <span class="sidebar-account-count text-[11px] font-semibold text-faint">${free}/${rows.length}</span>
       </a>`;
     }).join("");
+  }
+
+  function renderSidebarState() {
+    const sidebar = document.getElementById("sidebar");
+    if (!sidebar) return;
+    const toggle = sidebar.querySelector('[data-action="toggle-sidebar"]');
+    const label = sidebar_minimized ? "Expand sidebar" : "Minimize sidebar";
+    sidebar.dataset.minimized = String(sidebar_minimized);
+    if (!toggle) return;
+    toggle.setAttribute("aria-expanded", String(!sidebar_minimized));
+    toggle.setAttribute("title", label);
+    const accessible_label = toggle.querySelector(".sr-only");
+    if (accessible_label) accessible_label.textContent = label;
+  }
+
+  function toggleSidebar() {
+    sidebar_minimized = !sidebar_minimized;
+    try {
+      localStorage.setItem("serverManager.sidebarMinimized", String(sidebar_minimized));
+    } catch (err) {
+      // The visual toggle still works when persistence is unavailable.
+    }
+    renderSidebarState();
   }
 
   function renderSyncStatus() {
@@ -152,6 +196,7 @@ const Shell = (() => {
   // outside — closing the menu in the same gesture that opened it.
   // Capturing runs first, while the DOM the click happened in is intact.
   function bind() {
+    renderSidebarState();
     document.addEventListener("click", (e) => {
       if (!menuOpen) return;
       if (e.target.closest("#account-menu")) return;
@@ -163,6 +208,7 @@ const Shell = (() => {
   }
 
   function render(activeId) {
+    renderSidebarState();
     const summary = Model.summary();
     const items = visibleNav();
     ["overview", "activity", "settings"].forEach((group) => {
@@ -180,7 +226,8 @@ const Shell = (() => {
     renderAccountMenu();
   }
 
-  return { render, renderSyncStatus, renderAccountMenu, toggleMenu, bind, NAV };
+  return { render, renderSyncStatus, renderAccountMenu, toggleMenu, toggleSidebar, bind, NAV };
 })();
 
 Actions.on("toggle-account-menu", () => Shell.toggleMenu());
+Actions.on("toggle-sidebar", () => Shell.toggleSidebar());
