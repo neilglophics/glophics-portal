@@ -14,17 +14,19 @@ export function Table({
   empty = "Nothing to show here.",
   isEmpty,
   minWidth = "min-w-[880px]",
+  className = "",
 }: {
   head: React.ReactNode;
   children: React.ReactNode;
   empty?: string;
   isEmpty: boolean;
   minWidth?: string;
+  className?: string;
 }) {
-  if (isEmpty) return <Empty message={empty} />;
+  if (isEmpty) return <Empty message={empty} className={className} />;
 
   return (
-    <div className="overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line">
+    <div className={`overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line ${className}`}>
       <div className="overflow-x-auto">
         <table className={`w-full ${minWidth} text-left`}>
           <thead>

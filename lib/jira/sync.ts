@@ -165,7 +165,7 @@ const endInstant = (date: string | null) => (date ? new Date(`${date}T18:00`).to
 
 export interface SyncResult {
   ok: boolean;
-  reason?: "disabled" | "auto-sync-off" | "not-configured" | "error";
+  reason?: "disabled" | "auto-sync-off" | "not-configured" | "throttled" | "error";
   error?: string;
   issueCount?: number;
   claimed?: number;
@@ -177,6 +177,18 @@ export async function runJiraSync(force: boolean): Promise<SyncResult> {
   const settings = await getSettings();
   if (!settings.jira.enabled) return { ok: false, reason: "disabled" };
   if (!force && !settings.jira.autoSync) return { ok: false, reason: "auto-sync-off" };
+
+  if (!force) {
+    const rows = (await sql`
+      SELECT last_sync_at FROM jira_sync_state WHERE id = 1
+    `) as { last_sync_at: string | null }[];
+    const lastSyncAt = rows[0]?.last_sync_at;
+    const intervalMs = Math.max(1, settings.jira.pollIntervalMinutes) * 60_000;
+
+    if (lastSyncAt && Date.now() - new Date(lastSyncAt).getTime() < intervalMs) {
+      return { ok: false, reason: "throttled" };
+    }
+  }
 
   const config = loadJiraConfig();
   if (!config) return { ok: false, reason: "not-configured" };

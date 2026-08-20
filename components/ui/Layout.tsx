@@ -99,9 +99,9 @@ export function Notice({
   );
 }
 
-export function Empty({ message }: { message: string }) {
+export function Empty({ message, className = "" }: { message: string; className?: string }) {
   return (
-    <div className="rounded-2xl bg-surface p-12 text-center shadow-sm ring-1 ring-line">
+    <div className={`rounded-2xl bg-surface p-12 text-center shadow-sm ring-1 ring-line ${className}`}>
       <p className="text-sm text-faint">{message}</p>
     </div>
   );
