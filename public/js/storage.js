@@ -1,13 +1,17 @@
 /**
  * Persistence layer. Everything above this file (state.js) talks to
- * Storage's load()/save()/subscribeRemote() only.
+ * Storage's load()/mutate()/subscribeRemote() only.
  *
- * When served by the sync server, state lives there and is pushed to
- * every open tab over Server-Sent Events — that's what makes assign/edit/
- * release show up live for other viewers (e.g. over VS Code Live Share).
- * When opened directly as a file (no server), the network calls fail
- * silently and everything falls back to a plain per-browser localStorage,
- * same as before.
+ * The board used to be one object, POSTed in full on every single change —
+ * a note edit sent every account, every environment, every claim and every
+ * Jira issue back to the server, and the server pushed the same full object
+ * to every other open tab in return. `mutate()` below replaces that with one
+ * small request per change, to the specific endpoint for that change; the
+ * server now tells other tabs only what actually moved (see state.js's
+ * REDUCERS), not the whole board every time.
+ *
+ * GET /api/state remains a single request for the initial load — there was
+ * never a reason to split that one up, only the writes.
  */
 
 const Storage = (() => {
@@ -65,19 +69,36 @@ const Storage = (() => {
     }
   }
 
-  function save(appData) {
-    cacheLocally(appData);
-    if (readOnly) return;
-    fetch("/api/state", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(appData)
-    }).then((res) => {
-      if (res.status === 401) location.reload();
-    }).catch(() => {
-      // no server running — localStorage cache above is already the source of truth
-    });
+  /**
+   * The one function every State mutator calls to actually reach the server:
+   * a JSON request to one endpoint for one change, carrying the session
+   * cookie and the CSRF header Auth already tracks.
+   *
+   * Returns `{ok, ...}` — the same shape a mutator has always returned to its
+   * caller — so State's mutators can await this and hand the result straight
+   * back with no change to what a UI file reads.
+   */
+  async function mutate(method, path, body) {
+    if (readOnly) return { ok: false, error: "Read-only." };
+    try {
+      const res = await fetch(path, {
+        method,
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          ...(Auth ? Auth.csrfHeader(method) : {})
+        },
+        body: body === undefined ? undefined : JSON.stringify(body)
+      });
+      if (res.status === 401) { location.reload(); return new Promise(() => {}); }
+      const data = await res.json().catch(() => ({}));
+      return { status: res.status, ...data };
+    } catch (err) {
+      // No server reachable. The optimistic local update the caller already
+      // applied stands as the best guess until a connection comes back and
+      // the next SSE snapshot reconciles it.
+      return { ok: false, error: "Couldn't reach the server.", offline: true };
+    }
   }
 
   // Fire-and-forget nudge for the server to run a Jira sync pass right now
@@ -86,16 +107,21 @@ const Storage = (() => {
   // populates immediately. A no-op (silently ignored) with no server
   // running.
   function nudgeJiraSync() {
-    fetch("/api/jira/sync-now", { method: "POST" }).catch(() => {});
+    fetch("/api/jira/sync-now", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: Auth ? Auth.csrfHeader("POST") : {}
+    }).catch(() => {});
   }
 
   /**
    * Subscribes to live updates pushed by other viewers connected to the same
-   * server instance. onUpdate receives the full appData whenever it
-   * changes remotely. onStatusChange("connected" | "offline") reflects
-   * whether we're actually talking to a shared server right now.
+   * server instance. onEvent receives each event as it arrives — state.js
+   * applies it through the matching reducer. onStatusChange("connected" |
+   * "offline") reflects whether we're actually talking to a shared server
+   * right now.
    */
-  function subscribeRemote(onUpdate, onStatusChange) {
+  function subscribeRemote(onEvent, onStatusChange) {
     if (typeof EventSource === "undefined") {
       onStatusChange("offline");
       return;
@@ -108,14 +134,12 @@ const Storage = (() => {
 
     source.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data);
-        cacheLocally(data);
-        onUpdate(data);
+        onEvent(JSON.parse(event.data));
       } catch (err) {
         // ignore malformed push
       }
     };
   }
 
-  return { load, save, setReadOnly, subscribeRemote, nudgeJiraSync };
+  return { load, mutate, cacheLocally, setReadOnly, subscribeRemote, nudgeJiraSync };
 })();

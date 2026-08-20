@@ -400,7 +400,11 @@ Router.register("settings", (() => {
       try {
         const res = await fetch("/api/jira-config", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            ...(typeof Auth !== "undefined" ? Auth.csrfHeader("POST") : {})
+          },
           body: JSON.stringify({
             baseUrl: get("jira-base-url").trim(),
             email: get("jira-email").trim(),
@@ -418,7 +422,11 @@ Router.register("settings", (() => {
   Actions.on("jira-test", async (el) => {
     await Actions.withPending(el, "Testing…", async () => {
       try {
-        const data = await fetch("/api/jira-config/test", { method: "POST" }).then((r) => r.json());
+        const data = await fetch("/api/jira-config/test", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: typeof Auth !== "undefined" ? Auth.csrfHeader("POST") : {}
+        }).then((r) => r.json());
         showResult(data.ok ? `Connected as ${data.displayName}.` : data.error, data.ok);
       } catch (err) {
         showResult("Couldn't reach the server.", false);

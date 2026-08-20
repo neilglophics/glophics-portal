@@ -10,106 +10,128 @@ so an environment can be *partly free*: backend taken, admin still bookable.
 
 ## Running it
 
-Requires Node 18+ (uses built-in `fetch`). No build step, no dependencies.
+Requires Node 18+ (uses built-in `fetch`) and a MySQL- or MariaDB-compatible
+database. The board, credentials, sessions and Jira-derived data all live
+there now — nothing is written to JSON files on disk.
 
 ```bash
-npm start          # or: node server/index.js
-# → http://localhost:4000
+npm install
+cp config/.env.example config/.env      # fill in DATABASE_URL at minimum
+npm run migrate                         # creates the schema
+npm start                               # or: node server/index.js
+# → http://localhost:6767 (set PORT to change it)
 ```
+
+On a database with no sign-in accounts yet, the first boot creates one super
+admin and prints its password once:
+
+```
+  ┌─ First run: a super admin account was created ─────────────
+  │  username: admin
+  │  password: XpcVNoqWQ14-lauB4aan
+  │  You will be asked to set a new password on first sign-in.
+```
+
+Write it down — it is not shown again. In production, set `ADMIN_PASSWORD`
+(and `ADMIN_USERNAME`) instead of relying on the generated one; outside
+production `node server/index.js` refuses to start only if `DATABASE_URL` or
+a usable `APP_SECRET_KEY` situation is missing (see `config/.env.example`
+for what each variable does and what happens when it's left blank).
+
+### Migrating from a previous checkout
+
+If you have `shared-data/`, `shared-state.json`, or `config/auth.json` from
+before this move — the board and its credentials as plain JSON files — bring
+them in with:
+
+```bash
+node server/cli/import-legacy.js            # dry run: reports what it would do
+node server/cli/import-legacy.js --apply    # writes it
+```
+
+It runs the same `migrateAppData()` upgrade path those files always went
+through, so it does not matter how old the shape is. Existing passwords keep
+working — the exact scrypt parameters they were hashed with are preserved
+alongside them, and each one is quietly upgraded to the current parameters
+the next time its owner signs in. Sessions are **not** carried over (the old
+store kept tokens as plaintext; importing one would mean hashing an
+already-leaked value), so everyone signs in again once. Once you've checked
+the board, delete the old files — the import never does it for you.
 
 ## How the repo is laid out
 
 ```
-server/            everything that runs on the server
-  index.js         the gate, the routing table, boot — wiring only
-  paths.js         every path, resolved from the repo root
-  board.js         the board in memory, plus persist() and broadcast()
-  state-store.js   the board on disk (shared-data/, one file per section)
-  auth-store.js    credentials and sessions (config/auth.json)
-  ip-allowlist.js  which addresses may reach any of it
-  access.js        who is calling, and whether their role permits it
-  static.js        serves public/ and shared/ — and nothing else
-  jira-client.js   talking to Jira, and the API token that needs
-  http.js          sendJson / readBody
-  routes/          auth.js  state.js  jira.js
-  jobs/            health.js  sync.js
+server/
+  index.js           the gate, the routing table, boot — wiring only
+  config.js          every environment variable, resolved and validated once
+  paths.js           static file roots, resolved from the repo root
+  ip-allowlist.js     which addresses may reach any of it
+  static.js          serves public/ and shared/ — and nothing else
+  jira-client.js     talking to Jira: URLs, auth header, field-id cache
+
+  db/
+    client.js        the connection pool, query/transaction helpers
+    migrate.js        applies server/db/migrations/*.sql, tracked + checksummed
+    migrations/       numbered, immutable once applied
+    columns.js         JSON/date/bool conversions every repository shares
+
+  repositories/       the only layer allowed to contain SQL
+  services/           business rules — no SQL, no req/res
+  http/               cookies, CSRF, the request pipeline, the route table
+  routes/             thin handlers: parse, call one service, shape the reply
+  realtime/           the event bus and the SSE transport
+  jobs/               health checks, Jira sync, expiry, housekeeping — on timers
+  security/            password hashing (scrypt, versioned, async)
+  cli/                admin.js (operator commands), import-legacy.js
+
 shared/
-  data.js          the one module both sides run
-public/            the app — the only thing served, with shared/
+  data.js            seed data, the role table, Jira status/matching rules
+  rules.js           form validation — the same functions the server runs
+
+public/              the app — the only thing served, with shared/
   index.html  js/**
-config/            auth.json, jira-config.json, allowed-ips.json (+ examples)
-shared-data/       the board, one file per section
 ```
 
-The line worth knowing is between `public/` and everything else. The static
-handler can read `public/` and `shared/`, so nothing else is reachable over
-http at all — not `config/auth.json`'s password hashes and live session
-tokens, not the board, not the server's own source. That used to rest on a
-list of allowed file extensions that had to keep `.json` out forever, in a
-directory that kept gaining files; now it rests on where the files are, and
-the extension allowlist is the second lock rather than the only one.
+The line worth knowing is still between `public/` and everything else. The
+static handler can read `public/` and `shared/` only, so nothing else is
+reachable over http — not the database credentials, not a session token, not
+the server's own source.
 
-## The board on disk
+## The board
 
-State lives in `shared-data/` — one file per section, so
-the file you open is the one you meant and a save rewrites only what moved:
+Everything — the directory of people, accounts, environments, claims, notes,
+settings, Jira-derived data, sessions, and the audit log — lives in the
+database `DATABASE_URL` points at. `server/db/migrations/*.sql` describes the
+schema; `npm run migrate` applies whatever is pending, and refuses to start
+if a previously-applied migration file has since been edited (they're meant
+to be immutable — add a new numbered file instead of changing one).
 
-```
-shared-data/
-  users.json      the people a claim can be assigned to
-  accounts.json   clients, and the repositories each one has
-  servers.json    environments and their repo URLs + health
-  tickets.json    the live claims
-  notes.json      free-text notes per environment
-  settings.json   Jira options, booking defaults, expiry rules
-```
+The board is pushed to every open tab over Server-Sent Events — not as the
+whole board on every change, but as the one small event describing what
+changed, so a note edit costs a few hundred bytes rather than the entire
+board. `GET /api/state` still returns the whole thing in one request, for
+the initial page load and for a tab reconnecting after a gap.
 
-An older `shared-state.json` is split into these on the next start and kept
-as `shared-state.json.migrated` — nothing is deleted. The board is pushed to
-every open tab over Server-Sent Events, so a booking appears live for
-everyone pointed at the same server. The server is now required: sign-in and every
-data route go through it, so opening `public/index.html` as a file only ever
-reaches the sign-in screen. (`localStorage` still caches the board so a
-server that drops mid-session does not blank the page.)
-
-For deploying, see [DEPLOY.md](DEPLOY.md). Short version: it needs a host
-that runs a persistent process (Render, Railway, Fly, a VPS), not a
-serverless one.
+`localStorage` still caches the board so a server that drops mid-session
+does not blank the page; that cache is a fallback for *display only* and no
+part of the app depends on writing to it.
 
 ## Signing in
 
-Everything behind the sign-in screen needs an account. The first time you
-run `npm start` it creates one super admin and prints the password:
+Hand out accounts under **Users**: a display name, a username, a password,
+and one role. Every account created this way — including the seeded first
+one — must set a new password on its first sign-in.
 
-```
-  ┌─ First run: a super admin account was created ─────────
-  │  username: admin
-  │  password: XpcVNoqWQ14-
-```
-
-That password is generated once and only the hash is kept, so save it then
-— or set `ADMIN_USERNAME` / `ADMIN_PASSWORD` before the first run and pick
-it yourself. Sign in, then hand out accounts under **Users**: a display
-name, a username, a password, and one role.
-
-### People and logins are one list
+### People and logins are one list, kept in two tables
 
 **Users** shows everybody on the board, with each person's login beside them
 if they have one. Most will not: being assignable to a claim and being able
 to sign in are different things, and most of a team only ever needs the
-first.
-
-A login points at one person by id, and reads that person's Jira **Ticket
-Assignee** labels through the link rather than keeping its own copy. So a
-label is written once, in one place — fix a typo in the directory and what
-**My tickets** shows is fixed with it. One person can hold at most one
-login; the reverse would show two people each other's tickets.
-
-Accounts written before the link existed are matched to their person on the
-next start, using the same rule the ticket sync uses. Any that match nobody
-— or match two people — are named on the console and left for a super admin
-to point at the right person by hand; their old labels are kept, not
-discarded, so there is something to go on.
+first. Directory people live separately from login accounts precisely so
+that the directory — which is broadcast to every open tab — never carries a
+password hash; a login optionally points at one directory person by id, and
+reads that person's Jira **Ticket Assignee** labels through the link rather
+than keeping its own copy. One person can hold at most one login.
 
 | Role | Can |
 | --- | --- |
@@ -118,18 +140,22 @@ discarded, so there is something to go on.
 | Member | Claim and free environments, write notes |
 | Viewer | Read the board, change nothing |
 
-Sessions are a week long. Signing out, changing a password, changing
-someone's role, or deactivating them ends every session that person has —
-an open tab loses the access it had rather than keeping it until reload.
+Sessions last a week, sliding after 12 hours of inactivity. Signing out,
+changing a password, changing someone's role, or deactivating them ends
+every session that person has immediately — not at their next reload.
 
-Credentials live in `config/auth.json` (gitignored, scrypt hashes, never
-part of the shared state and never pushed over SSE — an account's record
-there is a username, a role and the id of the person it points at, nothing
-about them). An `auth.json`, `jira-config.json` or `allowed-ips.json` still
-sitting in the repo root is moved into `config/` on the next start. The
-cookie is `HttpOnly` and `SameSite=Lax`, and deliberately not `Secure`,
-since this server speaks plain http on a LAN — add that flag if you put it
-behind TLS.
+Passwords are hashed with scrypt, asynchronously (a synchronous hash on the
+request path would stall every other request on the process), and the
+parameters used are stored with the hash so they can be raised later without
+invalidating anything — an old hash is silently upgraded the next time its
+owner signs in successfully. Every mutating request also carries a CSRF
+token minted with the session; a request missing it, or arriving from
+another origin, is refused before it reaches anything else.
+
+Repeated failed sign-ins are throttled with a doubling backoff, tracked in
+the database rather than in memory — a crash or restart does not reset it.
+The curve tightens automatically while the IP allowlist below is left open,
+since that is the only remaining gate.
 
 ## Restricting it to your own IP addresses
 
@@ -162,7 +188,8 @@ Three things worth knowing:
 
 - **An empty list means "not configured", not "nobody".** With nothing set
   the gate stays open and startup prints a warning, so a missing env var on
-  a deploy can't lock the whole team out of a running portal.
+  a deploy can't lock the whole team out of a running portal. The sign-in
+  throttle above tightens automatically in this state.
 - **Loopback is always allowed**, whatever the list says — otherwise the
   host can't reach its own portal. `ALLOW_LOOPBACK=false` turns that off if
   the machine has local users or SSH tunnels you don't trust.
@@ -171,25 +198,26 @@ Three things worth knowing:
   one address — set `TRUST_PROXY` to the number of proxies in front of the
   server and the client is read from `X-Forwarded-For` instead. It is off by
   default on purpose: that header is client-writable, so trusting it with no
-  proxy in front lets anyone claim any address.
+  proxy in front lets anyone claim any address. The same setting also
+  decides whether `X-Forwarded-Proto` is trusted for deciding the session
+  cookie's `Secure` flag (`COOKIE_SECURE=auto`, the default).
 
 **It does not gate VS Code Live Share.** Live Share tunnels a guest's
 traffic through the host machine, so every guest arrives as loopback and
-the allowlist cannot tell them from you. Who joins the session is what
-limits access there — the allowlist covers direct network access, i.e. a
-deployment or a port opened on the LAN.
+the allowlist cannot tell them from you — and neither can the per-address
+sign-in throttle. Who joins the session is what limits access there.
 
 ## Connecting Jira
 
-```bash
-cp config/jira-config.example.json config/jira-config.json
-```
-
 Fill in your site, the account email, and an
-[API token](https://id.atlassian.com/manage-profile/security/api-tokens),
-then turn on **Enable Jira** in Settings. `config/jira-config.json` is gitignored;
-a deployment supplies `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN`
-instead, and Settings then shows the fields read-only.
+[API token](https://id.atlassian.com/manage-profile/security/api-tokens) in
+**Settings**, then turn on **Enable Jira**. The token is encrypted at rest
+(AES-256-GCM under `APP_SECRET_KEY`) in the database, never in a plain file.
+
+A deployment can instead supply `JIRA_BASE_URL` / `JIRA_EMAIL` /
+`JIRA_API_TOKEN` as environment variables — Settings then shows the fields
+read-only and refuses a write, since the connection isn't this deployment's
+to change from the UI.
 
 Tickets are matched to an environment by **Account Name + Branch +
 Repository**, all three of which must be filled in on the ticket. Anything
@@ -207,107 +235,75 @@ Configured under Settings → Status rules:
 - Any *other* status leaves an existing claim untouched. `QA FAILED` is still
   being worked on, so it keeps the environment.
 
+The sync itself is incremental: after the first full pass it only asks Jira
+for what changed since the last poll (plus, always, anything currently
+holding an environment — so a ticket that reaches `DONE`, which is both a
+releasing status and one nobody wants pulled in bulk, is never missed). A
+poll that finds nothing new writes nothing and sends every open tab a
+sixty-byte heartbeat rather than the whole board; a full sweep every thirty
+minutes reconciles anything an incremental pass could legitimately have
+missed.
+
 ## Architecture
 
-Two layers, one direction of dependency: **the UI reads the data layer; the
-data layer knows nothing about the UI.**
+Layered, one direction of dependency:
 
 ```
-shared/
-  data.js           seed data, migrations, matching, the role list —
-                    the one module both sides run
+routes/  →  services/  →  repositories/  →  db/
+   │            │
+   │            └──► realtime/bus  (emit what changed)
+   └──► http/{cookies,csrf,pipeline}, realtime/sse (subscribe)
 
-public/             the browser half
-  index.html        shell markup + script order
-  js/
-    storage.js      persistence: server + SSE, localStorage fallback
-    state.js        the single source of truth; every read and write
-    auth.js         who is signed in, and what they may do
-    format.js       dates, durations, escaping
-    ui/
-      tokens.js     every colour, label and icon
-      model.js      view-models derived from State
-      html.js       presentational primitives (tables, chips, buttons…)
-      router.js     hash routing + input-preserving re-render
-      actions.js    one delegated listener, `data-action` dispatch
-      modals.js     assign / confirm / note / credential dialogs
-      login-screen.js  the sign-in gate, shown before the shell exists
-      shell.js      sidebar, account list, sync indicator, account menu
-      page-*.js     one file per page
-    app.js          boot: the sign-in gate, then State changes → render
-
-server/             the server half
-  index.js          the gate, the routing table, boot — wiring only
-  paths.js          every path, resolved from the repo root
-  board.js          the board in memory, plus persist() and broadcast()
-  state-store.js    the board on disk: shared-data/, one file per section
-  auth-store.js     credentials and sessions (config/auth.json)
-  ip-allowlist.js   which addresses may reach the server at all
-  access.js         who is calling, and whether their role permits it
-  static.js         serves public/ and shared/, and nothing else
-  jira-client.js    talking to Jira, and the API token that needs
-  http.js           sendJson / readBody
-  routes/
-    auth.js         sign in/out, me, and managing who may sign in
-    state.js        read/replace the board, and the live SSE stream
-    jira.js         connection settings, ticket lookup, comment
-  jobs/
-    health.js       is each repository up?
-    sync.js         the bulk Jira sync, and time-based expiry
+jobs/  →  services/        (never repositories/, never routes/)
 ```
 
-**Data layer.** `public/js/state.js` is the only thing that touches app data.
-Components never call `Storage` and never mutate `appData`; they call
-`State.*` and subscribe to `State.subscribe()`. `shared/data.js` runs on both
-sides — the server `require`s it, the browser loads it as `/shared/data.js` —
-so the two apply identical seed and migration rules to the same shape. It is
-the reason a board converted by one is a board the other recognises.
+**Repositories** are the only place SQL appears — no validation, no
+permission checks, no events, just queries and row-to-object mapping.
+**Services** hold every rule (validation, ripple effects, authorization
+decisions, what to emit) and never see `req`/`res`. **Routes** are 5–15 lines
+each: parse the request, call one service, shape the reply. **Jobs** call
+services on a timer and never touch a repository or a route directly.
 
-**Server layer.** `server/index.js` holds no logic of its own: it is the IP
-gate, the routing table, and the boot-time migrations. Anything it dispatches
-to lives in its own file, and the only shared mutable thing is `board.js` —
-which exists because POST /api/state replaces the entire board in one
-assignment, and four other files have to see that replacement.
+`shared/data.js` and `shared/rules.js` are the one pair of modules both the
+browser and the server load — the server via `require()`, the browser as a
+plain `<script>` — so seed data, the role table, Jira status matching, and
+form validation are one implementation with two callers, not two
+implementations that can quietly disagree.
 
-**UI layer.** Each layer only knows the one below it:
+### The realtime layer
 
-| File | Answers |
-| --- | --- |
-| `tokens.js` | What colour is "partly free"? |
-| `model.js` | What does an environment row contain? |
-| `html.js` | What does a table look like? |
-| `page-*.js` | What goes on this page? |
-
-A page is `{ label, render() }` that registers itself with `Router`. It
-returns a string and touches no DOM. Adding a page means creating one file
-and adding one entry to `NAV` in `shell.js`.
-
-**Events.** There is exactly one click listener, in `actions.js`. Markup
-declares intent (`data-action="force-free-server"`) and a handler registers
-against that name. Nothing re-binds after a render, and a re-render can't
-leave a dead listener behind.
-
-**Rendering.** Any State change repaints the whole active page. That keeps
-the code simple and means an update pushed from another viewer shows up
-immediately. `Router.render()` preserves scroll position and in-progress
-field values across the repaint, so a background update never eats what
-someone is typing.
+`GET /api/events` opens a Server-Sent Events stream. Its first frame is the
+whole board (`board.snapshot`); after that, each change is its own small
+event — `claim.created`, `note.set`, `server-repo.health`, and so on — with a
+monotone sequence number. A tab that notices a gap in that sequence, or
+receives an event type it doesn't recognise, falls back to refetching the
+whole board rather than risking a silent drift from the truth. Every open
+stream re-checks both the IP allowlist and the session on every single frame
+it sends, not just at connect time, so revoking someone's access or removing
+their address takes effect on their very next event rather than at their
+next reload.
 
 ### Things worth knowing before changing it
 
-- **Occupancy is derived, never stored.** `State.getDisplayStatus()` computes
-  free/partial/inuse/issue from the live claim list. An offline repository
-  outranks everything else.
+- **Occupancy is derived, never stored.** `State.getDisplayStatus()` on the
+  client computes free/partial/inuse/issue from the live claim list. An
+  offline repository outranks everything else.
 - **Claims are sticky across status changes.** Only a *releasing* status
   frees a claim; every other status leaves it alone. That rule lives in
-  `runJiraSync()` in `server/jobs/sync.js` — the client only reads the result.
-- **Roles are enforced twice, from one list.** `AUTH_ROLES` in `shared/data.js`
-  is read by the browser (to hide what you can't use) and by
-  `server/access.js` (to refuse it), so the two cannot drift. Hiding is courtesy; the server is the
-  boundary. A member's state write is accepted but stripped back to
-  tickets and notes rather than rejected — their copy of the config can be
-  a beat stale through no fault of theirs.
+  `server/services/jira-sync.service.js` — the client only reads the result.
+- **Roles are enforced twice, from one list.** `AUTH_ROLES` in
+  `shared/data.js` is read by the browser (to hide what you can't use) and by
+  the request pipeline (to refuse it), so the two cannot drift. Hiding is
+  courtesy; the server is the boundary.
+- **Validation is enforced twice, from one implementation.** `shared/rules.js`
+  is called by `public/js/state.js` (so a form's error list is synchronous,
+  with no round trip) and by the matching `server/services/*.js` function
+  (the actual boundary). If a request that passed client-side validation is
+  still rejected by the server — a genuine race with another tab, most
+  likely — the client resyncs from the server's event stream rather than
+  trusting its own optimistic guess.
 - **Tailwind comes from a CDN.** The v4 browser build compiles in the page,
   including classes injected after load. That keeps the no-build-step
-  property, but it is not a production setup — see the notes in
-  [DEPLOY.md](DEPLOY.md) before shipping it publicly.
+  property for the UI, but it is the one thing standing between the
+  Content-Security-Policy this server sends and actually disallowing inline
+  scripts and styles.

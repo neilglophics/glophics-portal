@@ -9,13 +9,30 @@
  * specific environment. Several claims can exist for the same server at
  * once (different tickets, different repos — a "partly free" server), and
  * more than one claim can touch the same repo ("Shared"). Which statuses
- * start/end a jira-sourced claim is the server's runJiraSync() job; this
- * file only reads/writes the resulting list.
+ * start/end a jira-sourced claim is the server's Jira sync job; this file
+ * only reads/writes the resulting list.
+ *
+ * Every mutator below follows the same shape: validate with the rules in
+ * shared/rules.js (the exact functions the server runs too, so the two
+ * cannot silently disagree), apply the change to the local appData and
+ * repaint immediately, then tell the server in the background through
+ * Storage.mutate(). That last step used to be "POST the entire board" —
+ * every account, every environment, every claim, every Jira issue — for a
+ * single note edit; now it is one small request to the endpoint for that one
+ * change, and the server tells other open tabs only what actually moved.
+ *
+ * A mutator's return value is still synchronous — every UI file reads
+ * `{ok, errors}` on the same line it calls one of these — because the
+ * validation that produces it runs locally, before anything is sent. If the
+ * server rejects a request that passed local validation (a genuine race with
+ * another tab, most likely), the mismatch is corrected by the next event or
+ * snapshot rather than by the caller, which already has its answer.
  */
 
 const State = (() => {
   let appData = null;
   let syncStatus = "offline";
+  let lastSeq = null;
 
   const filters = {
     status: "all",
@@ -34,16 +51,137 @@ const State = (() => {
     statusListeners.push(fn);
   }
 
-  function notify() {
-    Storage.save(appData);
+  // Repaints. No network call — that is the whole point of splitting this
+  // out from the old notify()/save() pair. View-only changes (filters) call
+  // only this; changes to real data call this and Storage.mutate() both.
+  function render() {
     listeners.forEach((fn) => fn());
   }
 
-  // Applies an update pushed by another viewer — already persisted on the
-  // server, so this only updates local state and re-renders (no save-back).
-  function applyRemoteUpdate(data) {
-    appData = data;
-    listeners.forEach((fn) => fn());
+  /**
+   * A background write failed after the local state already assumed it
+   * would succeed. Rather than try to hand-unwind one optimistic edit out of
+   * whatever else has happened since, pull the current truth and repaint —
+   * the same recovery a missed SSE event uses.
+   */
+  async function resync() {
+    appData = await Storage.load();
+    lastSeq = appData.__seq ?? null;
+    render();
+  }
+
+  function warnMutationFailed(action, result) {
+    console.warn(`[state] ${action} was not saved: ${(result && (result.error || (result.errors || [])[0])) || "unknown error"}`);
+  }
+
+  async function send(action, method, path, body) {
+    const result = await Storage.mutate(method, path, body);
+    if (!result.ok && !result.offline) {
+      warnMutationFailed(action, result);
+      await resync();
+    }
+    return result;
+  }
+
+  // ---------- realtime ----------
+
+  function upsertById(list, item) {
+    const index = list.findIndex((x) => x.id === item.id);
+    if (index === -1) list.push(item);
+    else list[index] = item;
+  }
+
+  function removeById(list, id) {
+    const index = list.findIndex((x) => x.id === id);
+    if (index !== -1) list.splice(index, 1);
+  }
+
+  // One entry per event type this server can send. A type with no entry
+  // here — including any future one this build predates — falls through to
+  // a full resync, which is always correct, just not the cheapest path.
+  const REDUCERS = {
+    "board.snapshot": (payload) => { appData = payload; },
+    "board.invalidate": () => { /* handled by the fallback below */ },
+
+    "directory-user.upserted": (payload) => upsertById(appData.users, payload),
+    "directory-user.deleted": (payload) => removeById(appData.users, payload.id),
+
+    "account.upserted": (payload) => upsertById(appData.accounts, payload),
+    "account.deleted": (payload) => removeById(appData.accounts, payload.id),
+
+    "server.upserted": (payload) => upsertById(appData.servers, payload),
+    "server.deleted": (payload) => removeById(appData.servers, payload.id),
+
+    "server-repo.health": (payload) => {
+      (payload.changes || []).forEach((change) => {
+        const server = getServer(change.serverId);
+        if (server && server.repos[change.repoName]) {
+          server.repos[change.repoName].health = change.health;
+        }
+      });
+    },
+
+    "note.set": (payload) => { appData.notes[getRepoNoteKey(payload.serverId, payload.repoName)] = payload.text; },
+    "note.cleared": (payload) => { delete appData.notes[getRepoNoteKey(payload.serverId, payload.repoName)]; },
+
+    "claim.created": (payload) => upsertById(appData.tickets, payload),
+    "claim.updated": (payload) => upsertById(appData.tickets, payload),
+    "claim.deleted": (payload) => removeById(appData.tickets, payload.id),
+    "claims.replaced": (payload) => {
+      appData.tickets = appData.tickets.filter((t) => t.serverId !== payload.serverId).concat(payload.claims);
+    },
+
+    "settings.updated": (payload) => { appData.settings = payload; },
+
+    "jira.heartbeat": (payload) => { appData.lastJiraSyncAt = payload.lastJiraSyncAt; },
+    "jira.synced": (payload) => {
+      appData.lastJiraSyncAt = payload.lastJiraSyncAt;
+      const issues = payload.issues || { upserted: [], removed: [] };
+      const skipped = payload.skipped || { upserted: [], removed: [] };
+      appData.jiraIssues = appData.jiraIssues || [];
+      appData.jiraSkipped = appData.jiraSkipped || [];
+      issues.upserted.forEach((issue) => upsertByKey(appData.jiraIssues, issue));
+      (issues.removed || []).forEach((key) => removeByKey(appData.jiraIssues, key));
+      skipped.upserted.forEach((entry) => upsertByKey(appData.jiraSkipped, entry));
+      (skipped.removed || []).forEach((key) => removeByKey(appData.jiraSkipped, key));
+    }
+  };
+
+  function upsertByKey(list, item) {
+    const index = list.findIndex((x) => x.key === item.key);
+    if (index === -1) list.push(item);
+    else list[index] = item;
+  }
+  function removeByKey(list, key) {
+    const index = list.findIndex((x) => x.key === key);
+    if (index !== -1) list.splice(index, 1);
+  }
+
+  /**
+   * Applies one event from the SSE stream. A gap in `seq` or an event type
+   * this build does not recognise both mean the same thing — this tab's copy
+   * of the board can no longer be trusted to be a diff away from correct —
+   * so both fall back to fetching the whole thing, same as a fresh page load.
+   */
+  function applyEvent(event) {
+    if (lastSeq !== null && event.seq !== null && event.seq !== lastSeq + 1 && event.type !== "board.snapshot") {
+      resync();
+      return;
+    }
+    if (event.seq !== null && event.seq !== undefined) lastSeq = event.seq;
+
+    if (event.type === "board.invalidate") {
+      resync();
+      return;
+    }
+
+    const reduce = REDUCERS[event.type];
+    if (!reduce) {
+      resync();
+      return;
+    }
+    reduce(event.payload);
+    render();
   }
 
   function setSyncStatus(status) {
@@ -55,8 +193,13 @@ const State = (() => {
 
   async function init() {
     appData = await Storage.load();
-    if (migrateAppData(appData)) Storage.save(appData);
-    Storage.subscribeRemote(applyRemoteUpdate, setSyncStatus);
+    lastSeq = appData.__seq ?? null;
+    // The server only ever hands back the current shape now, but a browser
+    // that still has yesterday's build cached (or the localStorage fallback,
+    // which predates this) may not — migrateAppData is idempotent, so this
+    // costs nothing when there is nothing to upgrade.
+    if (migrateAppData(appData)) render();
+    Storage.subscribeRemote(applyEvent, setSyncStatus);
   }
 
   function uid(prefix) {
@@ -143,12 +286,16 @@ const State = (() => {
 
   function getRepoNoteKey(serverId, repoName) { return `${serverId}::${repoName}`; }
   function getRepoNote(serverId, repoName) { return appData.notes[getRepoNoteKey(serverId, repoName)] || ""; }
+
   function setRepoNote(serverId, repoName, text) {
     const key = getRepoNoteKey(serverId, repoName);
     const trimmed = (text || "").trim();
     if (trimmed) appData.notes[key] = trimmed;
     else delete appData.notes[key];
-    notify();
+    render();
+    send("setRepoNote", "PUT",
+      `/api/servers/${encodeURIComponent(serverId)}/repos/${encodeURIComponent(repoName)}/note`,
+      { text: trimmed });
   }
 
   // Any offline repo takes priority over claim state — "Needs attention"
@@ -225,10 +372,14 @@ const State = (() => {
   }
 
   // ---------- filter mutations ----------
+  //
+  // Pure view state — never sent to the server. Before this rewrite these
+  // went through the same notify() as everything else, which meant a
+  // dropdown click or a keystroke in the search box posted the entire board.
 
   function setFilter(key, value) {
     filters[key] = value;
-    notify();
+    render();
   }
 
   function clearFilters() {
@@ -236,35 +387,17 @@ const State = (() => {
     filters.userId = "all";
     filters.accountId = "all";
     filters.search = "";
-    notify();
-  }
-
-  // ---------- validation ----------
-
-  const JIRA_PATTERN = /^[A-Za-z][A-Za-z0-9]*-\d+$/;
-
-  function validateClaim({ repos, userIds, jiraTicket, startTime, endTime }) {
-    const errors = [];
-    if (!repos || !repos.length) errors.push("Select at least one repo to claim.");
-    if (!userIds || !userIds.length) errors.push("At least one user is required.");
-    const requireTicket = appData.settings.jira.requireTicket;
-    if (jiraTicket || requireTicket) {
-      if (!jiraTicket || !JIRA_PATTERN.test(jiraTicket.trim())) {
-        errors.push("Jira ticket must look like PROJ-1234.");
-      }
-    }
-    if (!startTime || !endTime) {
-      errors.push("Start and end time are required.");
-    } else if (new Date(endTime).getTime() <= new Date(startTime).getTime()) {
-      errors.push("End time must be after start time.");
-    }
-    return errors;
+    render();
   }
 
   // ---------- claim actions ----------
+  //
+  // Validated by shared/rules.js — the same functions server/services runs —
+  // so a client-side pass and the server's authoritative one can only ever
+  // agree, never quietly drift apart.
 
   // Creates a claim on specific repos of a specific environment. If a real
-  // ticket key is given it's tagged source:"jira" so runJiraSync() takes it
+  // ticket key is given it's tagged source:"jira" so the Jira sync takes it
   // over from here (refreshing its status/summary, auto-freeing it once
   // the ticket reaches a releasing status) — otherwise it's a plain manual
   // claim that only a person (via Force free) can end.
@@ -276,12 +409,17 @@ const State = (() => {
     const repos = (payload.repos || []).filter((r) => repoKeys.includes(r));
     const jiraTicket = payload.jiraTicket ? payload.jiraTicket.trim().toUpperCase() : null;
 
-    const errors = validateClaim({ ...payload, repos, jiraTicket });
+    const errors = validateClaim(appData, { ...payload, repos, jiraTicket });
     if (errors.length) return { ok: false, errors };
 
     const account = getAccount(server.accountId);
+    // Minted once, used both for the optimistic local copy and sent to the
+    // server as `id` -- so the eventual claim.created event (which echoes
+    // back whatever id the record was actually stored under) updates this
+    // same entry instead of arriving as what looks like a second claim.
+    const manualClaimId = jiraTicket || uid("manual");
     const ticket = {
-      id: jiraTicket || uid("manual"),
+      id: manualClaimId,
       source: jiraTicket ? "jira" : "manual",
       serverId: server.id,
       accountName: account ? account.displayName : "",
@@ -298,18 +436,21 @@ const State = (() => {
       lastSyncedAt: null
     };
     appData.tickets.push(ticket);
-    notify();
+    render();
+    send("addClaim", "POST", "/api/claims", { serverId, ...payload, repos, jiraTicket, id: manualClaimId });
     return { ok: true, ticket };
   }
 
   function forceFreeTicket(ticketId) {
     appData.tickets = appData.tickets.filter((t) => t.id !== ticketId);
-    notify();
+    render();
+    send("forceFreeTicket", "DELETE", `/api/claims/${encodeURIComponent(ticketId)}`);
   }
 
   function forceFreeServer(serverId) {
     appData.tickets = appData.tickets.filter((t) => t.serverId !== serverId);
-    notify();
+    render();
+    send("forceFreeServer", "DELETE", `/api/servers/${encodeURIComponent(serverId)}/claims`);
   }
 
   // ---------- config CRUD (settings) ----------
@@ -317,24 +458,23 @@ const State = (() => {
   // Validated on the same rules as updateServer, so the add form and the
   // edit form reject exactly the same input.
   function addServer({ name, accountId, repoUrls }) {
-    const nextName = (name || "").trim();
-    const account = getAccount(accountId);
-
-    const errors = [];
-    if (!nextName) errors.push("Environment name is required.");
-    if (!account) errors.push("Pick an account for this environment.");
-    if (account && appData.servers.some((s) => s.accountId === account.id && s.name.trim().toLowerCase() === nextName.toLowerCase())) {
-      errors.push(`${account.displayName} already has an environment called "${nextName}".`);
-    }
+    const errors = validateServer(appData, null, { name, accountId });
     if (errors.length) return { ok: false, errors };
 
+    const account = getAccount(accountId);
+    const nextName = (name || "").trim();
+    // Minted once, used for both the optimistic local copy and the request --
+    // see the matching comment in addClaim for why this has to be one id,
+    // not one guessed independently on each side.
+    const nextServerId = uid("server");
     const repos = {};
     getRepositoriesForAccount(account.id).forEach((repoName) => {
       const url = ((repoUrls && repoUrls[repoName]) || "").trim();
       repos[repoName] = { url, health: url ? "checking" : "unconfigured" };
     });
-    appData.servers.push({ id: uid("server"), name: nextName, accountId: account.id, repos });
-    notify();
+    appData.servers.push({ id: nextServerId, name: nextName, accountId: account.id, repos });
+    render();
+    send("addServer", "POST", "/api/servers", { id: nextServerId, name: nextName, accountId: account.id, repoUrls });
     // A ticket for this exact account+environment may already be sitting in
     // Jira — nudge an immediate sync so it populates right away instead of
     // waiting for the next poll tick.
@@ -346,7 +486,8 @@ const State = (() => {
     appData.servers = appData.servers.filter((s) => s.id !== serverId);
     appData.tickets = appData.tickets.filter((t) => t.serverId !== serverId);
     Object.keys(appData.notes).forEach((k) => { if (k.startsWith(`${serverId}::`)) delete appData.notes[k]; });
-    notify();
+    render();
+    send("removeServer", "DELETE", `/api/servers/${encodeURIComponent(serverId)}`);
   }
 
   // An environment's name is the "Branch" Jira matches on, and its account
@@ -358,18 +499,12 @@ const State = (() => {
     const server = getServer(serverId);
     if (!server) return { ok: false, errors: ["Environment not found."] };
 
-    const nextName = (name || "").trim();
     const nextAccountId = accountId || server.accountId;
-    const account = getAccount(nextAccountId);
-
-    const errors = [];
-    if (!nextName) errors.push("Environment name is required.");
-    if (!account) errors.push("Pick an account for this environment.");
-    if (account && appData.servers.some((s) => s.id !== serverId && s.accountId === nextAccountId && s.name.trim().toLowerCase() === nextName.toLowerCase())) {
-      errors.push(`${account.displayName} already has an environment called "${nextName}".`);
-    }
+    const errors = validateServer(appData, serverId, { name, accountId: nextAccountId });
     if (errors.length) return { ok: false, errors };
 
+    const nextName = (name || "").trim();
+    const account = getAccount(nextAccountId);
     const repoNames = account.repositories;
     const removedRepos = Object.keys(server.repos).filter((r) => !repoNames.includes(r));
 
@@ -397,7 +532,8 @@ const State = (() => {
       return t.repos.length > 0;
     });
 
-    notify();
+    render();
+    send("updateServer", "PATCH", `/api/servers/${encodeURIComponent(serverId)}`, { name: nextName, accountId: nextAccountId, repoUrls });
     if (Storage.nudgeJiraSync) Storage.nudgeJiraSync();
     return { ok: true };
   }
@@ -407,7 +543,10 @@ const State = (() => {
     if (!server || !server.repos[repoName]) return;
     server.repos[repoName].url = url;
     server.repos[repoName].health = "checking";
-    notify();
+    render();
+    send("updateServerRepoUrl", "PUT",
+      `/api/servers/${encodeURIComponent(serverId)}/repos/${encodeURIComponent(repoName)}/url`,
+      { url });
   }
 
   // ---------- Jira label matching (shared logic lives in data.js; reused
@@ -425,53 +564,24 @@ const State = (() => {
 
   // ---------- users ----------
 
-  // "[BE]_Sem, [QA]_Sem" from a text field, or an array from anywhere
-  // else, normalised to the list the matcher wants. Blank means "use the
-  // display name", which is what the field did before it existed.
-  function normalizeJiraNames(value, fallbackName) {
-    const list = Array.isArray(value) ? value : String(value || "").split(",");
-    const names = [];
-    list.map((n) => String(n || "").trim()).filter(Boolean).forEach((n) => {
-      if (!names.some((seen) => seen.toLowerCase() === n.toLowerCase())) names.push(n);
-    });
-    if (names.length) return names;
-    const fallback = (fallbackName || "").trim();
-    return fallback ? [fallback] : [];
-  }
-
-  // Two users answering to the same Jira label makes matching a coin toss,
-  // so the clash is refused here rather than resolved silently at sync time.
-  function jiraNameClashes(names, exceptUserId) {
-    const errors = [];
-    names.forEach((name) => {
-      const owner = appData.users.find((u) =>
-        u.id !== exceptUserId && window.userJiraNames(u).some((n) => n.toLowerCase() === name.toLowerCase()));
-      if (!owner) return;
-      errors.push(owner.name.trim().toLowerCase() === name.toLowerCase()
-        ? `"${name}" belongs to a second user of the same name — remove the duplicate first.`
-        : `"${name}" is already a Jira name for ${owner.name}.`);
-    });
-    return errors;
-  }
+  // ---------- users (the directory) ----------
 
   // Same rules as updateUser below — the Jira names are what the next sync
   // matches Jira's assignee labels against, so they have to be unique.
   function addUser({ name, role, jiraNames }) {
+    const errors = validateDirectoryUser(appData, null, { name, role, jiraNames });
+    if (errors.length) return { ok: false, errors };
+
     const nextName = (name || "").trim();
     const nextRole = (role || "").trim();
     const nextJiraNames = normalizeJiraNames(jiraNames, nextName);
+    // Minted once, used for both the optimistic local copy and the request --
+    // see the matching comment in addClaim.
+    const nextUserId = uid("user");
 
-    const errors = [];
-    if (!nextName) errors.push("Display name is required.");
-    if (!nextRole) errors.push("Role is required.");
-    if (appData.users.some((u) => u.name.trim().toLowerCase() === nextName.toLowerCase())) {
-      errors.push(`Another user is already called "${nextName}".`);
-    }
-    errors.push(...jiraNameClashes(nextJiraNames, null));
-    if (errors.length) return { ok: false, errors };
-
-    appData.users.push({ id: uid("user"), name: nextName, role: nextRole, jiraNames: nextJiraNames });
-    notify();
+    appData.users.push({ id: nextUserId, name: nextName, role: nextRole, jiraNames: nextJiraNames });
+    render();
+    send("addUser", "POST", "/api/directory/users", { id: nextUserId, name: nextName, role: nextRole, jiraNames: nextJiraNames });
     if (Storage.nudgeJiraSync) Storage.nudgeJiraSync();
     return { ok: true };
   }
@@ -484,57 +594,50 @@ const State = (() => {
     const user = getUser(userId);
     if (!user) return { ok: false, errors: ["User not found."] };
 
+    const errors = validateDirectoryUser(appData, userId, {
+      name, role, jiraNames: jiraNames === undefined ? user.jiraNames : jiraNames
+    });
+    if (errors.length) return { ok: false, errors };
+
     const nextName = (name || "").trim();
     const nextRole = (role || "").trim();
     const nextJiraNames = normalizeJiraNames(
       jiraNames === undefined ? user.jiraNames : jiraNames, nextName);
 
-    const errors = [];
-    if (!nextName) errors.push("Display name is required.");
-    if (!nextRole) errors.push("Role is required.");
-    if (appData.users.some((u) => u.id !== userId && u.name.trim().toLowerCase() === nextName.toLowerCase())) {
-      errors.push(`Another user is already called "${nextName}".`);
-    }
-    errors.push(...jiraNameClashes(nextJiraNames, userId));
-    if (errors.length) return { ok: false, errors };
-
     user.name = nextName;
     user.role = nextRole;
     user.jiraNames = nextJiraNames;
-    notify();
+    render();
+    send("updateUser", "PATCH", `/api/directory/users/${encodeURIComponent(userId)}`,
+      { name: nextName, role: nextRole, jiraNames: nextJiraNames });
     if (Storage.nudgeJiraSync) Storage.nudgeJiraSync();
     return { ok: true };
   }
 
   function removeUser(userId) {
     appData.users = appData.users.filter((u) => u.id !== userId);
-    notify();
+    render();
+    send("removeUser", "DELETE", `/api/directory/users/${encodeURIComponent(userId)}`);
   }
 
   // The id is a slug of the display name unless one is passed explicitly,
   // so callers only have to collect the name people actually type.
   function addAccount({ id, displayName, repositories }) {
     const nextName = (displayName || "").trim();
+    // Slugged even when an id is supplied explicitly — nothing in the UI
+    // currently supplies one, but the rule has always applied regardless.
     const nextId = (id || nextName).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
     const nextRepos = [...new Set((repositories || []).map((r) => r.trim()).filter(Boolean))];
 
-    const errors = [];
-    if (!nextName) errors.push("Display name is required.");
-    // The id is derived, so a blank one only ever means the name had no
-    // letters or digits to slug — say that instead of naming a hidden field.
-    if (nextName && !nextId) errors.push("Display name needs at least one letter or number.");
-    if (!nextRepos.length) errors.push("At least one repository is required.");
-    // A duplicate name almost always slugs to a duplicate id too — report
-    // the one the person actually typed, not both.
-    if (nextName && appData.accounts.some((a) => a.displayName.trim().toLowerCase() === nextName.toLowerCase())) {
-      errors.push(`Another account is already called "${nextName}".`);
-    } else if (nextId && appData.accounts.some((a) => a.id === nextId)) {
-      errors.push(`Account id "${nextId}" is already taken.`);
-    }
+    // Validated against the id this call will actually apply — not
+    // re-derived from the raw inputs by shared/rules.js, which would use a
+    // different fallback the moment `id` is provided.
+    const errors = validateAccount(appData, null, { id: nextId, displayName, repositories });
     if (errors.length) return { ok: false, errors };
 
     appData.accounts.push({ id: nextId, displayName: nextName, repositories: nextRepos });
-    notify();
+    render();
+    send("addAccount", "POST", "/api/accounts", { id: nextId, displayName: nextName, repositories: nextRepos });
     return { ok: true, id: nextId };
   }
 
@@ -548,21 +651,16 @@ const State = (() => {
     const account = getAccount(accountId);
     if (!account) return { ok: false, errors: ["Account not found."] };
 
+    // The edit form never supplies `id`, so this is ordinarily just
+    // `accountId` unchanged — a rename never touches the id. Computed before
+    // validation so shared/rules.js checks the id this call will actually
+    // apply, not one it would derive from displayName under its own default.
     const nextId = (id || accountId).trim().toLowerCase().replace(/\s+/g, "-");
     const nextName = (displayName || "").trim();
-    const nextRepos = [...new Set((repositories || []).map((r) => r.trim()).filter(Boolean))];
 
-    const errors = [];
-    if (!nextId) errors.push("Account id is required.");
-    if (!nextName) errors.push("Display name is required.");
-    if (!nextRepos.length) errors.push("At least one repository is required.");
-    if (nextId !== accountId && appData.accounts.some((a) => a.id === nextId)) {
-      errors.push(`Account id "${nextId}" is already taken.`);
-    }
-    if (appData.accounts.some((a) => a.id !== accountId && a.displayName.trim().toLowerCase() === nextName.toLowerCase())) {
-      errors.push(`Another account is already called "${nextName}".`);
-    }
+    const errors = validateAccount(appData, accountId, { id: nextId, displayName, repositories });
     if (errors.length) return { ok: false, errors };
+    const nextRepos = [...new Set((repositories || []).map((r) => r.trim()).filter(Boolean))];
 
     const servers = appData.servers.filter((s) => s.accountId === accountId);
     const removedRepos = account.repositories.filter((r) => !nextRepos.includes(r));
@@ -593,7 +691,9 @@ const State = (() => {
 
     if (filters.accountId === accountId) filters.accountId = nextId;
 
-    notify();
+    render();
+    send("updateAccount", "PATCH", `/api/accounts/${encodeURIComponent(accountId)}`,
+      { id: nextId, displayName: nextName, repositories: nextRepos });
     // A renamed account may match Jira tickets it didn't before — same
     // reasoning as addServer(): sync now instead of at the next poll tick.
     if (Storage.nudgeJiraSync) Storage.nudgeJiraSync();
@@ -602,17 +702,20 @@ const State = (() => {
 
   function removeAccount(accountId) {
     appData.accounts = appData.accounts.filter((a) => a.id !== accountId);
-    notify();
+    render();
+    send("removeAccount", "DELETE", `/api/accounts/${encodeURIComponent(accountId)}`);
   }
 
   function updateSettings(partial) {
     Object.assign(appData.settings, partial);
-    notify();
+    render();
+    send("updateSettings", "PATCH", "/api/settings", partial);
   }
 
   function updateJiraOptions(partial) {
     Object.assign(appData.settings.jira, partial);
-    notify();
+    render();
+    send("updateJiraOptions", "PATCH", "/api/settings", { jira: partial });
   }
 
   return {

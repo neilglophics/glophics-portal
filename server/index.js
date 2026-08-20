@@ -2,195 +2,203 @@
  * Local sync server for the Server Management dashboard.
  *
  * This file is the wiring and nothing else: the gate, the routing table, the
- * boot-time migrations, and what gets printed on start. Every piece of work
- * it dispatches to lives beside it —
+ * boot-time migrations, and what gets printed on start. Every piece of work it
+ * dispatches to lives beside it --
  *
- *   paths.js         where everything is on disk, resolved from the repo root
- *   board.js         the board in memory, plus persist() and broadcast()
- *   state-store.js   the board on disk, one file per section in shared-data/
- *   auth-store.js    credentials and sessions (config/auth.json)
- *   ip-allowlist.js  which addresses may reach any of this at all
- *   access.js        who is calling, and whether their role permits it
- *   static.js        the app's own files, from public/ and shared/ only
- *   jira-client.js   talking to Jira, and the API token that needs
- *   routes/          auth.js, state.js, jira.js — one per /api/ area
- *   jobs/            health.js, sync.js — the passes that run on a timer
+ *   config.js          every environment variable, resolved and validated once
+ *   db/                 the connection pool, migrations, query helpers
+ *   repositories/       the only layer that contains SQL
+ *   services/           business rules -- no SQL, no req/res
+ *   http/               the request pipeline: cookies, CSRF, the route table
+ *   routes/             thin handlers, one file per API area
+ *   realtime/            the event bus and the SSE transport
+ *   jobs/               the passes that run on a timer
+ *   ip-allowlist.js     which addresses may reach any of this at all
+ *   static.js           the app's own files, from public/ and shared/ only
  *
- * The order of the three checks below is the whole security model. The IP
- * allowlist comes first, ahead of routing and sessions and even the sign-in
- * screen, so a stranger gets one answer for every path. Then the sign-in
- * handshake, the only part of the API reachable without a session. Then
- * everything else, each route naming the capability it needs.
+ * The order of checks in the pipeline is the whole security model: the IP
+ * allowlist runs first, ahead of routing and sessions and even the sign-in
+ * screen, so a stranger gets one answer for every path. Then session
+ * resolution. Then CSRF. Then the forced-password-change gate. Then the
+ * capability the matched route names. See server/http/pipeline.js.
  *
  * Run: node server/index.js   (or npm start)
- * Then open http://localhost:4000 (or share that port via Live Share).
+ * Then open http://localhost:<PORT>.
  */
 
 const http = require("http");
-const fs = require("fs");
-const path = require("path");
 
-const { ROOT, CONFIG_DIR } = require("./paths.js");
-const Board = require("./board.js");
-const StateStore = require("./state-store.js");
-const Auth = require("./auth-store.js");
+const { config, assertValid } = require("./config.js");
+const migrate = require("./db/migrate.js");
+const dbClient = require("./db/client.js");
 const IpAllowlist = require("./ip-allowlist.js");
-const { sendJson } = require("./http.js");
-const { currentUser } = require("./access.js");
 const { serveStatic } = require("./static.js");
 
-const authRoutes = require("./routes/auth.js");
-const stateRoutes = require("./routes/state.js");
-const jiraRoutes = require("./routes/jira.js");
+const { Router } = require("./http/router.js");
+const { buildRoutes } = require("./http/routes-table.js");
+const pipeline = require("./http/pipeline.js");
+const { sendJson, sendText, baseHeaders } = require("./http/send.js");
+const { toResponse, isExpected } = require("./http/errors.js");
 
-const health = require("./jobs/health.js");
-const sync = require("./jobs/sync.js");
+const { SseHub } = require("./realtime/sse.js");
+const sessionService = require("./services/session.service.js");
+const bootstrap = require("./services/bootstrap.service.js");
+const auditService = require("./services/audit.service.js");
+const throttleService = require("./services/throttle.service.js");
 
-const PORT = process.env.PORT || 4000;
+const healthJob = require("./jobs/health.job.js");
+const jiraSyncJob = require("./jobs/jira-sync.job.js");
+const expiryJob = require("./jobs/expiry.job.js");
+const janitorJob = require("./jobs/janitor.job.js");
+const scheduler = require("./jobs/scheduler.js");
 
-// Handed to the routes that expose a "do it now" button for something the
-// server already does on a timer.
-const jobs = { runHealthChecks: health.runHealthChecks, runJiraSync: sync.runJiraSync };
+async function main() {
+  assertValid();
 
-/**
- * Credentials and connection settings used to sit in the repo root, beside
- * the code and inside the directory the static handler served from. They now
- * live in config/, which nothing serves — so move any that are still where
- * they were. Same shape as the shared-state.json split in state-store.js: the
- * next start relocates them, nobody has to remember to.
- */
-function relocateConfigFiles() {
-  const moved = [];
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  console.log("[boot] applying migrations…");
+  const applied = await migrate.run({ log: (line) => console.log(`  ${line}`) });
 
-  ["auth.json", "jira-config.json", "allowed-ips.json"].forEach((name) => {
-    const from = path.join(ROOT, name);
-    const to = path.join(CONFIG_DIR, name);
-    if (!fs.existsSync(from)) return;
-    // Never overwrite: if both exist, config/ is the live one and the copy in
-    // the root is a leftover somebody should look at rather than lose.
-    if (fs.existsSync(to)) {
-      moved.push(`${name} — left in place, config/${name} already exists`);
-      return;
-    }
-    try {
-      fs.renameSync(from, to);
-      moved.push(`${name} → config/${name}`);
-    } catch (err) {
-      moved.push(`${name} — could not be moved (${err.message})`);
+  const seeded = await bootstrap.seedIfEmpty();
+  const roleCheck = await bootstrap.assertRolesValid();
+
+  throttleService.useGateStatus(() => IpAllowlist.isOpen());
+  auditService.start();
+
+  const sseHub = new SseHub({
+    authorize: async (stream) => {
+      if (!IpAllowlist.allows(stream.req)) return false;
+      return sessionService.isLive(stream.sessionId);
     }
   });
-  return moved;
+  sseHub.start();
+
+  const router = new Router(buildRoutes({ sseHub }));
+
+  const server = http.createServer((req, res) => {
+    handleRequest(req, res, router).catch((err) => {
+      console.error("[http] unhandled error:", err);
+      if (!res.headersSent) sendJson(res, 500, { ok: false, error: "Something went wrong on the server." });
+    });
+  });
+
+  // A malformed cookie value or a client that vanishes mid-request must not
+  // take the whole process down with it -- this is the backstop for anything
+  // that still slips past the pipeline's own error handling.
+  server.on("clientError", (err, socket) => {
+    if (socket.writable) socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
+  });
+
+  server.listen(config.port, () => {
+    printBanner({ applied, seeded, roleCheck });
+
+    healthJob.start();
+    jiraSyncJob.start();
+    expiryJob.start();
+    janitorJob.start();
+  });
+
+  const shutdown = async (signal) => {
+    console.log(`\n[boot] ${signal} received, shutting down…`);
+    scheduler.stopAll();
+    sseHub.stop();
+    server.close();
+    await auditService.stop();
+    await dbClient.close();
+    process.exit(0);
+  };
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
-// Before anything reads them. auth-store.js and ip-allowlist.js both read
-// their file on every call, so this has to happen before the first request —
-// and before seedIfEmpty() below, which would otherwise mint a second super
-// admin against an empty config/auth.json.
-const relocated = relocateConfigFiles();
-
-// A sign-in account names the person behind it by pointing at the board's own
-// directory rather than repeating them, so the credential store needs a way to
-// read that directory (auth-store.js explains why it cannot simply require
-// it). The arrow closes over the property, not today's value — POST
-// /api/state replaces the whole board, and the link has to follow it.
-Auth.useDirectory(() => Board.state.users);
-
-// The very first run has no credentials file, so one super admin is minted
-// here. Set ADMIN_USERNAME / ADMIN_PASSWORD to choose the credentials rather
-// than taking the documented default.
-const seeded = Auth.seedIfEmpty();
-
-// Accounts written before accounts linked to the directory carried their own
-// copy of the Jira names. Convert them now that the directory is readable —
-// after the board is loaded, before anyone can sign in.
-const relinked = Auth.linkAccountsToDirectory();
-
-const server = http.createServer((req, res) => {
+async function handleRequest(req, res, router) {
   // Ahead of routing, sessions and even the sign-in screen: an address that
-  // isn't on the allowlist gets one answer for every path. The body says
-  // nothing about what runs here — a refusal shouldn't confirm there's a
+  // is not on the allowlist gets one answer for every path. The body says
+  // nothing about what runs here -- a refusal should not confirm there is a
   // portal worth coming back for. See ip-allowlist.js.
   if (!IpAllowlist.allows(req)) {
-    res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end("Forbidden");
+    sendText(res, 403, "Forbidden");
     return;
   }
 
-  const url = req.url.split("?")[0];
+  const pathname = req.url.split("?")[0];
 
-  // The sign-in handshake is the only part of the API a stranger reaches.
-  if (authRoutes.routePublic(req, res, url)) return;
+  if (!pathname.startsWith("/api/")) {
+    serveStatic(req, res);
+    return;
+  }
 
-  if (url.startsWith("/api/")) {
-    const user = currentUser(req);
-    if (!user) {
-      sendJson(res, 401, { ok: false, error: "Sign in to continue." });
-      return;
-    }
-    // Each returns true once it has recognised the path and answered.
-    if (authRoutes.route(req, res, url, user)) return;
-    if (stateRoutes.route(req, res, url, user, jobs)) return;
-    if (jiraRoutes.route(req, res, url, user, jobs)) return;
+  const clientIp = IpAllowlist.clientIp(req);
+  const trustProxy = IpAllowlist.trustProxyHops() > 0;
+  const ctx = pipeline.createContext(req, res, { clientIp, trustProxy });
 
+  const matched = router.match(req.method, pathname);
+  if (!matched) {
     sendJson(res, 404, { ok: false, error: "No such API route." });
     return;
   }
-
-  serveStatic(req, res);
-});
-
-server.listen(PORT, () => {
-  console.log(`Server Management running at http://localhost:${PORT}`);
-
-  StateStore.describe().forEach(({ file, lines }) => {
-    console.log(`  shared-data/${file.padEnd(14)} ${String(lines).padStart(5)} lines`);
-  });
-
-  if (relocated.length) {
-    console.log("");
-    console.log("  ┌─ Moved these out of the repo root, into config/ ───────────");
-    relocated.forEach((line) => console.log(`  │  ${line}`));
-    console.log("  │  Nothing serves that directory, so they are no longer");
-    console.log("  │  sitting where a static request could reach them.");
-    console.log("  └───────────────────────────────────────────────────────────");
+  if (matched.methodNotAllowed) {
+    sendJson(res, 405, { ok: false, error: "Method not allowed." },
+      { Allow: router.allowedMethods(pathname).join(", ") });
+    return;
   }
 
-  if (relinked.linked.length) {
-    console.log("");
-    console.log("  ┌─ Linked these sign-in accounts to their directory entry ───");
-    relinked.linked.forEach((line) => console.log(`  │  ${line}`));
-    console.log("  └───────────────────────────────────────────────────────────");
+  try {
+    const body = await pipeline.run(ctx, matched.route, matched.params);
+    // headersSent, not writableEnded: an SSE stream sends headers and its
+    // first frame, then deliberately stays open for hours — writableEnded
+    // would stay false for its entire lifetime, and this branch would try to
+    // write a second, conflicting response on top of a connection the stream
+    // handler is still using. That crashed the process outright: writeHead
+    // throws synchronously when headers are already sent, escaping the
+    // surrounding try/catch here because it happened on a later request
+    // reusing this same handler path, not this one — but the effect was the
+    // same, an uncaught exception with nothing left to catch it.
+    if (res.headersSent) return;
+    sendJson(res, 200, body === undefined ? { ok: true } : body);
+  } catch (err) {
+    if (res.headersSent) {
+      // The response is already committed (a stream, most likely) — there is
+      // nothing left to send, and writing again is exactly the crash this
+      // guard exists to prevent.
+      console.error(`[http] ${req.method} ${pathname} -> error after headers sent:`, err);
+      return;
+    }
+    const { status, body } = toResponse(err);
+    if (!isExpected(err)) console.error(`[http] ${req.method} ${pathname} ->`, err);
+    sendJson(res, status, body);
   }
-  if (relinked.unresolved.length) {
-    // Silence here would leave somebody wondering why My tickets is empty,
-    // so name the accounts whose old Jira names matched nobody — or matched
-    // more than one person, which is not a link worth guessing at.
-    console.log("");
-    console.log("  ┌─ These accounts could not be linked automatically ────────");
-    relinked.unresolved.forEach((line) => console.log(`  │  ${line}`));
-    console.log("  │  Point each at the right person under Users → Edit.");
-    console.log("  └───────────────────────────────────────────────────────────");
+}
+
+function printBanner({ applied, seeded, roleCheck }) {
+  console.log(`Server Management running at http://localhost:${config.port}`);
+  console.log(`  database: ${config.database.host}:${config.database.port}/${config.database.database}`);
+  console.log(`  cookies: ${config.cookieSecure === "auto" ? "Secure decided per-request" : `Secure forced ${config.cookieSecure}`}`);
+
+  if (applied.length) {
+    console.log(`  migrations applied this run: ${applied.join(", ")}`);
   }
 
-  if (seeded && !seeded.isDefault) {
+  if (seeded) {
     console.log("");
-    console.log("  ┌─ First run: super admin created from ADMIN_USERNAME/ADMIN_PASSWORD");
+    console.log("  ┌─ First run: a super admin account was created ─────────────");
     console.log(`  │  username: ${seeded.username}`);
-    console.log("  └───────────────────────────────────────────────────────────────────");
-  } else if (Auth.usingDefaultPassword()) {
-    // Printed on every start, not just the one that created the account —
-    // the run that would have shown it once is usually the run nobody was
-    // watching, which is how a default password quietly becomes permanent.
+    if (seeded.source === "generated") {
+      console.log(`  │  password: ${seeded.password}`);
+      console.log("  │  Generated because ADMIN_PASSWORD was not set. This will not");
+      console.log("  │  be shown again — write it down, or sign in and change it now.");
+    } else {
+      console.log("  │  password: (from ADMIN_PASSWORD)");
+    }
+    console.log("  │  You will be asked to set a new password on first sign-in.");
+    console.log("  └──────────────────────────────────────────────────────────────");
+  }
+
+  if (roleCheck.unknownRoles.length) {
     console.log("");
-    console.log("  ┌─ Sign in with the default credentials ─────────────────");
-    console.log(`  │  username: ${Auth.DEFAULT_ADMIN_USERNAME}`);
-    console.log(`  │  password: ${Auth.DEFAULT_ADMIN_PASSWORD}`);
-    console.log("  │");
-    console.log("  │  This default is in the README, so anyone who has seen");
-    console.log("  │  the repo knows it. Change it under the avatar menu →");
-    console.log("  │  Change password. This notice stops once you do.");
-    console.log("  └────────────────────────────────────────────────────────");
+    console.log(`  ┌─ ${roleCheck.unknownRoles.length} account(s) carry an unrecognised role ─────────`);
+    console.log(`  │  ${roleCheck.unknownRoles.join(", ")}`);
+    console.log("  │  They can sign in but have no permissions until corrected.");
+    console.log("  └──────────────────────────────────────────────────────────────");
   }
 
   if (IpAllowlist.isOpen()) {
@@ -199,22 +207,20 @@ server.listen(PORT, () => {
     console.log("  │  may load the sign-in screen. Set ALLOWED_IPS, or fill in");
     console.log("  │  config/allowed-ips.json (copy allowed-ips.example.json),");
     console.log("  │  to let only your office/VPN addresses through.");
+    console.log("  │  The sign-in throttle is tightened automatically while this");
+    console.log("  │  is open — see AUTH_THROTTLE_PROFILE in the README.");
     console.log("  └───────────────────────────────────────────────────────────");
   } else {
     console.log(`IP allowlist on — ${IpAllowlist.describe()}.`);
   }
 
-  // The passes that run without anyone asking. Started after listen rather
-  // than at require time, so a boot that fails to bind the port doesn't leave
-  // timers running against a server that never came up.
-  health.runHealthChecks();
-  setInterval(health.runHealthChecks, health.HEALTH_CHECK_INTERVAL_MS);
-  setInterval(sync.runExpiryChecks, health.HEALTH_CHECK_INTERVAL_MS);
-  sync.runJiraSync(true).catch(() => {});
-  setInterval(() => sync.runJiraSync(false).catch(() => {}), 20000);
-
   console.log("");
   console.log("Share this port via VS Code Live Share (Shared Servers) so other viewers stay in sync.");
   console.log("Note: Live Share tunnels guests through the host, so they all arrive as loopback —");
-  console.log("the allowlist can't tell them apart. It gates direct network access, not Live Share.");
+  console.log("the allowlist can't tell them apart, and neither can the per-address sign-in throttle.");
+}
+
+main().catch((err) => {
+  console.error("[boot] failed to start:", err.message);
+  process.exitCode = 1;
 });
