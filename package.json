@@ -13,7 +13,9 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:import": "tsx scripts/import-legacy.ts",
     "legacy": "node server/index.js",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "test": "node --import tsx --test tests/*.test.ts",
+    "auth:list": "tsx scripts/set-password.ts list",
+    "auth:set-password": "tsx scripts/set-password.ts set-password"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

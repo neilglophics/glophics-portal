@@ -59,6 +59,28 @@ npm run typecheck
 `db:import` refuses rather than guesses — duplicate Jira labels and claims naming missing
 environments are reported for a human. Re-run with `--truncate` after fixing them.
 
+### Signing in
+
+Imported accounts keep their **original** passwords: scrypt parameters are unchanged, so hashes
+carried over from `config/auth.json` still verify.
+
+**`ADMIN_PASSWORD` only seeds a first account when `auth_users` is empty.** Once any account exists it
+is ignored silently — it is not a way to reset a password, deliberately, because an env var that could
+overwrite a live credential would be a backdoor. Use the CLI instead:
+
+```bash
+npm run auth:list                                    # accounts, roles, lockout state
+npm run auth:set-password -- <username> <password>   # min 8 chars
+```
+
+That drops the account's sessions **and** clears its failed-attempt counter — without the second part
+you can set a fresh password and still be locked out for ten minutes, which reads as the new password
+not working.
+
+Two traps worth knowing: `.env.example` is a committed template and is **never read** (real values go
+in `.env.local` or `.env`), and `db:import --truncate` clears `auth_sessions`, so browsers keep a
+cookie that no longer resolves.
+
 ## Documentation map
 
 | Doc | Read it when |
