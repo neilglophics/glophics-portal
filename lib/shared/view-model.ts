@@ -189,6 +189,9 @@ export function peopleOf(
 export interface RepoRow {
   serverId: string;
   env: string;
+  /** The id, not just the name: the sidebar already links accounts by id
+   *  (`?account=<id>`) and two accounts may share a display name. */
+  accountId: string;
   accountName: string;
   repo: string;
   url: string | null;
@@ -215,6 +218,7 @@ export function repoRows(environments: Environment[], accounts: Account[], claim
       rows.push({
         serverId: env.id,
         env: env.name,
+        accountId: env.accountId,
         accountName: account?.displayName ?? "—",
         repo: repo.repoName,
         url: repo.url || null,
@@ -226,14 +230,150 @@ export function repoRows(environments: Environment[], accounts: Account[], claim
     }
   }
 
-  return rows.sort(
-    (a, b) =>
-      HEALTH_RANK[a.health] - HEALTH_RANK[b.health] ||
-      a.accountName.localeCompare(b.accountName) ||
-      a.env.localeCompare(b.env) ||
-      a.repo.localeCompare(b.repo),
+  return rows.sort(byHealthFirst);
+}
+
+/** The default order: what is broken, first. Also the tiebreaker under every
+ *  other sort, which is what makes sorting stable — two rows that compare equal
+ *  on the chosen column keep a fixed order instead of shuffling between
+ *  renders. */
+function byHealthFirst(a: RepoRow, b: RepoRow): number {
+  return (
+    HEALTH_RANK[a.health] - HEALTH_RANK[b.health] ||
+    a.accountName.localeCompare(b.accountName) ||
+    a.env.localeCompare(b.env) ||
+    a.repo.localeCompare(b.repo)
   );
 }
+
+export interface RepoFilters {
+  /** A RepoHealth, or "all" / undefined. */
+  health?: string;
+  /** A repository name — "storefront", "backend", "admin". */
+  repo?: string;
+  /** An account **id**, matching the sidebar's `?account=` links. */
+  account?: string;
+}
+
+export function filterRepoRows(rows: RepoRow[], filters: RepoFilters): RepoRow[] {
+  const wanted = (value: string | undefined) => (value && value !== "all" ? value : null);
+
+  const health = wanted(filters.health);
+  const repo = wanted(filters.repo);
+  const account = wanted(filters.account);
+
+  return rows.filter((row) => {
+    if (health && row.health !== health) return false;
+    if (repo && row.repo !== repo) return false;
+    if (account && row.accountId !== account) return false;
+    return true;
+  });
+}
+
+/**
+ * How many rows each value of one filter would show, given the OTHER filters.
+ *
+ * Counting the whole board instead would promise numbers the click cannot
+ * deliver: with the account narrowed to one client, an "Offline 25" chip that
+ * lands on three rows reads as a bug. So each dimension is counted against
+ * everything except itself.
+ */
+export function repoFilterCounts(
+  rows: RepoRow[],
+  filters: RepoFilters,
+): {
+  health: Record<RepoHealth, number>;
+  repo: { name: string; count: number }[];
+  account: { id: string; name: string; count: number }[];
+  /** Total for the "All" option of each dimension, on the same basis. */
+  totals: { health: number; repo: number; account: number };
+} {
+  const forHealth = filterRepoRows(rows, { repo: filters.repo, account: filters.account });
+  const forRepo = filterRepoRows(rows, { health: filters.health, account: filters.account });
+  const forAccount = filterRepoRows(rows, { health: filters.health, repo: filters.repo });
+
+  const health: Record<RepoHealth, number> = { online: 0, offline: 0, checking: 0, unconfigured: 0 };
+  for (const row of forHealth) health[row.health] += 1;
+
+  const repo = new Map<string, number>();
+  for (const row of forRepo) repo.set(row.repo, (repo.get(row.repo) ?? 0) + 1);
+
+  const account = new Map<string, { id: string; name: string; count: number }>();
+  for (const row of forAccount) {
+    const entry = account.get(row.accountId) ?? { id: row.accountId, name: row.accountName, count: 0 };
+    entry.count += 1;
+    account.set(row.accountId, entry);
+  }
+
+  return {
+    health,
+    repo: [...repo.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    account: [...account.values()].sort((a, b) => a.name.localeCompare(b.name)),
+    totals: { health: forHealth.length, repo: forRepo.length, account: forAccount.length },
+  };
+}
+
+export const REPO_SORTS = ["health", "repo", "env", "account", "checked"] as const;
+export type RepoSort = (typeof REPO_SORTS)[number];
+export type SortDir = "asc" | "desc";
+
+export function isRepoSort(value: string | undefined): value is RepoSort {
+  return !!value && (REPO_SORTS as readonly string[]).includes(value);
+}
+
+/**
+ * Order the rows. An unrecognised column falls back to the default rather than
+ * throwing, because the sort comes from a URL anyone can edit.
+ *
+ * "asc" always means *the useful direction first* rather than the arithmetic
+ * one: worst health first, oldest check first. A health page exists to surface
+ * problems, so the first click on a column should not bury them.
+ */
+export function sortRepoRows(rows: RepoRow[], sort: string | undefined, dir: string | undefined): RepoRow[] {
+  if (!isRepoSort(sort)) return [...rows].sort(byHealthFirst);
+
+  const flip = dir === "desc" ? -1 : 1;
+
+  return [...rows].sort((a, b) => {
+    let result = 0;
+
+    switch (sort) {
+      case "health":
+        result = HEALTH_RANK[a.health] - HEALTH_RANK[b.health];
+        break;
+      case "repo":
+        result = a.repo.localeCompare(b.repo);
+        break;
+      case "env":
+        result = a.env.localeCompare(b.env);
+        break;
+      case "account":
+        result = a.accountName.localeCompare(b.accountName);
+        break;
+      case "checked": {
+        // Returned BEFORE the flip is applied, so never-checked rows stay last
+        // whichever way the column is sorted. See below.
+        const unchecked = (a.healthCheckedAt ? 0 : 1) - (b.healthCheckedAt ? 0 : 1);
+        if (unchecked !== 0) return unchecked;
+        result =
+          new Date(a.healthCheckedAt!).getTime() - new Date(b.healthCheckedAt!).getTime();
+        break;
+      }
+    }
+
+    return result * flip || byHealthFirst(a, b);
+  });
+}
+
+/*
+ * On sorting by "Checked": NEVER-CHECKED ROWS ARE ALWAYS LAST, in both
+ * directions. "Never" is not the oldest timestamp, it is the absence of one,
+ * and every repository with no URL has it. Sorting those as though they were
+ * ancient would put a screenful of rows that *cannot* be checked above the ones
+ * that can — the opposite of what someone sorting by age is looking for.
+ */
 
 // ---------- claims and the wider board ----------
 

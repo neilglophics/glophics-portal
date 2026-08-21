@@ -75,3 +75,26 @@ export async function notifyJiraSync(
   // No socketId: a cron pass has no acting tab to exclude.
   await publishBoard("jira.synced", payload);
 }
+
+/**
+ * A health pass finished.
+ *
+ * Publishes even when nothing changed, deliberately. `server.health` carries
+ * `checkedAt`, and "last checked 2 minutes ago" is itself something the Health
+ * page renders — a pass where every repository stayed online still changes what
+ * that page should say. At one pass an hour plus the occasional button press
+ * this costs nothing worth optimising away.
+ *
+ * Health feeds occupancy (an offline repo outranks claim state), so the board
+ * pages are revalidated too, not only /health.
+ */
+export async function notifyHealth(
+  payload: BoardEvents["server.health"],
+  options?: { socketId?: string | null },
+): Promise<void> {
+  revalidateOccupancyPaths();
+  revalidatePath("/health");
+  // The shell's per-account rollups count environments needing attention.
+  revalidatePath("/", "layout");
+  await publishBoard("server.health", payload, { socketId: options?.socketId ?? null });
+}
