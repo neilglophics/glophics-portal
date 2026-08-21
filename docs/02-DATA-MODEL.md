@@ -357,6 +357,9 @@ CREATE TABLE chat_conversations (
   dm_key          text,
   created_by      uuid        REFERENCES auth_users(id) ON DELETE SET NULL,
   created_at      timestamptz NOT NULL DEFAULT now(),
+  -- A rename, an avatar change or a membership change is NOT a message, so it must
+  -- not move last_message_at. The group needs a clock of its own. (0004)
+  updated_at      timestamptz NOT NULL DEFAULT now(),
   last_message_at timestamptz,
 
   CONSTRAINT chat_conversations_kind_valid CHECK (kind IN ('dm','group')),
@@ -387,12 +390,45 @@ CREATE TABLE chat_members (
   muted                 boolean     NOT NULL DEFAULT false,
 
   PRIMARY KEY (conversation_id, user_id),
-  CONSTRAINT chat_members_role_valid CHECK (member_role IN ('owner','member'))
+  -- 'admin' added in 0004. Without it there was no way to hand somebody the
+  -- ability to manage a group without handing them the group.
+  CONSTRAINT chat_members_role_valid CHECK (member_role IN ('owner','admin','member'))
 );
 
 -- "My conversations" — the hottest chat query there is.
 CREATE INDEX chat_members_user_idx ON chat_members (user_id);
+
+-- EXACTLY ONE OWNER per conversation. A group with two has an unanswerable
+-- question in it ("who demotes whom"); a group with none cannot be administered
+-- at all. leaveGroup() transfers the title precisely so this stays true. (0004)
+--
+-- Partial, because members and admins are of course many per conversation. It is
+-- also not deferred, which dictates the order inside leaveGroup: the leaver's row
+-- is deleted BEFORE the successor is promoted, since promoting first would put two
+-- owners in the table for the rest of the statement.
+CREATE UNIQUE INDEX chat_members_one_owner_idx
+  ON chat_members (conversation_id) WHERE member_role = 'owner';
 ```
+
+**Group permissions live in `lib/chat/groups.ts`**, not here. One module of pure functions
+(`canManageGroup`, `canRemoveMember`, `successorTo`) is read by the browser to hide a control and by
+every mutation in `lib/db/queries/chat.ts` to refuse one — the same "one list, enforced twice" shape
+as `AUTH_ROLES`. **Hiding is courtesy; the server is the boundary.**
+
+|                    | owner | admin | member |
+|---|---|---|---|
+| rename, avatar, add | ✓ | ✓ | ✗ |
+| remove a member     | ✓ | ✓ | ✗ |
+| remove an admin     | ✓ | ✗ | ✗ |
+| remove the owner    | ✗ | ✗ | ✗ |
+| promote / demote    | ✓ | ✗ | ✗ |
+| leave               | ✓ | ✓ | ✓ |
+
+Two deliberate asymmetries: an admin cannot remove a peer (a race with no correct outcome, and the
+owner is right there), and *nobody* can remove the owner — leaving is the owner's way out, and it
+hands the title to the longest-standing admin, or failing that the longest-standing member. A group
+can therefore never end up with nobody able to administer it. The last member to leave deletes the
+conversation outright rather than leaving an unreachable husk.
 
 **`chat_members` is the authorization boundary.** Every read and every write checks it, and so does
 `/api/pusher/auth` before allowing a subscription to `private-conv-<id>`. Role capabilities decide
@@ -459,6 +495,141 @@ The Postgres row is the record; the blob is only the bytes. Deleting a message m
 too — `blob_pathname` exists so the retention job can, and orphaned blobs are billable storage
 otherwise.
 
+**0005 changed three things about this table**, and the first is the one that matters:
+
+```sql
+ALTER TABLE chat_attachments ALTER COLUMN message_id DROP NOT NULL;
+ALTER TABLE chat_attachments ADD COLUMN conversation_id uuid NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE;
+ALTER TABLE chat_attachments ADD COLUMN uploaded_by     uuid          REFERENCES auth_users(id) ON DELETE SET NULL;
+
+CREATE INDEX chat_attachments_pending_idx ON chat_attachments (created_at) WHERE message_id IS NULL;
+CREATE INDEX chat_attachments_conversation_idx ON chat_attachments (conversation_id);
+```
+
+**An attachment exists before its message does.** The composer shows a file — with its size, a
+progress bar and a remove button — before anything is sent, and the upload has to happen *then*, while
+the person can still act on a failure. So there is a real interval in which an attachment is stored,
+owned by somebody, and attached to nothing. `message_id IS NULL` means exactly that: **staged, not
+sent**.
+
+That state is modelled in this table rather than in a separate `chat_pending_attachments`, because a
+staging table would duplicate every column, need its own authorization rules, and give the orphan
+sweep two places to look. One table, one lifecycle:
+
+| | |
+|---|---|
+| somebody picks a file | `stageAttachment` — row with `message_id NULL`, `uploaded_by` = them |
+| they press send | `claimAttachments` sets `message_id`, **inside the message's transaction** |
+| they never press send | `sweepStaleStaged` removes the row and the blob after 24h |
+
+`claimAttachments` is the security-critical function, and all four of its `WHERE` conditions are
+load-bearing: the ids asked for, `conversation_id` (so a file staged in a private thread cannot be
+re-pointed into another one), `uploaded_by` (so one member cannot attach another member's pending file
+by guessing its id), and `message_id IS NULL` (so an attachment cannot be re-used or moved off the
+message it belongs to). A count mismatch throws and **rolls the whole send back** — a message that
+claims five files and has four is not something the sender can see or correct.
+
+**Where the bytes live, and why the URL is not a secret.** Bytes go to Vercel Blob; only metadata is
+here. Unlike an avatar — a couple of KB after optimisation, stored as `bytea` in 0003 — a PDF is
+megabytes and has no business in a row. The store is configured **private**, so a blob URL answers 403
+unauthenticated and reads are only possible server-side with the token; downloads go through
+`/api/chat/attachments/[id]`, which re-checks membership on every read. See
+[06-OPEN-QUESTIONS.md](06-OPEN-QUESTIONS.md) **Q6**, now answered. `blob_url` is never serialised to a
+client.
+
+**Deleting a message does not delete its files**, and the asymmetry with reactions is deliberate. A
+reaction is metadata about the message: worthless once it is gone, cheap to recreate if the deletion
+was a mistake. An attachment is a file somebody sent, in paid storage, and deleting the bytes is the
+one part of the operation that genuinely cannot be undone. So the rows and bytes stay while *access*
+stops immediately — `attachmentForDownload` refuses anything whose message is soft-deleted, and
+`listMessages` serves no attachment metadata for it. The retention sweep eventually removes the blobs,
+on whatever schedule Q8 settles.
+
+### Replies
+
+**No schema change.** `chat_messages.reply_to_id` has existed since 0001 and `sendMessage` has always
+accepted it; what was missing was a way to set it from the UI and to read the parent back cheaply.
+
+`ON DELETE SET NULL`, not `CASCADE`: a reply is a message in its own right, and hard-deleting what it
+answered must not delete the answer. A *soft*-deleted parent keeps the reference and the quote renders
+"Message deleted" — the honest rendering, because somebody did reply to something that is now gone.
+
+The quote itself is **resolved on read, never stored**. A stored copy would be a quote of text its
+author has since edited or withdrawn, which is exactly what the soft delete exists to prevent. One
+extra join per page is the cheaper mistake. (Contrast system messages, whose text *is* baked at write
+time — there the requirement is the opposite: a log that changes is not a log.)
+
+### Reactions (0004)
+
+```sql
+CREATE TABLE chat_message_reactions (
+  message_id bigint      NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+  -- CASCADE, unlike chat_messages.sender_id which is SET NULL: a message from a
+  -- former member still reads as a message, but a reaction with nobody behind it
+  -- is just a number nobody can account for.
+  user_id    uuid        NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+  emoji      text        NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+
+  PRIMARY KEY (message_id, user_id, emoji),
+  CONSTRAINT chat_message_reactions_emoji_sane CHECK (length(emoji) BETWEEN 1 AND 32)
+);
+
+CREATE INDEX chat_message_reactions_message_idx ON chat_message_reactions (message_id);
+```
+
+**The primary key is the duplicate prevention** — not a check in application code, which two racing
+taps would both pass. It is `(message, user, emoji)` and not `(message, user)`, so one person may hold
+several different emoji on the same message the way Slack and Discord work; "changing" a reaction is
+removing one and adding another, which is what the two taps it takes already express.
+
+The **toggle is one statement**: `DELETE … RETURNING` says whether a row was there in the same
+statement that removes it, and only an empty result leads to an insert (itself
+`ON CONFLICT DO NOTHING`). There is no read-then-write window, so a double-tap resolves to "off"
+rather than to two rows.
+
+The **allowed emoji are not a CHECK.** The list lives in `lib/chat/reactions.ts`, read by the picker
+*and* enforced by the route handler; the column carries a length bound as a backstop only. Encoding it
+in SQL as well would mean a migration every time somebody wants 🤔, and three places to keep in step.
+
+**Deleting a message hard-deletes its reactions** in the same transaction, while the message itself is
+only soft-deleted. The asymmetry is deliberate: the row must survive so replies, ordering and the read
+watermark still mean what they meant, but "😂 3" under *Message deleted* is a count of laughs at
+something nobody can read, and a reaction is a fact whose referent has been withdrawn.
+
+### Group avatars (0004)
+
+```sql
+CREATE TABLE chat_conversation_avatars (
+  conversation_id uuid        PRIMARY KEY REFERENCES chat_conversations(id) ON DELETE CASCADE,
+  bytes           bytea       NOT NULL,
+  mime            text        NOT NULL,
+  width           integer     NOT NULL,
+  height          integer     NOT NULL,
+  byte_size       integer     NOT NULL,
+  updated_at      timestamptz NOT NULL DEFAULT now()   -- the cache-busting ?v= token
+);
+```
+
+Deliberately the same shape and the same reasoning as `auth_user_avatars` (see 0003): bytes in
+Postgres, in their own table so no conversation-list query can drag an image into memory, served by a
+route handler that checks membership. A Blob URL is a capability nobody can withdraw; "visible to this
+group and nobody else" cannot be expressed that way.
+
+### System messages (0004)
+
+`chat_messages` gained `system_event`, constrained so that `kind = 'system'` implies it is set and
+anything else implies it is null. Membership and rename events are stored as **ordinary rows in
+`chat_messages`**, which is the whole trick: they inherit ordering, keyset pagination, the read
+watermark, `last_message_at` and the conversation-list preview for free, so being added to a group is
+something you find out about through the same machinery as a message.
+
+`body` carries the finished sentence — *"Alex added Jamie"* — baked at write time with the names as
+they were then. Resolving it at read time would make a two-year-old line silently rewrite itself when
+Jamie is renamed, or turn into *"Former member added Former member"* once either login is deleted. A
+log that changes is not a log. `system_event` names what happened so the client can render it
+distinctly without parsing English out of `body`.
+
 ### What is deliberately *not* a table
 
 | Not stored | Where it lives instead | Why |
@@ -488,6 +659,12 @@ otherwise.
 | `chat_messages_conv_id_idx` | keyset pagination, newest-first |
 | `chat_messages_client_id_uniq` | idempotent send |
 | `chat_conversations_dm_key_uniq` (partial) | one DM per pair |
+| `chat_members_one_owner_idx` (partial) | exactly one owner per group |
+| `chat_message_reactions` PK on `(message_id, user_id, emoji)` | no duplicate reaction, and the race-free toggle |
+| `chat_message_reactions_message_idx` | the reactions on a page of messages |
+| `chat_attachments_message_idx` | the files on a page of messages |
+| `chat_attachments_pending_idx` (partial) | the abandoned-upload sweep |
+| `chat_attachments_conversation_idx` | per-conversation attachment accounting |
 
 ---
 

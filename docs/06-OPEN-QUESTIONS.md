@@ -13,7 +13,7 @@ Record answers **in this file**, with a date, and update the ADR in
 | [Q3](#q3) | IP allowlist semantics on a public URL | Phase 4 | ⛔ **Blocking** |
 | [Q4](#q4) | Which identity space is a chat participant? | Phase 2 (schema) | ⛔ **Blocking** |
 | [Q5](#q5) | Can admins read others' conversations? | Phase 8 | Open |
-| [Q6](#q6) | Blob privacy: capability URL or proxied? | Phase 11 | Open |
+| [Q6](#q6) | Blob privacy: capability URL or proxied? | Phase 11 | **Answered** — proxied; the store is private, so there was no choice |
 | [Q7](#q7) | Do message bodies transit Pusher? | Phase 8 | Open |
 | [Q8](#q8) | Retention, deletion, and what "delete" means | Phase 13 | Open |
 | [Q9](#q9) | Are group chats tied to environments/tickets? | Phase 9 | Open |
@@ -186,7 +186,32 @@ membership, after leaving the company, or after the message is deleted.
 screenshots of internal environments are low-sensitivity. The deciding question: would a leaked
 screenshot of a staging admin panel matter?
 
-**Answer:** _(pending)_
+**Answer: B, and the store's own configuration made it the only option.** ✅
+
+The premise turned out to be wrong in our favour, and it was settled by probing the live store rather
+than by reading documentation. **The configured Blob store has `private` access:**
+
+- `put({ access: "public" })` is refused outright — *"Cannot use public access on a private store."*
+- an unauthenticated `GET` of a blob URL answers **403 Forbidden**.
+
+So there is no capability URL to leak, and there was never a choice to make: reads are only possible
+server-side with the token. Attachments are therefore served by
+`/api/chat/attachments/[id]`, which re-checks `chat_members` on **every** read — so access is
+genuinely revocable. Somebody removed from a group stops being able to open the files in it, a link
+pasted into an email is worthless to whoever receives it, and a deleted message's files stop being
+served the instant it is deleted.
+
+Two consequences worth knowing:
+
+1. **`blob_url` is never serialised to a client** — not in an API response, not in a Pusher payload.
+   It is stored only because the SDK's delete takes it unambiguously. It would be useless in a
+   browser today, but that is a property of the store's configuration and not something to build on.
+2. **Every image view costs a function invocation.** Mitigated by `Cache-Control: private, max-age=1y,
+   immutable`, which is safe because an attachment's bytes never change — there is no edit path, only
+   delete. A thumbnail is fetched once per browser, not once per render.
+
+Verified by `npm run verify:chat:files`, which asserts the 403 as a test so a future store
+misconfigured as public fails the suite rather than silently going public.
 
 ---
 

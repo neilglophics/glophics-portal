@@ -97,6 +97,39 @@ export const AVATAR_OPTIONS: OptimizeOptions = {
   maxHeight: 256,
 };
 
+/**
+ * A chat image attachment.
+ *
+ * Bigger than an avatar in every dimension, because these are read rather than
+ * glanced at: a screenshot of a failing admin panel has to stay legible enough to
+ * read the error in it, which 256px does not. 1600px is generous for a thumbnail
+ * that expands to a lightbox and still cuts a 6 MB phone photo to a few hundred KB.
+ *
+ * ── One stored size, not two ──
+ *
+ * No separate thumbnail is generated. A second blob per image would double the
+ * uploads, the rows, the delete paths and the sweep's work, to save bandwidth on a
+ * board used by a handful of people on office connections. The bubble renders the
+ * same file at a small size and the browser scales it; `width`/`height` are stored
+ * so it can reserve the right box and not reflow the thread when the image lands.
+ *
+ * `stripMetadata` is doing real work here and not just saving bytes: a phone
+ * screenshot carries EXIF, and EXIF carries GPS.
+ */
+export const ATTACHMENT_OPTIONS: OptimizeOptions = {
+  format: "webp",
+  compressionMode: "balanced",
+  quality: 82,
+  stripMetadata: true,
+  progressive: false,
+  chromaSubsampling: false,
+  // "inside" fits within the box without cropping. A cropped screenshot is a
+  // screenshot with the error message missing.
+  resizeFit: "inside",
+  maxWidth: 1600,
+  maxHeight: 1600,
+};
+
 export async function optimize(
   file: Blob,
   filename: string,

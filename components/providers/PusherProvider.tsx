@@ -126,6 +126,12 @@ export function PusherProvider({ userId, children }: { userId: string; children:
     });
     mine.bind("unread.changed", scheduleRefresh);
     mine.bind("conversation.added", scheduleRefresh);
+    // Added to a group, or removed from one. Both change the conversation list,
+    // which is server-rendered — so a refresh is the whole of the update, and it
+    // is needed wherever in the app the person happens to be standing. The open
+    // thread's own reaction to being removed (navigating out of it) is Thread's
+    // business; this is only the list.
+    mine.bind("conversation.removed", scheduleRefresh);
 
     return () => {
       pusher.connection.unbind("state_change", onState);

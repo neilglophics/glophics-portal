@@ -99,11 +99,43 @@ export interface UserEvents {
   "conversation.added": { conversationId: string };
   /** Signal only. Jira details are fetched from this app after authorization. */
   "jira.notification": Record<string, never>;
+
+  /**
+   * This person is no longer in a conversation — they left, or were removed.
+   *
+   * It has to be a per-user event rather than one on the conversation channel,
+   * because by the time it is published they are not allowed on that channel any
+   * more: /api/pusher/auth checks chat_members, the row is gone, and the
+   * subscription is dead. Told here, their tab can drop the conversation from the
+   * list and unsubscribe instead of sitting on a channel that has gone quiet for
+   * reasons it cannot see.
+   *
+   * Carries an id and nothing else. Whether they were removed or left is already
+   * a system message in a thread they can no longer read, and putting "removed by
+   * Alex" on this channel would be telling them something the group said after
+   * they left.
+   */
+  "conversation.removed": { conversationId: string };
 }
 
 // ---------- conversation (phases 8-10) ----------
 
 export interface ConversationEvents {
+  /**
+   * A message arrived.
+   *
+   * Carries the whole row, including its attachments' METADATA and the quote of
+   * whatever it replied to — but never any file bytes and never a blob URL. A
+   * receiver renders the bubble complete, at the right height, without a fetch;
+   * the images inside it load from `/api/chat/attachments/[id]`, which re-checks
+   * membership per read.
+   *
+   * That split is the point. Sending metadata over Pusher is the same exposure the
+   * body already is (docs/06-OPEN-QUESTIONS.md Q7) and no worse — a filename and a
+   * size. Sending a blob URL would be materially different: it would put a
+   * location for the bytes into a third party's infrastructure, and it is exactly
+   * what keeping downloads behind a proxy exists to prevent.
+   */
   "message.new": {
     id: number;
     conversationId: string;
@@ -112,10 +144,85 @@ export interface ConversationEvents {
     body: string;
     kind: string;
     replyToId: number | null;
+    replyTo: {
+      id: number;
+      senderName: string | null;
+      preview: string;
+      deleted: boolean;
+      thumbnailAttachmentId: string | null;
+      attachmentCount: number;
+    } | null;
+    attachments: {
+      id: string;
+      filename: string;
+      mime: string;
+      bytes: number;
+      width: number | null;
+      height: number | null;
+    }[];
     createdAt: string;
   };
   "message.edited": { id: number; conversationId: string; body: string; editedAt: string };
   "message.deleted": { id: number; conversationId: string };
+
+  /**
+   * A reaction was added or removed.
+   *
+   * ── Why the whole group and not a delta ──
+   *
+   * `users` is the COMPLETE membership of this one emoji after the change, never
+   * "+1 from Sem". A delta is not idempotent: a duplicate event, or one arriving
+   * after the tab has already applied its own optimistic toggle, would count the
+   * same tap twice — and there is no way for a client to tell those apart. A whole
+   * group is order-independent and safe to apply as many times as it arrives,
+   * which is what `mergeReactionGroup` relies on.
+   *
+   * This is the one place where events-are-signals is relaxed, deliberately and
+   * within the same reasoning as `message.new`: refetching a page of messages to
+   * learn that one pill went from 2 to 3 is a round trip for six bytes of truth.
+   * The payload is small and bounded (one emoji, its reactors), and the channel is
+   * already gated on membership — the same gate that lets `message.new` carry a
+   * body at all.
+   *
+   * An empty `users` means the last reactor removed theirs and the pill goes.
+   *
+   * Names are carried so hover can say who without a lookup. That is no more
+   * exposure than the member list this channel's subscribers already have.
+   */
+  "reaction.changed": {
+    messageId: number;
+    conversationId: string;
+    emoji: string;
+    users: { id: string; displayName: string }[];
+  };
+
+  /**
+   * The group's name or photo changed. A SIGNAL — the client refetches.
+   *
+   * `title` rides along because it is one short string that the header can paint
+   * immediately, and a rename that visibly lags behind the system message
+   * announcing it looks broken. The avatar does not: it is bytes behind a
+   * versioned URL, so `avatarVersion` is the cache key and the image loads itself.
+   *
+   * `avatarVersion` is null when the photo did not change — meaning "keep what
+   * you have", not "there is no photo". Only an avatar change sends a version, so
+   * a rename cannot make a group's picture blink out and back.
+   */
+  "conversation.updated": {
+    conversationId: string;
+    title: string | null;
+    avatarVersion: string | null;
+  };
+
+  /**
+   * Somebody joined, left, was removed, or changed tier.
+   *
+   * An id and nothing else, so the client refetches the member list — the strict
+   * events-are-signals rule, and right here because the member list feeds
+   * authorization decisions in the UI (who may remove whom). A pushed copy of it
+   * is a copy that can be stale at exactly the moment somebody clicks.
+   */
+  "members.changed": { conversationId: string };
   /** Never persisted, and there is no `typing.stop` — the receiver lets a
    *  ~4-second timer lapse. A stop event would double the volume of the noisiest
    *  event in the system to convey nothing a timeout cannot. */
