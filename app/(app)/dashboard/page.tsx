@@ -13,6 +13,7 @@ import { describeJiraConfig, issueUrl } from "@/lib/jira/client";
 import { boardSummary } from "@/lib/shared/occupancy";
 import { jiraActivity } from "@/lib/shared/activity";
 import { agoText } from "@/lib/shared/format";
+import { jiraBranchConflicts, type JiraBranchConflict } from "@/lib/shared/jira-conflicts";
 import { ENV_STATE, TONE, shortRepo } from "@/lib/shared/tokens";
 import type { Environment } from "@/lib/types";
 import {
@@ -80,6 +81,65 @@ function JiraRepoLinks({ row, environments }: { row: TicketRow; environments: En
           </span>
         );
       })}
+    </div>
+  );
+}
+
+function JiraConflictNotice({
+  conflicts,
+  jira_base_url,
+}: {
+  conflicts: Map<string, JiraBranchConflict>;
+  jira_base_url: string | null;
+}) {
+  if (!conflicts.size) return null;
+
+  const ticket_ids = [...conflicts.keys()].sort();
+  const repos = [...new Set([...conflicts.values()].flatMap((conflict) => conflict.repos))];
+
+  return (
+    <div
+      className="mb-4 flex gap-3 rounded-2xl bg-warn-soft px-4 py-3.5 text-warn ring-1 ring-warn-soft"
+      role="status"
+    >
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface/70">
+        <Icon name="alert" className="h-4 w-4" />
+      </span>
+      <div className="min-w-0 text-xs leading-5">
+        <p className="font-bold">
+          Branch conflict detected in {ticket_ids.length} ticket{ticket_ids.length === 1 ? "" : "s"}
+        </p>
+        <p className="text-warn/90">
+          Tickets in In Progress or QA Testing (Stg) share the same account, branch, and{" "}
+          {repos.map(shortRepo).join(", ")} repository. Assign a different branch to the affected tickets.
+        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="mr-0.5 text-[10px] font-bold uppercase tracking-wide">Affected tickets</span>
+          {ticket_ids.map((ticket_id) =>
+            jira_base_url ? (
+              <a
+                key={ticket_id}
+                href={issueUrl(jira_base_url, ticket_id)}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`Open ${ticket_id} in Jira`}
+                className="inline-flex items-center gap-1 rounded-md bg-surface/80 px-2 py-1 text-[10px] font-bold text-warn ring-1 ring-warn-soft transition hover:bg-surface hover:ring-warn"
+              >
+                {ticket_id}
+                <Icon name="external" className="h-2.5 w-2.5" />
+                <span className="sr-only">(opens in a new tab)</span>
+              </a>
+            ) : (
+              <strong
+                key={ticket_id}
+                className="rounded-md bg-surface/80 px-2 py-1 text-[10px] ring-1 ring-warn-soft"
+              >
+                {ticket_id}
+              </strong>
+            ),
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -229,8 +289,20 @@ export default async function DashboardPage() {
   // Every Jira-sourced ticket touched recently, holding a repository or not —
   // most recently updated first. Nothing here is a diff against a previous
   // sync (see lib/shared/activity.ts); it's just recency.
-  const jiraUpdates = [...tickets, ...boardRows(issues, environments, accounts, directory, avatars)]
-    .filter((r) => r.claim.source === "jira" && r.claim.jiraUpdatedAt)
+  const jira_rows = [...tickets, ...boardRows(issues, environments, accounts, directory, avatars)].filter(
+    (row) => row.claim.source === "jira",
+  );
+  const branch_conflicts = jiraBranchConflicts(
+    jira_rows.map((row) => ({
+      ticketId: row.claim.id,
+      status: row.claim.status,
+      accountName: row.accountName,
+      branch: row.claim.branch,
+      repos: row.claim.repos,
+    })),
+  );
+  const jiraUpdates = jira_rows
+    .filter((row) => row.claim.jiraUpdatedAt)
     .sort((a, b) => new Date(b.claim.jiraUpdatedAt!).getTime() - new Date(a.claim.jiraUpdatedAt!).getTime())
     .slice(0, TABLE_LIMIT);
 
@@ -345,6 +417,8 @@ export default async function DashboardPage() {
               See all
             </Link>
           </div>
+
+          <JiraConflictNotice conflicts={branch_conflicts} jira_base_url={jira_base_url} />
 
           <Table
             className="flex-1"
