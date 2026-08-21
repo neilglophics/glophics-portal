@@ -382,3 +382,9 @@ export function statusCounts(rows: EnvRow[]): Record<EnvStatus, number> {
   for (const row of rows) counts[row.state] += 1;
   return counts;
 }
+
+export type EnvView = "table" | "matrix";
+
+export function normalizeEnvView(value?: string): EnvView {
+  return value === "matrix" ? "matrix" : "table";
+}
