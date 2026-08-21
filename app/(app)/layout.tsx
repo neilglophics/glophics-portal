@@ -5,6 +5,7 @@ import { Topbar } from "@/components/shell/Topbar";
 import { PusherProvider } from "@/components/providers/PusherProvider";
 import { PresenceProvider } from "@/components/providers/PresenceProvider";
 import { UnreadProvider } from "@/components/providers/UnreadProvider";
+import { JiraNotificationProvider } from "@/components/providers/JiraNotificationProvider";
 import { Toaster } from "@/components/ui/Toaster";
 import { getBoard, getJiraSkippedCount, getJiraSyncState } from "@/lib/db/queries/board";
 import { currentUserOrNull } from "@/lib/auth/require";
@@ -85,11 +86,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           Toaster wraps UnreadProvider, which calls useToast. */}
       <PresenceProvider canChat={roleCan(user.role, "chat")}>
         <Toaster>
-          <UnreadProvider
-            userId={user.id}
-            initialTotal={unreadChats}
-            canChat={roleCan(user.role, "chat")}
-          >
+          <JiraNotificationProvider userId={user.id}>
+            <UnreadProvider
+              userId={user.id}
+              initialTotal={unreadChats}
+              canChat={roleCan(user.role, "chat")}
+            >
             <div className="flex h-full">
               <Sidebar
                 user={user}
@@ -110,7 +112,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                 <main className="no-scrollbar min-h-0 flex-1 overflow-y-auto pt-5">{children}</main>
               </div>
             </div>
-          </UnreadProvider>
+            </UnreadProvider>
+          </JiraNotificationProvider>
         </Toaster>
       </PresenceProvider>
     </PusherProvider>

@@ -34,6 +34,7 @@ import {
   loadFieldIdMap,
   loadJiraConfig,
   normalizeBaseUrl,
+  issueUrl,
   pickFieldValue,
   type JiraConfig,
 } from "./client";
@@ -45,8 +46,21 @@ import {
   statusIn,
   statusIsTerminal,
 } from "./matching";
-import { getAccounts, getDirectoryUsers, getEnvironments, getSettings } from "@/lib/db/queries/board";
-import type { Account, DirectoryUser, Environment, Settings } from "@/lib/types";
+import {
+  getAccounts,
+  getClaims,
+  getDirectoryUsers,
+  getEnvironments,
+  getJiraIssues,
+  getSettings,
+} from "@/lib/db/queries/board";
+import {
+  createJiraNotifications,
+  pruneJiraNotifications,
+} from "@/lib/db/queries/jira-notifications";
+import { jiraNotificationChanges, type JiraNotificationTicket } from "./notifications";
+import { publishBatch, userChannel } from "@/lib/realtime/server";
+import type { Account, Claim, DirectoryUser, Environment, JiraIssue, Settings } from "@/lib/types";
 
 const SYNC_WINDOW = "updated >= -30d";
 const PAGE_SIZE = 100;
@@ -173,6 +187,101 @@ export interface SyncResult {
   skippedCount?: number;
 }
 
+function storedNotificationTickets(
+  claims: readonly Claim[],
+  issues: readonly JiraIssue[],
+): JiraNotificationTicket[] {
+  return [
+    ...claims.filter((claim) => claim.source === "jira").map((claim) => ({
+      ticketId: claim.id,
+      status: claim.status,
+      summary: claim.summary,
+      accountName: claim.accountName,
+      branch: claim.branch,
+      repos: claim.repos,
+      userIds: claim.userIds,
+    })),
+    ...issues.map((issue) => ({
+      ticketId: issue.key,
+      status: issue.status,
+      summary: issue.summary,
+      accountName: issue.accountName,
+      branch: issue.branch,
+      repos: issue.repos,
+      userIds: issue.userIds,
+    })),
+  ];
+}
+
+function fetchedNotificationTickets(
+  tickets: readonly TicketFields[],
+  accounts: readonly Account[],
+  environments: readonly Environment[],
+  directory: readonly DirectoryUser[],
+): JiraNotificationTicket[] {
+  return tickets.map((ticket) => {
+    const match = findServerForTicket(ticket, accounts, environments);
+    const repos = "server" in match
+      ? matchRepositoriesToKeys(
+          ticket.repository,
+          match.server.repos.map((repo) => repo.repoName),
+        ).matched
+      : [];
+
+    return {
+      ticketId: ticket.key,
+      status: ticket.status,
+      summary: ticket.summary,
+      accountName: ticket.accountName,
+      branch: ticket.branch,
+      repos,
+      userIds: matchUserIdsByLabels(ticket.ticketAssignees, directory).matched,
+    };
+  });
+}
+
+async function notifyJiraChanges(
+  previous: readonly JiraNotificationTicket[],
+  current: readonly JiraNotificationTicket[],
+  directory: readonly DirectoryUser[],
+  jira_base_url: string,
+): Promise<void> {
+  try {
+    const auth_user_by_directory_id = new Map(
+      directory
+        .filter((person) => person.avatarUserId)
+        .map((person) => [person.id, person.avatarUserId!] as const),
+    );
+    const rows = jiraNotificationChanges(previous, current).flatMap((change) =>
+      change.directoryUserIds.flatMap((directory_user_id) => {
+        const auth_user_id = auth_user_by_directory_id.get(directory_user_id);
+        return auth_user_id
+          ? [{
+              authUserId: auth_user_id,
+              kind: change.kind,
+              ticketId: change.ticketId,
+              title: change.title,
+              body: change.body,
+              href: issueUrl(jira_base_url, change.ticketId),
+            }]
+          : [];
+      }),
+    );
+
+    const user_ids = await createJiraNotifications(rows);
+    await publishBatch(user_ids.map((user_id) => ({
+      channel: userChannel(user_id),
+      name: "jira.notification",
+      data: {},
+    })));
+    await pruneJiraNotifications();
+  } catch (error) {
+    // Jira data is already committed. Notification delivery is an enhancement,
+    // so it must never turn a successful sync into a reported failure.
+    console.error("[jira] failed to store notifications:", (error as Error).message);
+  }
+}
+
 export async function runJiraSync(force: boolean): Promise<SyncResult> {
   const settings = await getSettings();
   if (!settings.jira.enabled) return { ok: false, reason: "disabled" };
@@ -193,17 +302,20 @@ export async function runJiraSync(force: boolean): Promise<SyncResult> {
   const config = loadJiraConfig();
   if (!config) return { ok: false, reason: "not-configured" };
 
-  const [accounts, environments, directory] = await Promise.all([
+  const [accounts, environments, directory, claims, jira_issues] = await Promise.all([
     getAccounts(),
     getEnvironments(),
     getDirectoryUsers(),
+    getClaims(),
+    getJiraIssues(),
   ]);
 
   // Keys currently holding repositories, asked for by name whatever their status.
-  const heldRows = (await sql`
-    SELECT id FROM claims WHERE source = 'jira'
-  `) as { id: string }[];
-  const heldKeys = heldRows.map((r) => r.id).filter((id) => JIRA_KEY.test(id));
+  const heldKeys = claims
+    .filter((claim) => claim.source === "jira")
+    .map((claim) => claim.id)
+    .filter((id) => JIRA_KEY.test(id));
+  const previous_notifications = storedNotificationTickets(claims, jira_issues);
 
   try {
     const fieldMap = await loadFieldIdMap(config);
@@ -221,6 +333,13 @@ export async function runJiraSync(force: boolean): Promise<SyncResult> {
       INSERT INTO jira_sync_state (id, last_sync_at, last_error) VALUES (1, now(), NULL)
       ON CONFLICT (id) DO UPDATE SET last_sync_at = now(), last_error = NULL
     `;
+
+    await notifyJiraChanges(
+      previous_notifications,
+      fetchedNotificationTickets(tickets, accounts, environments, directory),
+      directory,
+      config.baseUrl,
+    );
 
     return { ok: true, issueCount: tickets.length, ...outcome };
   } catch (err) {
