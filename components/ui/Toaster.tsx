@@ -30,6 +30,8 @@ export interface Toast {
   title: string;
   body: string;
   href?: string;
+  /** Opens an integration URL outside this Next.js app. */
+  external?: boolean;
   /** For the avatar; falls back to initials of `title`. */
   avatarUrl?: string | null;
   count?: number;
@@ -126,7 +128,17 @@ export function Toaster({ children }: { children: React.ReactNode }) {
               key={toast.key}
               className="pointer-events-auto flex items-start gap-3 rounded-2xl bg-surface p-3 shadow-xl ring-1 ring-line"
             >
-              {toast.href ? (
+              {toast.href && toast.external ? (
+                <a
+                  href={toast.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => dismiss(toast.key)}
+                  className="flex min-w-0 flex-1 items-start gap-3"
+                >
+                  {inner}
+                </a>
+              ) : toast.href ? (
                 <Link
                   href={toast.href}
                   onClick={() => dismiss(toast.key)}

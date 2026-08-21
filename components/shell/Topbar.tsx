@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/ui/Icon";
 import { agoText } from "@/lib/shared/format";
 import { ConnectionDot } from "./ConnectionDot";
+import { NotificationToggle } from "./NotificationToggle";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 
 /**
@@ -110,6 +111,7 @@ export function Topbar({
             <span className="truncate">{syncLabel}</span>
           </div>
         </div>
+        <NotificationToggle />
         <ThemeSwitcher />
       </div>
     </header>

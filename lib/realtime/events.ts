@@ -97,6 +97,8 @@ export interface UserEvents {
     totalUnread: number;
   };
   "conversation.added": { conversationId: string };
+  /** Signal only. Jira details are fetched from this app after authorization. */
+  "jira.notification": Record<string, never>;
 }
 
 // ---------- conversation (phases 8-10) ----------

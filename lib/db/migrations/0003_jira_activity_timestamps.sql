@@ -14,8 +14,8 @@
 --
 -- Forward-only. Never edit an applied migration; add another.
 
-ALTER TABLE claims ADD COLUMN jira_created_at timestamptz;
-ALTER TABLE claims ADD COLUMN jira_updated_at timestamptz;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS jira_created_at timestamptz;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS jira_updated_at timestamptz;
 
-ALTER TABLE jira_issues ADD COLUMN jira_created_at timestamptz;
-ALTER TABLE jira_issues ADD COLUMN jira_updated_at timestamptz;
+ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS jira_created_at timestamptz;
+ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS jira_updated_at timestamptz;
