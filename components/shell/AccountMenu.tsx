@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/ui/Avatar";
 import { Icon } from "@/components/ui/Icon";
 import { useIsOnline } from "@/components/providers/PresenceProvider";
+import { playNotificationSound, setSoundEnabled, soundEnabled } from "@/lib/notify/sound";
 import { roleLabel } from "@/lib/shared/roles";
 import { AvatarDialog } from "./AvatarDialog";
 import { ChangePasswordDialog } from "./ChangePasswordDialog";
@@ -19,6 +20,10 @@ export function AccountMenu({ user, avatar_url }: { user: AuthUser; avatar_url: 
   const host_ref = useRef<HTMLDivElement>(null);
   const trigger_ref = useRef<HTMLButtonElement>(null);
   const online = useIsOnline(user.id);
+  // Read on mount rather than at module scope: localStorage does not exist
+  // during the server render, and reading it there would break hydration.
+  const [sound, setSound] = useState(true);
+  useEffect(() => setSound(soundEnabled()), []);
 
   useEffect(() => {
     if (!open) return;
@@ -96,6 +101,29 @@ export function AccountMenu({ user, avatar_url }: { user: AuthUser; avatar_url: 
               >
                 <Icon name="users" className="h-3.5 w-3.5 shrink-0 text-faint" />
                 Profile picture
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !sound;
+                  setSound(next);
+                  setSoundEnabled(next);
+                  // Play it when switching ON, so the choice is confirmed by the
+                  // thing being chosen rather than by a label changing.
+                  if (next) playNotificationSound();
+                }}
+                aria-pressed={sound}
+                className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs font-semibold text-body transition hover:bg-subtle hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              >
+                <Icon name="bell" className="h-3.5 w-3.5 shrink-0 text-faint" />
+                <span className="flex-1">Notification sound</span>
+                <span
+                  className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
+                    sound ? "bg-ok-soft text-ok" : "bg-subtle-2 text-muted"
+                  }`}
+                >
+                  {sound ? "ON" : "OFF"}
+                </span>
               </button>
               <button
                 type="button"
