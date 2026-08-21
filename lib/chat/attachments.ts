@@ -241,8 +241,18 @@ export function attachmentSummary(
 
   if (attachments.length === 1) {
     const only = attachments[0]!;
-    // The name, not the type: "screenshot-3.png" identifies it, "PNG" does not.
-    return attachmentKind(only.mime) === "image" ? `Photo · ${only.filename}` : only.filename;
+    // ── An image is described, never named ──
+    //
+    // It used to read "Photo · test.webp". Everywhere this string appears next to
+    // an image, a thumbnail of that image appears with it — so the filename was
+    // saying, in worse form, what the picture already said. Worse than redundant
+    // for an uploaded screenshot, whose name is usually a timestamp or the
+    // optimiser's ".webp" rewrite rather than anything a person chose.
+    //
+    // A document keeps its name, because there is no thumbnail and the name is the
+    // only thing identifying it: "spec.pdf" is the whole content of that quote,
+    // and "File" would make it useless.
+    return attachmentKind(only.mime) === "image" ? "Photo" : only.filename;
   }
 
   const allImages = attachments.every((a) => attachmentKind(a.mime) === "image");

@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { dropConfirmedPending, mergeMessages } from "../lib/chat/merge.ts";
+import {
+  DELETED_MESSAGE_PREVIEW,
+  applyMessageDeletion,
+  dropConfirmedPending,
+  mergeMessages,
+} from "../lib/chat/merge.ts";
 import type { MessageRow } from "../lib/db/queries/chat.ts";
 
 /**
@@ -97,5 +102,106 @@ describe("dropConfirmedPending", () => {
   it("returns the same reference when there is nothing pending", () => {
     const pending: { clientMsgId: string }[] = [];
     assert.equal(dropConfirmedPending(pending, [msg(1)]), pending);
+  });
+});
+
+/**
+ * Deleting a message changes two things on screen, and the second is the one that
+ * was missed for a while: the message itself, AND every reply quoting it. The
+ * server had always been right (replyPreviewFrom checks the parent's deleted_at),
+ * so the stale quote only appeared on a thread that was already open — which is
+ * every thread, for everybody who was looking at it when it happened.
+ */
+describe("applyMessageDeletion", () => {
+  const withReplyTo = (id: number, parentId: number): MessageRow => ({
+    ...msg(id),
+    replyTo: {
+      id: parentId,
+      senderId: "sender",
+      senderName: "Sender",
+      preview: "the original text",
+      deleted: false,
+      thumbnailAttachmentId: "att-1",
+      attachmentCount: 1,
+    },
+  });
+
+  it("empties the deleted message", () => {
+    const out = applyMessageDeletion([msg(1, "secret")], 1, "2026-08-21T00:00:00.000Z");
+    assert.equal(out[0]!.body, "");
+    assert.equal(out[0]!.deletedAt, "2026-08-21T00:00:00.000Z");
+  });
+
+  it("strips its reactions and attachments", () => {
+    const target: MessageRow = {
+      ...msg(1),
+      reactions: [{ emoji: "👍", users: [{ id: "u", displayName: "U" }] }],
+      attachments: [
+        {
+          id: "att-1",
+          messageId: 1,
+          filename: "shot.webp",
+          mime: "image/webp",
+          bytes: 10,
+          width: null,
+          height: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    };
+    const out = applyMessageDeletion([target], 1, "2026-08-21T00:00:00.000Z");
+    assert.deepEqual(out[0]!.reactions, []);
+    assert.deepEqual(out[0]!.attachments, []);
+  });
+
+  it("silences every reply quoting it", () => {
+    // THE regression. Without this the reply kept displaying the withdrawn text
+    // and a thumbnail of the withdrawn image until somebody reloaded.
+    const out = applyMessageDeletion([msg(1), withReplyTo(2, 1), withReplyTo(3, 1)], 1, "t");
+
+    for (const reply of [out[1]!, out[2]!]) {
+      assert.equal(reply.replyTo!.preview, DELETED_MESSAGE_PREVIEW);
+      assert.equal(reply.replyTo!.deleted, true);
+      // The thumbnail is the actual leak: its bytes are refused by the download
+      // route now, so leaving it renders a broken image at best.
+      assert.equal(reply.replyTo!.thumbnailAttachmentId, null);
+      assert.equal(reply.replyTo!.attachmentCount, 0);
+    }
+  });
+
+  it("keeps the reference rather than dropping it", () => {
+    // Somebody DID reply to something, the parent row still holds its slot, and
+    // the quote stays tappable — it just lands on "Message deleted".
+    const out = applyMessageDeletion([msg(1), withReplyTo(2, 1)], 1, "t");
+    assert.equal(out[1]!.replyTo!.id, 1);
+  });
+
+  it("leaves replies to OTHER messages alone", () => {
+    const out = applyMessageDeletion([msg(1), withReplyTo(2, 99)], 1, "t");
+    assert.equal(out[1]!.replyTo!.preview, "the original text");
+    assert.equal(out[1]!.replyTo!.deleted, false);
+  });
+
+  it("leaves unrelated messages untouched", () => {
+    const before = [msg(1), msg(2), msg(3)];
+    const out = applyMessageDeletion(before, 2, "t");
+    assert.deepEqual(out[0], before[0]);
+    assert.deepEqual(out[2], before[2]);
+  });
+
+  it("is idempotent", () => {
+    // A duplicate event, or an event arriving after the acting tab already applied
+    // its own optimistic fold, must not keep moving the timestamp.
+    const once = applyMessageDeletion([msg(1), withReplyTo(2, 1)], 1, "first");
+    const twice = applyMessageDeletion(once, 1, "second");
+    assert.deepEqual(twice, once);
+    assert.equal(twice[0]!.deletedAt, "first");
+  });
+
+  it("does not mutate what it was given", () => {
+    const before = [msg(1, "secret"), withReplyTo(2, 1)];
+    applyMessageDeletion(before, 1, "t");
+    assert.equal(before[0]!.body, "secret");
+    assert.equal(before[1]!.replyTo!.preview, "the original text");
   });
 });

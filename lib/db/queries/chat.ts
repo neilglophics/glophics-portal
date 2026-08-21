@@ -23,6 +23,7 @@ import { sql, withTransaction } from "@/lib/db/client";
 import type { PoolClient } from "@neondatabase/serverless";
 import { HttpError } from "@/lib/auth/require";
 import { MESSAGE_MAX_LENGTH, messageLength } from "@/lib/chat/limits";
+import { DELETED_MESSAGE_PREVIEW } from "@/lib/chat/merge";
 import { isAllowedReaction, type ReactionGroup } from "@/lib/chat/reactions";
 import {
   ATTACHMENT_MAX_PER_MESSAGE,
@@ -323,7 +324,7 @@ export async function listConversations(viewerId: AuthUserId): Promise<Conversat
       members,
       viewerRole: r.viewer_role,
       unreadCount: r.unread_count,
-      // "Photo · screenshot.png" for an attachment-only message, the text
+      // "Photo" or "spec.pdf" for an attachment-only message, the text
       // otherwise. One helper, shared with the reply quote, so a preview and a
       // quote of the same message never disagree.
       lastMessagePreview: r.last_message

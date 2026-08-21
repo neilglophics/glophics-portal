@@ -10,7 +10,7 @@ import { usePresence } from "@/components/providers/PresenceProvider";
 import { useUnread } from "@/components/providers/UnreadProvider";
 import { conversationChannel, userChannel } from "@/lib/realtime/channels";
 import { getPusher, realtimeHeaders } from "@/lib/realtime/client";
-import { dropConfirmedPending, mergeMessages } from "@/lib/chat/merge";
+import { applyMessageDeletion, dropConfirmedPending, mergeMessages } from "@/lib/chat/merge";
 import {
   MESSAGE_COUNTER_THRESHOLD,
   MESSAGE_MAX_LENGTH,
@@ -320,17 +320,13 @@ export function Thread({
      *
      * Patched in place rather than dropped from the list: the bubble becomes
      * "Message deleted" and keeps its slot, which is what the server does too —
-     * removing the row would put a hole in the pagination cursor and quietly
-     * change what the read watermark refers to. Its reactions go with it.
+     * removing the row would put a hole in the pagination cursor and quietly change
+     * what the read watermark refers to. Its reactions and files go with it, and so
+     * does every quote of it in a reply — see `applyMessageDeletion`, which is the
+     * only place that fold lives so this path and the acting tab's cannot disagree.
      */
     const onDeleted = (data: ConversationEvents["message.deleted"]) => {
-      setConfirmed((prev) =>
-        prev.map((m) =>
-          m.id === data.id
-            ? { ...m, body: "", deletedAt: m.deletedAt ?? new Date().toISOString(), reactions: [] }
-            : m,
-        ),
-      );
+      setConfirmed((prev) => applyMessageDeletion(prev, data.id, new Date().toISOString()));
     };
 
     /** The group was renamed, or its photo changed. */
@@ -610,13 +606,10 @@ export function Thread({
 
       if (!res?.ok) return;
 
-      setConfirmed((prev) =>
-        prev.map((m) =>
-          m.id === messageId
-            ? { ...m, body: "", deletedAt: new Date().toISOString(), reactions: [] }
-            : m,
-        ),
-      );
+      // The same fold the event applies for everybody else, so the person who
+      // deleted it sees exactly what they see — including the replies quoting it
+      // going quiet.
+      setConfirmed((prev) => applyMessageDeletion(prev, messageId, new Date().toISOString()));
     },
     [conversationId],
   );

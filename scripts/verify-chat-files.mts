@@ -294,7 +294,7 @@ try {
   });
   check(
     "an attachment-only parent is still quotable",
-    replyToFile.message.replyTo?.preview === "Photo · shot.webp",
+    replyToFile.message.replyTo?.preview === "Photo",
     JSON.stringify(replyToFile.message.replyTo?.preview),
   );
   check(
