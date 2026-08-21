@@ -21,10 +21,12 @@ function msg(id: number, body = `m${id}`, clientMsgId = `c${id}`): MessageRow {
     kind: "text",
     systemEvent: null,
     replyToId: null,
+    replyTo: null,
     createdAt: new Date(1_700_000_000_000 + id).toISOString(),
     editedAt: null,
     deletedAt: null,
     reactions: [],
+    attachments: [],
   };
 }
 

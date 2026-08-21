@@ -24,10 +24,12 @@
     "auth:unlock": "tsx scripts/set-password.ts unlock",
     "verify:pusher": "tsx scripts/verify-pusher.mts",
     "verify:health": "tsx scripts/verify-health.mts",
-    "check:secrets": "tsx scripts/check-staged-secrets.mts"
+    "check:secrets": "tsx scripts/check-staged-secrets.mts",
+    "verify:chat:files": "tsx scripts/verify-chat-files.mts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
+    "@vercel/blob": "^2.8.0",
     "next": "^15.5.4",
     "nextjs-toploader": "^3.9.17",
     "pusher": "^5.3.4",

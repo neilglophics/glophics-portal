@@ -495,6 +495,70 @@ The Postgres row is the record; the blob is only the bytes. Deleting a message m
 too — `blob_pathname` exists so the retention job can, and orphaned blobs are billable storage
 otherwise.
 
+**0005 changed three things about this table**, and the first is the one that matters:
+
+```sql
+ALTER TABLE chat_attachments ALTER COLUMN message_id DROP NOT NULL;
+ALTER TABLE chat_attachments ADD COLUMN conversation_id uuid NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE;
+ALTER TABLE chat_attachments ADD COLUMN uploaded_by     uuid          REFERENCES auth_users(id) ON DELETE SET NULL;
+
+CREATE INDEX chat_attachments_pending_idx ON chat_attachments (created_at) WHERE message_id IS NULL;
+CREATE INDEX chat_attachments_conversation_idx ON chat_attachments (conversation_id);
+```
+
+**An attachment exists before its message does.** The composer shows a file — with its size, a
+progress bar and a remove button — before anything is sent, and the upload has to happen *then*, while
+the person can still act on a failure. So there is a real interval in which an attachment is stored,
+owned by somebody, and attached to nothing. `message_id IS NULL` means exactly that: **staged, not
+sent**.
+
+That state is modelled in this table rather than in a separate `chat_pending_attachments`, because a
+staging table would duplicate every column, need its own authorization rules, and give the orphan
+sweep two places to look. One table, one lifecycle:
+
+| | |
+|---|---|
+| somebody picks a file | `stageAttachment` — row with `message_id NULL`, `uploaded_by` = them |
+| they press send | `claimAttachments` sets `message_id`, **inside the message's transaction** |
+| they never press send | `sweepStaleStaged` removes the row and the blob after 24h |
+
+`claimAttachments` is the security-critical function, and all four of its `WHERE` conditions are
+load-bearing: the ids asked for, `conversation_id` (so a file staged in a private thread cannot be
+re-pointed into another one), `uploaded_by` (so one member cannot attach another member's pending file
+by guessing its id), and `message_id IS NULL` (so an attachment cannot be re-used or moved off the
+message it belongs to). A count mismatch throws and **rolls the whole send back** — a message that
+claims five files and has four is not something the sender can see or correct.
+
+**Where the bytes live, and why the URL is not a secret.** Bytes go to Vercel Blob; only metadata is
+here. Unlike an avatar — a couple of KB after optimisation, stored as `bytea` in 0003 — a PDF is
+megabytes and has no business in a row. The store is configured **private**, so a blob URL answers 403
+unauthenticated and reads are only possible server-side with the token; downloads go through
+`/api/chat/attachments/[id]`, which re-checks membership on every read. See
+[06-OPEN-QUESTIONS.md](06-OPEN-QUESTIONS.md) **Q6**, now answered. `blob_url` is never serialised to a
+client.
+
+**Deleting a message does not delete its files**, and the asymmetry with reactions is deliberate. A
+reaction is metadata about the message: worthless once it is gone, cheap to recreate if the deletion
+was a mistake. An attachment is a file somebody sent, in paid storage, and deleting the bytes is the
+one part of the operation that genuinely cannot be undone. So the rows and bytes stay while *access*
+stops immediately — `attachmentForDownload` refuses anything whose message is soft-deleted, and
+`listMessages` serves no attachment metadata for it. The retention sweep eventually removes the blobs,
+on whatever schedule Q8 settles.
+
+### Replies
+
+**No schema change.** `chat_messages.reply_to_id` has existed since 0001 and `sendMessage` has always
+accepted it; what was missing was a way to set it from the UI and to read the parent back cheaply.
+
+`ON DELETE SET NULL`, not `CASCADE`: a reply is a message in its own right, and hard-deleting what it
+answered must not delete the answer. A *soft*-deleted parent keeps the reference and the quote renders
+"Message deleted" — the honest rendering, because somebody did reply to something that is now gone.
+
+The quote itself is **resolved on read, never stored**. A stored copy would be a quote of text its
+author has since edited or withdrawn, which is exactly what the soft delete exists to prevent. One
+extra join per page is the cheaper mistake. (Contrast system messages, whose text *is* baked at write
+time — there the requirement is the opposite: a log that changes is not a log.)
+
 ### Reactions (0004)
 
 ```sql
@@ -598,6 +662,9 @@ distinctly without parsing English out of `body`.
 | `chat_members_one_owner_idx` (partial) | exactly one owner per group |
 | `chat_message_reactions` PK on `(message_id, user_id, emoji)` | no duplicate reaction, and the race-free toggle |
 | `chat_message_reactions_message_idx` | the reactions on a page of messages |
+| `chat_attachments_message_idx` | the files on a page of messages |
+| `chat_attachments_pending_idx` (partial) | the abandoned-upload sweep |
+| `chat_attachments_conversation_idx` | per-conversation attachment accounting |
 
 ---
 

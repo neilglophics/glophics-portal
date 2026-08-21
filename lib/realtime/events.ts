@@ -119,6 +119,21 @@ export interface UserEvents {
 // ---------- conversation (phases 8-10) ----------
 
 export interface ConversationEvents {
+  /**
+   * A message arrived.
+   *
+   * Carries the whole row, including its attachments' METADATA and the quote of
+   * whatever it replied to — but never any file bytes and never a blob URL. A
+   * receiver renders the bubble complete, at the right height, without a fetch;
+   * the images inside it load from `/api/chat/attachments/[id]`, which re-checks
+   * membership per read.
+   *
+   * That split is the point. Sending metadata over Pusher is the same exposure the
+   * body already is (docs/06-OPEN-QUESTIONS.md Q7) and no worse — a filename and a
+   * size. Sending a blob URL would be materially different: it would put a
+   * location for the bytes into a third party's infrastructure, and it is exactly
+   * what keeping downloads behind a proxy exists to prevent.
+   */
   "message.new": {
     id: number;
     conversationId: string;
@@ -127,6 +142,22 @@ export interface ConversationEvents {
     body: string;
     kind: string;
     replyToId: number | null;
+    replyTo: {
+      id: number;
+      senderName: string | null;
+      preview: string;
+      deleted: boolean;
+      thumbnailAttachmentId: string | null;
+      attachmentCount: number;
+    } | null;
+    attachments: {
+      id: string;
+      filename: string;
+      mime: string;
+      bytes: number;
+      width: number | null;
+      height: number | null;
+    }[];
     createdAt: string;
   };
   "message.edited": { id: number; conversationId: string; body: string; editedAt: string };

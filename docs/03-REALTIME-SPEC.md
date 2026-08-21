@@ -103,7 +103,7 @@ the publisher and the subscriber, so a renamed event breaks the build rather tha
 
 | Event | Payload | Persisted |
 |---|---|---|
-| `message.new` | `{ id, conversationId, senderId, clientMsgId, body, kind, replyToId, createdAt, attachments[] }` | yes |
+| `message.new` | `{ id, conversationId, senderId, clientMsgId, body, kind, replyToId, replyTo, attachments[], createdAt }` | yes |
 | `message.edited` | `{ id, conversationId, body, editedAt }` | yes |
 | `message.deleted` | `{ id, conversationId }` | soft |
 | `reaction.changed` | `{ messageId, conversationId, emoji, users[] }` | yes |
@@ -136,6 +136,13 @@ path to keep in step — and because it is a real row, it moves `last_message_at
 conversation-list preview, and counts towards unread. The per-member `unread.changed` that follows is
 therefore not optional: skip it and the live badge silently disagrees with the next server render.
 `lib/chat/publish.ts` does all four publishes in one place for exactly that reason.
+
+`message.new` also carries its attachments' **metadata** and the quote of whatever it replied to, so a
+receiver renders the bubble complete and at the right height without a fetch. It carries **no file
+bytes and no blob URL**: the images inside it load from `/api/chat/attachments/[id]`, which re-checks
+membership per read. That split is the point — a filename and a size are the same class of exposure the
+body already is, while putting a blob location into a third party's infrastructure is materially
+different and is exactly what the download proxy exists to prevent (**Q6**).
 
 `message.new` **inlines the body** — chat latency does not tolerate a signal-then-refetch round trip.
 That is a deliberate trade: message text leaves your infrastructure and transits Pusher. It is the
@@ -343,6 +350,7 @@ Enforce server-side, per user, in Postgres or a small counter table:
 | Upload token request | 20 / hour |
 | Mark read | 10 / 10 s |
 | React to a message | 30 / 10 s |
+| Upload an attachment | 10 / minute |
 | Manage a group (rename, avatar, add, remove, role) | 20 / minute |
 | Delete own message | 20 / minute |
 
@@ -350,6 +358,10 @@ Reactions are looser than sends because a reaction is one tap and people do go d
 to several messages in a row. Group management is tighter than it looks like it needs to be, and the
 thing being limited there is not load: every one of those writes a system message into a thread
 everybody sees, so the failure mode is somebody making the history unreadable.
+
+Attachment uploads publish **nothing at all**. A staged file is not part of the conversation yet — it is
+somebody's draft, and telling the other members about a file that may never be sent would be showing
+them a keystroke. The message that eventually carries it is the first anybody hears of it.
 
 Reactions deliberately do **not** touch `last_message_at` or unread counts. A thumbs-up is
 acknowledgement, not a message; bumping a conversation to the top of everybody's list and lighting up a

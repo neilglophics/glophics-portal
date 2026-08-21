@@ -25,6 +25,12 @@ import { HttpError } from "@/lib/auth/require";
 import { MESSAGE_MAX_LENGTH, messageLength } from "@/lib/chat/limits";
 import { isAllowedReaction, type ReactionGroup } from "@/lib/chat/reactions";
 import {
+  ATTACHMENT_MAX_PER_MESSAGE,
+  attachmentKind,
+  attachmentSummary,
+} from "@/lib/chat/attachments";
+import { claimAttachments, type AttachmentView } from "@/lib/db/queries/attachments";
+import {
   canManageGroup,
   canManageRoles,
   canRemoveMember,
@@ -71,6 +77,31 @@ export interface ConversationSummary {
   muted: boolean;
 }
 
+/**
+ * Enough of the replied-to message to render the quote inside a reply bubble, and
+ * the chip above the composer.
+ *
+ * Denormalised into the reply's own row on read, NOT stored — the parent is a live
+ * message and its own edit or deletion has to be reflected. Baking this at write
+ * time (as system messages deliberately do) would leave a quote of text that has
+ * since been withdrawn, which is the one thing a soft delete exists to prevent.
+ */
+export interface ReplyPreview {
+  id: number;
+  senderId: AuthUserId | null;
+  senderName: string | null;
+  /** One line. The parent's text, or a description of its files when it had no
+   *  text — an attachment-only message still has to be quotable. */
+  preview: string;
+  /** The parent has been deleted. The reference stays (somebody did reply to
+   *  something) but says so instead of quoting a body that is now empty. */
+  deleted: boolean;
+  /** First image on the parent, so the chip can show a thumbnail rather than the
+   *  word "Photo". Null when the parent has no image. */
+  thumbnailAttachmentId: string | null;
+  attachmentCount: number;
+}
+
 export interface MessageRow {
   id: number;
   conversationId: string;
@@ -83,12 +114,19 @@ export interface MessageRow {
    *  render it distinctly without parsing English out of `body`. */
   systemEvent: string | null;
   replyToId: number | null;
+  /** Resolved from `replyToId`. Null when this is not a reply, and also when the
+   *  parent was hard-deleted — the FK is ON DELETE SET NULL, so `replyToId` goes
+   *  null with it and there is nothing left to point at. */
+  replyTo: ReplyPreview | null;
   createdAt: string;
   editedAt: string | null;
   deletedAt: string | null;
   /** One entry per emoji that has at least one reactor. Empty on a message
    *  nobody has reacted to, and on a deleted one. */
   reactions: ReactionGroup[];
+  /** Files on this message. Metadata only — the bytes are in Vercel Blob and are
+   *  fetched through /api/chat/attachments/[id], which re-checks membership. */
+  attachments: AttachmentView[];
 }
 
 // ---------- membership ----------
@@ -202,9 +240,19 @@ export async function listConversations(viewerId: AuthUserId): Promise<Conversat
                AND m.deleted_at IS NULL
                AND m.id > COALESCE(me.last_read_message_id, 0)
                AND m.sender_id IS DISTINCT FROM ${viewerId}) AS unread_count,
-           (SELECT m.body FROM chat_messages m
+           -- The newest message's text AND its files, because an attachment-only
+           -- message has an empty body and would otherwise show as a blank
+           -- preview on a conversation that has just been active.
+           (SELECT json_build_object(
+                     'body', m.body,
+                     'attachments', COALESCE((
+                       SELECT json_agg(json_build_object('filename', a.filename, 'mime', a.mime)
+                              ORDER BY a.created_at, a.id)
+                         FROM chat_attachments a WHERE a.message_id = m.id
+                     ), '[]'::json))
+              FROM chat_messages m
              WHERE m.conversation_id = c.id AND m.deleted_at IS NULL
-             ORDER BY m.id DESC LIMIT 1) AS last_preview,
+             ORDER BY m.id DESC LIMIT 1) AS last_message,
            COALESCE(
              (SELECT json_agg(json_build_object(
                         'id', u.id,
@@ -236,7 +284,7 @@ export async function listConversations(viewerId: AuthUserId): Promise<Conversat
     viewer_role: MemberRole;
     avatar_version: string | null;
     unread_count: number;
-    last_preview: string | null;
+    last_message: { body: string; attachments: { filename: string; mime: string }[] } | null;
     members: {
       id: string;
       displayName: string;
@@ -275,7 +323,12 @@ export async function listConversations(viewerId: AuthUserId): Promise<Conversat
       members,
       viewerRole: r.viewer_role,
       unreadCount: r.unread_count,
-      lastMessagePreview: r.last_preview,
+      // "Photo · screenshot.png" for an attachment-only message, the text
+      // otherwise. One helper, shared with the reply quote, so a preview and a
+      // quote of the same message never disagree.
+      lastMessagePreview: r.last_message
+        ? attachmentSummary(r.last_message.body, r.last_message.attachments ?? []) || null
+        : null,
       muted: r.muted,
     };
   });
@@ -408,6 +461,49 @@ export async function conversationDetail(
 
 const PAGE_SIZE = 50;
 
+/** How much of the parent a reply quotes. Long enough to identify the message,
+ *  short enough that a reply to an essay does not become the essay. */
+const REPLY_PREVIEW_MAX = 140;
+
+/**
+ * Builds the reply quote from the joined parent columns.
+ *
+ * Kept as a function rather than inlined because three call sites need it — a
+ * page of messages, the catch-up fetch, and the row returned from a send — and a
+ * reply that renders differently depending on how it arrived is the bug this
+ * prevents.
+ */
+function replyPreviewFrom(row: {
+  parent_id: string | number | null;
+  parent_sender_id: string | null;
+  parent_sender_name: string | null;
+  parent_body: string | null;
+  parent_deleted_at: string | null;
+  parent_attachments: { id: string; filename: string; mime: string }[] | null;
+}): ReplyPreview | null {
+  if (row.parent_id === null) return null;
+
+  const deleted = !!row.parent_deleted_at;
+  const attachments = deleted ? [] : (row.parent_attachments ?? []);
+
+  return {
+    id: Number(row.parent_id),
+    senderId: row.parent_sender_id,
+    senderName: row.parent_sender_name,
+    // A deleted parent quotes nothing. The reference stays — somebody did reply
+    // to something — but the text it replied to is not served, exactly as the
+    // parent's own body is not.
+    preview: deleted
+      ? "Message deleted"
+      : attachmentSummary(row.parent_body ?? "", attachments).slice(0, REPLY_PREVIEW_MAX),
+    deleted,
+    // The first image, so the chip shows the picture rather than the word for it.
+    thumbnailAttachmentId:
+      attachments.find((a) => attachmentKind(a.mime) === "image")?.id ?? null,
+    attachmentCount: attachments.length,
+  };
+}
+
 /**
  * A page of messages, newest first.
  *
@@ -460,9 +556,40 @@ export async function listMessages(
                   WHERE r.message_id = m.id
                   GROUP BY r.emoji
                ) g
-           ), '[]'::json) AS reactions
+           ), '[]'::json) AS reactions,
+           -- Attachments come with the page for the same reason reactions do: a
+           -- second round trip would render every bubble at the wrong height and
+           -- then reflow the whole thread as the files arrived.
+           COALESCE((
+             SELECT json_agg(json_build_object(
+                      'id', a.id, 'messageId', a.message_id, 'filename', a.filename,
+                      'mime', a.mime, 'bytes', a.bytes, 'width', a.width,
+                      'height', a.height, 'createdAt', a.created_at)
+                    ORDER BY a.created_at, a.id)
+               FROM chat_attachments a WHERE a.message_id = m.id
+           ), '[]'::json) AS attachments,
+           -- The replied-to message, resolved on READ rather than stored.
+           --
+           -- A stored copy would be a quote of text that its author has since
+           -- edited or withdrawn, which is exactly what the soft delete exists to
+           -- prevent. One extra join per page is the cheaper mistake.
+           p.id            AS parent_id,
+           p.sender_id     AS parent_sender_id,
+           pu.display_name AS parent_sender_name,
+           p.body          AS parent_body,
+           p.deleted_at    AS parent_deleted_at,
+           COALESCE((
+             SELECT json_agg(json_build_object('id', pa.id, 'filename', pa.filename, 'mime', pa.mime)
+                    ORDER BY pa.created_at, pa.id)
+               FROM chat_attachments pa WHERE pa.message_id = p.id
+           ), '[]'::json) AS parent_attachments
       FROM chat_messages m
       LEFT JOIN auth_users u ON u.id = m.sender_id
+      -- LEFT, so a message whose parent was hard-deleted still comes back. The FK
+      -- is ON DELETE SET NULL, so in that case reply_to_id is already null and
+      -- this join simply finds nothing.
+      LEFT JOIN chat_messages p ON p.id = m.reply_to_id
+      LEFT JOIN auth_users pu ON pu.id = p.sender_id
      WHERE m.conversation_id = ${conversationId}
        AND (${opts.before ?? null}::bigint IS NULL OR m.id < ${opts.before ?? null}::bigint)
        AND (${opts.after ?? null}::bigint IS NULL OR m.id > ${opts.after ?? null}::bigint)
@@ -482,6 +609,13 @@ export async function listMessages(
     edited_at: string | null;
     deleted_at: string | null;
     reactions: ReactionGroup[] | null;
+    attachments: AttachmentView[] | null;
+    parent_id: string | number | null;
+    parent_sender_id: string | null;
+    parent_sender_name: string | null;
+    parent_body: string | null;
+    parent_deleted_at: string | null;
+    parent_attachments: { id: string; filename: string; mime: string }[] | null;
   }[];
 
   const hasMore = rows.length > limit;
@@ -502,6 +636,7 @@ export async function listMessages(
       kind: r.kind,
       systemEvent: r.system_event,
       replyToId: r.reply_to_id === null ? null : Number(r.reply_to_id),
+      replyTo: replyPreviewFrom(r),
       createdAt: r.created_at,
       editedAt: r.edited_at,
       deletedAt: r.deleted_at,
@@ -510,6 +645,11 @@ export async function listMessages(
       // deleted" would be a strange thing to have to explain, and belt and
       // braces costs one comparison.
       reactions: r.deleted_at ? [] : (r.reactions ?? []),
+      // A deleted message serves no attachment metadata, matching its empty
+      // body. The rows survive for the retention sweep, and the download route
+      // refuses them independently — this only stops the client from drawing a
+      // file card nobody could open.
+      attachments: r.deleted_at ? [] : (r.attachments ?? []),
     })),
     hasMore,
   };
@@ -539,12 +679,32 @@ export interface SendResult {
 export async function sendMessage(
   conversationId: string,
   viewerId: AuthUserId,
-  input: { clientMsgId: string; body: string; replyToId?: number | null },
+  input: {
+    clientMsgId: string;
+    body: string;
+    replyToId?: number | null;
+    /** Ids from `stageAttachment`, claimed inside this transaction. */
+    attachmentIds?: string[];
+  },
 ): Promise<SendResult> {
   await assertMember(conversationId, viewerId);
 
   const body = input.body.trim();
-  if (!body) throw new HttpError(400, "Nothing to send.");
+  const attachmentIds = [...new Set((input.attachmentIds ?? []).map(String).filter(Boolean))];
+
+  // ── A message needs a body OR a file, not necessarily both ──
+  //
+  // This used to be `if (!body) throw`. An attachment-only message is a real
+  // message — somebody drops a screenshot in with nothing to add — so emptiness is
+  // only a problem when there is nothing else either.
+  if (!body && !attachmentIds.length) throw new HttpError(400, "Nothing to send.");
+
+  if (attachmentIds.length > ATTACHMENT_MAX_PER_MESSAGE) {
+    throw new HttpError(
+      400,
+      `That's ${attachmentIds.length} files. ${ATTACHMENT_MAX_PER_MESSAGE} is the limit for one message.`,
+    );
+  }
 
   // Counted in graphemes, exactly as the composer counts it, so a message the UI
   // said was 2000 is never rejected here as 2004 because of a few emoji.
@@ -561,26 +721,99 @@ export async function sendMessage(
     throw new HttpError(400, "Bad client message id.");
   }
 
+  /**
+   * The parent, if this is a reply.
+   *
+   * Checked, rather than trusted: `reply_to_id` comes from a request body, and
+   * without this clause a member of one conversation could point a reply at a
+   * message in another and have its text quoted back into a thread it does not
+   * belong to. Scoped to THIS conversation is the whole check.
+   *
+   * A reply to a soft-deleted message is allowed on purpose — the parent still
+   * occupies its slot and the quote renders as "Message deleted", which is more
+   * honest than refusing and leaving somebody unable to reply to a thread they can
+   * see. A reply to a *nonexistent* id is refused: that is a bug or a probe.
+   */
+  let replyToId: number | null = null;
+  if (input.replyToId !== null && input.replyToId !== undefined) {
+    const found = (await sql`
+      SELECT id FROM chat_messages
+       WHERE id = ${input.replyToId} AND conversation_id = ${conversationId}
+       LIMIT 1
+    `) as unknown[];
+    if (!found.length) throw new HttpError(404, "The message you're replying to is gone.");
+    replyToId = Number(input.replyToId);
+  }
+
+  // Self-describing rows: 'attachment' when there is nothing but files, so the
+  // conversation-list preview and any future filter can tell without a join. This
+  // is what 0001's `kind` column was reserved for.
+  const kind = body ? "text" : "attachment";
+
   const outcome = await withTransaction(async (client) => {
     const inserted = await client.query<{ id: string; created_at: string }>(
       `INSERT INTO chat_messages (conversation_id, sender_id, client_msg_id, body, kind, reply_to_id)
-       VALUES ($1, $2, $3, $4, 'text', $5)
+       VALUES ($1, $2, $3, $4, $6, $5)
        ON CONFLICT (conversation_id, client_msg_id) DO NOTHING
        RETURNING id, created_at`,
-      [conversationId, viewerId, clientMsgId, body, input.replyToId ?? null],
+      [conversationId, viewerId, clientMsgId, body, replyToId, kind],
     );
 
     if (!inserted.rows.length) {
       // A retry. Return what is already stored rather than erroring — from the
       // caller's point of view the send succeeded, which it did.
+      //
+      // Its attachments were claimed by the first attempt, so they are read back
+      // rather than claimed again: `claimAttachments` only matches rows with a
+      // null message_id, so a second claim would find nothing and wrongly fail
+      // the whole send.
       const existing = await client.query<{ id: string; created_at: string }>(
         "SELECT id, created_at FROM chat_messages WHERE conversation_id = $1 AND client_msg_id = $2",
         [conversationId, clientMsgId],
       );
-      return { row: existing.rows[0]!, created: false };
+      const row = existing.rows[0]!;
+      const already = await client.query<{
+        id: string;
+        message_id: string;
+        filename: string;
+        mime: string;
+        bytes: string;
+        width: number | null;
+        height: number | null;
+        created_at: string;
+      }>(
+        `SELECT id, message_id, filename, mime, bytes, width, height, created_at
+           FROM chat_attachments WHERE message_id = $1 ORDER BY created_at, id`,
+        [row.id],
+      );
+
+      return {
+        row,
+        created: false,
+        attachments: already.rows.map((a) => ({
+          id: a.id,
+          messageId: Number(a.message_id),
+          filename: a.filename,
+          mime: a.mime,
+          bytes: Number(a.bytes),
+          width: a.width,
+          height: a.height,
+          createdAt: a.created_at,
+        })),
+      };
     }
 
     const row = inserted.rows[0]!;
+
+    // Inside the transaction, so a file that cannot be claimed takes the message
+    // with it. The alternative — a message that says it has five attachments and
+    // has four — is not something the sender can see or correct.
+    const attachments = await claimAttachments(client, {
+      conversationId,
+      messageId: Number(row.id),
+      uploaderId: viewerId,
+      attachmentIds,
+    });
 
     await client.query(
       "UPDATE chat_conversations SET last_message_at = $2 WHERE id = $1",
@@ -592,7 +825,7 @@ export async function sendMessage(
       [conversationId, viewerId, row.id],
     );
 
-    return { row, created: true };
+    return { row, created: true, attachments };
   });
 
   const senderName = (await sql`
@@ -600,6 +833,12 @@ export async function sendMessage(
   `) as { display_name: string }[];
 
   const everyone = await memberIds(conversationId);
+
+  // Read back through the same helper the page uses, so the quote on a message
+  // that arrived over Pusher is identical to the quote on the same message after
+  // a reload. Two code paths producing two renderings of one reply is exactly the
+  // bug this avoids.
+  const replyTo = replyToId === null ? null : await replyPreviewFor(replyToId);
 
   return {
     created: outcome.created,
@@ -611,9 +850,10 @@ export async function sendMessage(
       senderName: senderName[0]?.display_name ?? null,
       clientMsgId,
       body,
-      kind: "text",
+      kind,
       systemEvent: null,
-      replyToId: input.replyToId ?? null,
+      replyToId,
+      replyTo,
       createdAt: outcome.row.created_at,
       editedAt: null,
       deletedAt: null,
@@ -621,8 +861,40 @@ export async function sendMessage(
       // rather than omitted so the event payload and a fetched page are the
       // same shape — the client merges them through the same function.
       reactions: [],
+      attachments: outcome.attachments,
     },
   };
+}
+
+/**
+ * One reply quote, by parent id.
+ *
+ * The single-row form of what `listMessages` gets from its join. Exists so a send
+ * and a page load cannot disagree about how a reply renders.
+ */
+export async function replyPreviewFor(parentId: number): Promise<ReplyPreview | null> {
+  const rows = (await sql`
+    SELECT p.id AS parent_id, p.sender_id AS parent_sender_id,
+           pu.display_name AS parent_sender_name, p.body AS parent_body,
+           p.deleted_at AS parent_deleted_at,
+           COALESCE((
+             SELECT json_agg(json_build_object('id', pa.id, 'filename', pa.filename, 'mime', pa.mime)
+                    ORDER BY pa.created_at, pa.id)
+               FROM chat_attachments pa WHERE pa.message_id = p.id
+           ), '[]'::json) AS parent_attachments
+      FROM chat_messages p
+      LEFT JOIN auth_users pu ON pu.id = p.sender_id
+     WHERE p.id = ${parentId}
+  `) as {
+    parent_id: string | number;
+    parent_sender_id: string | null;
+    parent_sender_name: string | null;
+    parent_body: string | null;
+    parent_deleted_at: string | null;
+    parent_attachments: { id: string; filename: string; mime: string }[] | null;
+  }[];
+
+  return rows[0] ? replyPreviewFrom(rows[0]) : null;
 }
 
 // ---------- deleting ----------
@@ -685,6 +957,24 @@ export async function deleteMessage(
     );
     await client.query("DELETE FROM chat_message_reactions WHERE message_id = $1", [messageId]);
   });
+
+  // ── Attachments are NOT deleted here, and the difference from reactions is
+  //    deliberate ──
+  //
+  // A reaction is metadata about the message: worthless once the message is gone,
+  // and cheap to recreate if the deletion was a mistake. An attachment is a file
+  // somebody sent, sitting in paid storage, and deleting the bytes is the one part
+  // of this operation that genuinely cannot be undone.
+  //
+  // So the rows stay and the bytes stay, while access stops immediately:
+  // `attachmentForDownload` refuses anything whose message is soft-deleted, and
+  // `listMessages` serves no attachment metadata for it. The retention sweep is
+  // what eventually removes the blobs, on the same schedule that purges the
+  // message itself (docs/06-OPEN-QUESTIONS.md Q8).
+  //
+  // Net effect: a deleted message's files are unreachable through the app the
+  // instant it is deleted, which is what "deleted" has to mean here, without the
+  // irreversible half happening on a mis-click.
 
   return { id: messageId, alreadyDeleted: false };
 }
@@ -984,11 +1274,17 @@ async function writeSystemMessage(
     body,
     kind: "system",
     systemEvent: event,
+    // A system message is the group narrating itself: it answers nothing, carries
+    // nothing, and is not reactable. All three stated rather than omitted, so the
+    // event payload and a fetched page are the same shape and the client merges
+    // them through one function.
     replyToId: null,
+    replyTo: null,
     createdAt: row.created_at,
     editedAt: null,
     deletedAt: null,
     reactions: [],
+    attachments: [],
   };
 }
 

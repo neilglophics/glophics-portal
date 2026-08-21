@@ -20,7 +20,17 @@ import { applyReactionToggle, mergeReactionGroup, type ReactionGroup } from "@/l
 import { formatDateTime } from "@/lib/shared/format";
 import { HoverAction, ReactionPicker, ReactionPills } from "./Reactions";
 import { GroupDialog } from "./GroupDialog";
-import type { ConversationSummary, MessageRow } from "@/lib/db/queries/chat";
+import {
+  AttachButton,
+  AttachmentGrid,
+  ComposerAttachments,
+  ImageLightbox,
+} from "./Attachments";
+import { ReplyComposerChip, ReplyQuote } from "./Reply";
+import { useUploads } from "./useUploads";
+import { ACCEPT_ATTRIBUTE, ATTACHMENT_MAX_PER_MESSAGE } from "@/lib/chat/attachments";
+import type { AttachmentView } from "@/lib/db/queries/attachments";
+import type { ConversationSummary, MessageRow, ReplyPreview } from "@/lib/db/queries/chat";
 import type { ConversationEvents } from "@/lib/realtime/events";
 
 /**
@@ -49,6 +59,17 @@ interface Pending {
   clientMsgId: string;
   body: string;
   failed: boolean;
+  /**
+   * The optimistic bubble carries its files and its quote too.
+   *
+   * Without these, a reply with two screenshots renders as a bare line of text for
+   * the length of the round trip and then visibly rearranges itself into something
+   * taller when the real row lands. Neither is a guess: the attachments are
+   * already uploaded by the time Send is pressed, and the quote came from the
+   * server when the reply was started.
+   */
+  attachments: AttachmentView[];
+  replyTo: ReplyPreview | null;
 }
 
 const TYPING_PING_MS = 3000;
@@ -119,6 +140,23 @@ export function Thread({
    */
   const [readUpTo, setReadUpTo] = useState<Record<string, number>>(initialReadUpTo);
   const [missed, setMissed] = useState(0);
+
+  /** The message being replied to, or null. Server-produced, so the quote above
+   *  the composer is the same quote the bubble will show. */
+  const [replyingTo, setReplyingTo] = useState<ReplyPreview | null>(null);
+  /** The image the lightbox is showing. */
+  const [lightbox, setLightbox] = useState<AttachmentView | null>(null);
+  /**
+   * Jumping to a quoted message, which is a two-step problem: the target may not
+   * be loaded. `jumpTarget` is the id being hunted; the effect below pages
+   * backwards until it appears and then scrolls to it. `highlightId` is the brief
+   * flash afterwards, so the eye can find it among fifty similar bubbles.
+   */
+  const [jumpTarget, setJumpTarget] = useState<number | null>(null);
+  const [highlightId, setHighlightId] = useState<number | null>(null);
+  const [jumpFailed, setJumpFailed] = useState(false);
+
+  const uploads = useUploads(conversationId);
 
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
@@ -441,18 +479,35 @@ export function Thread({
   }, [conversationId]);
 
   const send = useCallback(
-    async (bodyText: string, existingClientMsgId?: string) => {
+    async (
+      bodyText: string,
+      options?: {
+        existingClientMsgId?: string;
+        attachments?: AttachmentView[];
+        replyTo?: ReplyPreview | null;
+      },
+    ) => {
       const body = bodyText.trim();
-      if (!body) return;
+      const attachments = options?.attachments ?? [];
+      const replyTo = options?.replyTo ?? null;
+      const existingClientMsgId = options?.existingClientMsgId;
+
+      // A body OR files. An attachment-only message is a real message — somebody
+      // drops a screenshot in with nothing to add — so emptiness only blocks a
+      // send when there is nothing else either.
+      if (!body && !attachments.length) return;
 
       // Generated here and reused on retry, so a resend cannot double-post: the
       // unique index on (conversation_id, client_msg_id) turns it into a no-op.
+      // That covers the attachments too — a retry re-sends the same ids, and the
+      // server reads back what the first attempt already claimed rather than
+      // trying to claim them twice.
       const clientMsgId = existingClientMsgId ?? crypto.randomUUID();
 
       setPending((prev) =>
         existingClientMsgId
           ? prev.map((p) => (p.clientMsgId === clientMsgId ? { ...p, failed: false } : p))
-          : [...prev, { clientMsgId, body, failed: false }],
+          : [...prev, { clientMsgId, body, failed: false, attachments, replyTo }],
       );
       setSending(true);
       atBottom.current = true;
@@ -460,7 +515,14 @@ export function Thread({
       const res = await fetch(`/api/chat/conversations/${conversationId}/messages`, {
         method: "POST",
         headers: { ...realtimeHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ clientMsgId, body }),
+        body: JSON.stringify({
+          clientMsgId,
+          body,
+          replyToId: replyTo?.id ?? null,
+          // Ids only. The server re-checks that each was staged by this person
+          // for this conversation and is not already sent — see claimAttachments.
+          attachmentIds: attachments.map((a) => a.id),
+        }),
       }).catch(() => null);
 
       const data = (await res?.json().catch(() => ({}))) as { ok?: boolean; message?: MessageRow };
@@ -563,45 +625,148 @@ export function Thread({
    *  there looking unsent while the optimistic bubble is already below it. */
   const submitDraft = useCallback(() => {
     const body = draft;
-    if (!body.trim()) return;
-    // Checked here and not only on the button: Enter-to-send does not care
-    // whether a button is disabled.
+    const ready = uploads.files.flatMap((f) => (f.attachment ? [f.attachment] : []));
+
+    // Nothing to send at all — no text and no files.
+    if (!body.trim() && !ready.length) return;
+    // Checked here and not only on the button: Enter-to-send does not care whether
+    // a button is disabled.
     if (messageLength(body) > MESSAGE_MAX_LENGTH) return;
+    // Held back while anything is still going up, so a message never goes with
+    // half its files attached. The Send button is disabled for the same reason;
+    // this is the Enter key's copy of the rule.
+    if (uploads.busy) return;
+
+    const replyTo = replyingTo;
+
+    // The composer is emptied first — text, quote and tray — so a slow send does
+    // not leave all three sitting there looking unsent while the optimistic
+    // bubble is already below them.
     setDraft("");
-    void send(body);
-  }, [draft, send]);
+    setReplyingTo(null);
+    // Clears the tray WITHOUT deleting anything server-side: those rows belong to
+    // the message now, and `clear` is deliberately not `remove`.
+    uploads.clear();
+
+    void send(body, { attachments: ready, replyTo });
+  }, [draft, send, uploads, replyingTo]);
 
   // ---------- older pages ----------
 
-  async function loadOlder() {
-    if (loadingOlder || !oldestId) return;
-    setLoadingOlder(true);
+  /**
+   * Fetches the page before the oldest message on screen.
+   *
+   * A `useCallback` returning whether it actually added anything, because the
+   * jump-to-quoted-message loop drives it: it has to be able to page backwards
+   * repeatedly and to know when it has hit the beginning of the conversation
+   * rather than looping forever.
+   *
+   * `preserveScroll` is off for those automated pages — the loop is deliberately
+   * moving the viewport, so pinning it in place would fight the thing it is
+   * trying to do.
+   */
+  const loadOlder = useCallback(
+    async (opts?: { preserveScroll?: boolean }): Promise<boolean> => {
+      const preserveScroll = opts?.preserveScroll ?? true;
+      const cursor = confirmed.length ? confirmed[0]!.id : 0;
+      if (!cursor) return false;
 
-    const el = scroller.current;
-    const heightBefore = el?.scrollHeight ?? 0;
+      setLoadingOlder(true);
 
-    const res = await fetch(
-      `/api/chat/conversations/${conversationId}/messages?before=${oldestId}`,
-    ).catch(() => null);
-    const data = (await res?.json().catch(() => ({}))) as {
-      messages?: MessageRow[];
-      hasMore?: boolean;
-    };
+      const el = scroller.current;
+      const heightBefore = el?.scrollHeight ?? 0;
 
-    if (data.messages?.length) {
+      const res = await fetch(
+        `/api/chat/conversations/${conversationId}/messages?before=${cursor}`,
+      ).catch(() => null);
+      const data = (await res?.json().catch(() => ({}))) as {
+        messages?: MessageRow[];
+        hasMore?: boolean;
+      };
+
+      setLoadingOlder(false);
+
+      if (!data.messages?.length) {
+        setHasMore(false);
+        return false;
+      }
+
       setConfirmed((prev) => mergeMessages(prev, data.messages!));
       setHasMore(!!data.hasMore);
-      // Keep the reader where they were rather than letting prepended content
-      // shove the viewport down.
-      requestAnimationFrame(() => {
-        const after = scroller.current;
-        if (after) after.scrollTop = after.scrollHeight - heightBefore;
-      });
-    } else {
-      setHasMore(false);
+
+      if (preserveScroll) {
+        // Keep the reader where they were rather than letting prepended content
+        // shove the viewport down.
+        requestAnimationFrame(() => {
+          const after = scroller.current;
+          if (after) after.scrollTop = after.scrollHeight - heightBefore;
+        });
+      }
+      return true;
+    },
+    [confirmed, conversationId],
+  );
+
+  // ---------- jumping to a quoted message ----------
+
+  /**
+   * Starts the hunt for a message. Called by the quote inside a reply bubble.
+   *
+   * It cannot simply scroll: the message being answered may be hundreds of
+   * messages back and not loaded at all. So this only sets the target, and the
+   * effect below does the paging — which keeps the whole loop inside React's
+   * render cycle instead of poking at the DOM between fetches and hoping it has
+   * caught up.
+   */
+  const jumpToMessage = useCallback((messageId: number) => {
+    setJumpFailed(false);
+    setJumpTarget(messageId);
+  }, []);
+
+  useEffect(() => {
+    if (jumpTarget === null) return;
+
+    const loaded = confirmed.some((m) => m.id === jumpTarget);
+
+    if (loaded) {
+      // In the list, so it is in the DOM after this commit.
+      const el = document.getElementById(`msg-${jumpTarget}`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        // Scrolling away from the bottom means incoming messages should stop
+        // yanking the viewport down; the "N new" affordance takes over.
+        atBottom.current = false;
+        setHighlightId(jumpTarget);
+      }
+      setJumpTarget(null);
+      return;
     }
-    setLoadingOlder(false);
-  }
+
+    // Not loaded, and there is nothing older to load — the parent has been paged
+    // past the beginning, which in practice means it was hard-deleted.
+    if (!hasMore) {
+      setJumpTarget(null);
+      setJumpFailed(true);
+      return;
+    }
+
+    if (loadingOlder) return;
+    void loadOlder({ preserveScroll: false });
+  }, [jumpTarget, confirmed, hasMore, loadingOlder, loadOlder]);
+
+  /** The flash fades on its own. Long enough to catch the eye, short enough not to
+   *  leave a permanently-marked message behind. */
+  useEffect(() => {
+    if (highlightId === null) return;
+    const timer = setTimeout(() => setHighlightId(null), 1800);
+    return () => clearTimeout(timer);
+  }, [highlightId]);
+
+  useEffect(() => {
+    if (!jumpFailed) return;
+    const timer = setTimeout(() => setJumpFailed(false), 4000);
+    return () => clearTimeout(timer);
+  }, [jumpFailed]);
 
   // ---------- render ----------
 
@@ -667,7 +832,7 @@ export function Thread({
       >
         {hasMore ? (
           <div className="pb-4 text-center">
-            <Button size="sm" variant="quiet" onClick={loadOlder} disabled={loadingOlder}>
+            <Button size="sm" variant="quiet" onClick={() => void loadOlder()} disabled={loadingOlder}>
               {loadingOlder ? "Loading…" : "Load older messages"}
             </Button>
           </div>
@@ -708,6 +873,34 @@ export function Thread({
                 reactions={m.reactions}
                 viewerId={viewerId}
                 onReact={(emoji) => void toggleReaction(m.id, emoji)}
+                messageId={m.id}
+                highlighted={highlightId === m.id}
+                attachments={m.attachments}
+                replyTo={m.replyTo}
+                onJump={jumpToMessage}
+                onOpenImage={setLightbox}
+                onReply={() =>
+                  // The quote comes from the server's own view of the message,
+                  // built by the same helper that will render it inside the sent
+                  // bubble — so what you see while typing is what everybody sees
+                  // afterwards.
+                  setReplyingTo({
+                    id: m.id,
+                    senderId: m.senderId,
+                    senderName: m.senderName,
+                    preview:
+                      m.body.trim() ||
+                      (m.attachments.length
+                        ? m.attachments.length === 1
+                          ? m.attachments[0]!.filename
+                          : `${m.attachments.length} files`
+                        : ""),
+                    deleted: !!m.deletedAt,
+                    thumbnailAttachmentId:
+                      m.attachments.find((a) => a.mime.startsWith("image/"))?.id ?? null,
+                    attachmentCount: m.attachments.length,
+                  })
+                }
                 onDelete={
                   // Your own, and not already gone. There is no admin override:
                   // somebody who could silently remove other people's words is a
@@ -728,11 +921,41 @@ export function Thread({
               body={p.body}
               at={null}
               state={p.failed ? "failed" : "sending"}
-              onRetry={p.failed ? () => void send(p.body, p.clientMsgId) : undefined}
+              viewerId={viewerId}
+              // The optimistic bubble shows its files and its quote, so it is the
+              // same height and shape as the real row that replaces it. No
+              // onReact: there is no server-side message id to hang a reaction on
+              // until the POST comes back.
+              attachments={p.attachments}
+              replyTo={p.replyTo}
+              onJump={jumpToMessage}
+              onOpenImage={setLightbox}
+              onRetry={
+                p.failed
+                  ? () =>
+                      void send(p.body, {
+                        existingClientMsgId: p.clientMsgId,
+                        attachments: p.attachments,
+                        replyTo: p.replyTo,
+                      })
+                  : undefined
+              }
             />
           ))}
         </div>
       </div>
+
+      {/* The quoted message could not be found even after paging back to the
+          beginning — in practice it was hard-deleted. Said out loud, because a
+          tap that silently does nothing reads as a broken button. */}
+      {jumpFailed ? (
+        <p
+          className="mx-auto -mt-2 mb-1 rounded-full bg-subtle-2 px-3 py-1.5 text-[11px] font-semibold text-faint"
+          aria-live="polite"
+        >
+          That message isn&apos;t in this conversation any more.
+        </p>
+      ) : null}
 
       {missed > 0 ? (
         <button
@@ -764,9 +987,34 @@ export function Thread({
           e.preventDefault();
           submitDraft();
         }}
-        className="flex shrink-0 items-end gap-2 border-t border-line p-3"
+        className="shrink-0 border-t border-line"
       >
-        <div className="min-w-0 flex-1">
+        {/* Quote first, then files, then the input — reading order matches the
+            order they were added in, and both sit above the text rather than
+            beside it so a long filename cannot squeeze the composer. */}
+        {replyingTo ? (
+          <ReplyComposerChip reply={replyingTo} onCancel={() => setReplyingTo(null)} />
+        ) : null}
+
+        <ComposerAttachments
+          files={uploads.files}
+          onRemove={uploads.remove}
+          onRetry={uploads.retry}
+        />
+
+        {uploads.error ? (
+          <p className="px-3 pt-2 text-[11px] font-semibold text-bad" aria-live="polite">
+            {uploads.error}
+          </p>
+        ) : null}
+
+        <div className="flex items-end gap-1 p-3">
+          <AttachButton
+            accept={ACCEPT_ATTRIBUTE}
+            onPick={uploads.pick}
+            disabled={uploads.files.length >= ATTACHMENT_MAX_PER_MESSAGE}
+          />
+          <div className="min-w-0 flex-1">
           {showCounter ? (
             <p
               className={`mb-1 text-right text-[10px] font-semibold ${
@@ -784,7 +1032,7 @@ export function Thread({
         <textarea
           value={draft}
           rows={1}
-          placeholder="Write a message…"
+          placeholder={uploads.files.length ? "Add a message, or just send the files…" : "Write a message…"}
           aria-invalid={overLimit}
           onChange={(e) => {
             setDraft(e.target.value);
@@ -802,17 +1050,33 @@ export function Thread({
             overLimit ? "ring-2 ring-bad focus:ring-bad" : "focus:ring-brand-soft"
           }`}
         />
+          </div>
+          <Button
+            type="submit"
+            variant="dark"
+            // `!draft.trim() && !hasReadyFiles` and not `!draft.trim()`: a message
+            // with only files is sendable. Held while anything is still uploading,
+            // so nothing goes with half its attachments.
+            disabled={
+              sending || uploads.busy || (!draft.trim() && !uploads.readyIds.length) || overLimit
+            }
+            title={
+              overLimit
+                ? `Too long by ${draftLength - MESSAGE_MAX_LENGTH} characters`
+                : uploads.busy
+                  ? "Waiting for the upload to finish"
+                  : undefined
+            }
+            className="shrink-0"
+          >
+            Send
+          </Button>
         </div>
-        <Button
-          type="submit"
-          variant="dark"
-          disabled={sending || !draft.trim() || overLimit}
-          title={overLimit ? `Too long by ${draftLength - MESSAGE_MAX_LENGTH} characters` : undefined}
-          className="shrink-0"
-        >
-          Send
-        </Button>
       </form>
+
+      {lightbox ? (
+        <ImageLightbox attachment={lightbox} onClose={() => setLightbox(null)} />
+      ) : null}
     </div>
   );
 }
@@ -838,6 +1102,13 @@ function Bubble({
   readBy,
   reactions,
   viewerId,
+  messageId,
+  highlighted,
+  attachments,
+  replyTo,
+  onJump,
+  onOpenImage,
+  onReply,
   onReact,
   onDelete,
   onRetry,
@@ -855,6 +1126,18 @@ function Bubble({
   readBy?: string[];
   reactions?: ReactionGroup[];
   viewerId?: string;
+  /** Absent on an optimistic bubble — there is no server id yet. It is what the
+   *  scroll target is keyed on, so a quote can find this bubble in the DOM. */
+  messageId?: number;
+  /** Briefly ringed, because something jumped here. */
+  highlighted?: boolean;
+  attachments?: AttachmentView[];
+  replyTo?: ReplyPreview | null;
+  onJump?: (messageId: number) => void;
+  onOpenImage?: (attachment: AttachmentView) => void;
+  /** Absent on an optimistic bubble and on a deleted one: you cannot answer
+   *  something that has not landed or has been withdrawn. */
+  onReply?: () => void;
   /** Absent on an optimistic bubble: there is no server-side id to hang a
    *  reaction on until the POST comes back. */
   onReact?: (emoji: string) => void;
@@ -862,6 +1145,7 @@ function Bubble({
   onDelete?: () => void;
   onRetry?: () => void;
 }) {
+  const files = attachments ?? [];
   return (
     /**
      * ── The layout, and the two things it got wrong before ──
@@ -884,7 +1168,14 @@ function Bubble({
      * are inert, the bubble stretches to full width, and a three-letter message
      * renders in a bubble sized to its timestamp row.
      */
-    <div className={`group flex flex-col ${mine ? "items-end" : "items-start"}`}>
+    <div
+      // The scroll target for a reply quote. Keyed on the message id so
+      // `jumpToMessage` can find it with getElementById after the page that
+      // contains it has been loaded.
+      id={messageId ? `msg-${messageId}` : undefined}
+      // `scroll-mt` so a jumped-to bubble does not land flush against the header.
+      className={`group flex scroll-mt-8 flex-col ${mine ? "items-end" : "items-start"}`}
+    >
       {!mine && author ? (
         <p className="mb-0.5 pl-9 text-[10px] font-semibold text-faint">{author}</p>
       ) : null}
@@ -900,21 +1191,77 @@ function Bubble({
         ) : null}
 
         <div
-          className={`min-w-0 rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${
+          className={`min-w-0 rounded-2xl px-3.5 py-2 text-sm leading-relaxed transition-shadow ${
             deleted
               ? "bg-subtle-2 italic text-faint"
               : mine
                 ? "bg-brand-500 text-white"
                 : "bg-subtle text-ink-2"
-          } ${state === "failed" ? "ring-1 ring-bad" : ""} ${state === "sending" ? "opacity-60" : ""}`}
+          } ${state === "failed" ? "ring-1 ring-bad" : ""} ${
+            state === "sending" ? "opacity-60" : ""
+          } ${
+            // The flash after a jump. A ring rather than a background change, so
+            // it does not fight the bubble's own colour or the text on it.
+            highlighted ? "ring-2 ring-brand-500 ring-offset-2 ring-offset-surface" : ""
+          }`}
         >
-          {deleted ? "Message deleted" : <span className="whitespace-pre-wrap break-words">{body}</span>}
+          {/* A deleted message is "Message deleted" and NOTHING else — no quote,
+              no files, no text. It used to keep its reply quote, which left the
+              text of somebody else's message sitting above the words "Message
+              deleted": the one thing a soft delete is supposed to prevent, and
+              worse than useless because it looks like the quote is what was
+              withdrawn. Same rule as reactions and attachments, which are already
+              suppressed here. */}
+          {deleted ? (
+            "Message deleted"
+          ) : (
+            <>
+              {/* The quote sits INSIDE the bubble, above the text — Messenger's
+                  arrangement, and the one that makes it unambiguous which message
+                  the quote belongs to when several replies stack up. */}
+              {replyTo && viewerId ? (
+                <ReplyQuote
+                  reply={replyTo}
+                  viewerId={viewerId}
+                  mine={mine}
+                  onJump={onJump ?? (() => {})}
+                />
+              ) : null}
+
+              {/* An attachment-only message has no text, and an empty <span>
+                  would still take a line's height. */}
+              {body ? <span className="whitespace-pre-wrap break-words">{body}</span> : null}
+              {files.length ? (
+                <AttachmentGrid
+                  attachments={files}
+                  mine={mine}
+                  onOpenImage={onOpenImage ?? (() => {})}
+                />
+              ) : null}
+            </>
+          )}
         </div>
 
         {/* `flex-row-reverse` above puts these on the far side of the bubble from
             the edge, so they never sit between a message and the thread's margin. */}
-        {!deleted && (onDelete || (onReact && viewerId)) ? (
+        {!deleted && (onDelete || onReply || (onReact && viewerId)) ? (
           <span className="flex shrink-0 items-center gap-1">
+            {onReply ? (
+              <HoverAction>
+                <button
+                  type="button"
+                  onClick={onReply}
+                  title="Reply to this message"
+                  aria-label="Reply to this message"
+                  className="grid h-6 w-6 place-items-center rounded-full text-faintest ring-1 ring-line-2 transition hover:bg-subtle hover:text-brand-fg"
+                >
+                  {/* A left-turning arrow: the reply glyph everybody already
+                      reads, built from the chevron this app already has rather
+                      than a new icon for one button. */}
+                  <Icon name="chevron" className="h-3 w-3 rotate-180" />
+                </button>
+              </HoverAction>
+            ) : null}
             {onReact && viewerId ? (
               <ReactionPicker
                 reactions={reactions ?? []}
