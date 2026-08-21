@@ -33,17 +33,19 @@ export function Modal({
   onClose: () => void;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
+  const on_close_ref = useRef(onClose);
+  on_close_ref.current = onClose;
 
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
 
     const first = formRef.current?.querySelector<HTMLElement>(
-      "input:not([type=checkbox]):not([type=hidden]), textarea, select",
+      "input:not([type=checkbox]):not([type=hidden]):not([disabled]), textarea:not([disabled]), select:not([disabled])",
     );
     first?.focus();
 
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") on_close_ref.current();
     }
     document.addEventListener("keydown", onKeyDown);
 
@@ -51,7 +53,7 @@ export function Modal({
       document.removeEventListener("keydown", onKeyDown);
       previous?.focus?.();
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div
