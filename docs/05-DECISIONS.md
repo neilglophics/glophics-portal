@@ -29,10 +29,12 @@ only source of truth, Pusher Channels for realtime, and Vercel Blob for media.
   re-authentication of an open stream.
 
 **Consequences — costs, stated plainly.**
-- ⚠ **Health checks against `*.internal` hostnames stop working.** A Vercel function cannot reach a
-  private network. This is not a degradation, it is a feature outage, and because an offline repo
-  outranks everything in `getDisplayStatus()` the naive outcome is a board painted entirely red.
-  Blocking question [Q1](06-OPEN-QUESTIONS.md#q1).
+- ~~⚠ **Health checks against `*.internal` hostnames stop working.**~~ **Did not materialise
+  (2026-08-21).** No configured URL is on an internal hostname; they are all public dev domains, so a
+  Vercel function reaches them. The cost that remains is cadence, not reachability: hourly from the
+  page timer, daily from cron unless the plan allows better. This becomes a real outage the day an
+  environment on a private hostname is added — an offline repo still outranks everything in
+  `getDisplayStatus()`. [Q1](06-OPEN-QUESTIONS.md#q1).
 - ⚠ **Sub-minute Jira freshness is lost.** The current 20-second poll is not achievable under cron
   scheduling. [Q10](06-OPEN-QUESTIONS.md#q10).
 - The IP allowlist changes character: no hot-reload by editing a file, and it can no longer terminate

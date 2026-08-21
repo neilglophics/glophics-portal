@@ -39,3 +39,9 @@ next-env.d.ts
 
 # Build artifact, not source.
 tsconfig.tsbuildinfo
+
+# Real credentials, kept out of git. sample_env was committed by accident once;
+# it holds live values, not a template.
+sample_env
+sample.env
+*.env.real

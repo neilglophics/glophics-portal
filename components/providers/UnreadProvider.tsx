@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { userChannel } from "@/lib/realtime/channels";
 import { getPusher } from "@/lib/realtime/client";
 import { useToast } from "@/components/ui/Toaster";
+import { playNotificationSound, unlockSound } from "@/lib/notify/sound";
 import type { UserEvents } from "@/lib/realtime/events";
 
 /**
@@ -81,6 +82,21 @@ export function UnreadProvider({
     setTotal(initialTotal);
   }, [initialTotal]);
 
+  /**
+   * An AudioContext may only be started from a user gesture, so the first click
+   * or key anywhere in the app unlocks it. { once: true } because one is enough,
+   * and capture so a handler that stops propagation cannot swallow it.
+   */
+  useEffect(() => {
+    const unlock = () => unlockSound();
+    window.addEventListener("pointerdown", unlock, { once: true, capture: true });
+    window.addEventListener("keydown", unlock, { once: true, capture: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlock, { capture: true });
+      window.removeEventListener("keydown", unlock, { capture: true });
+    };
+  }, []);
+
   useEffect(() => {
     if (!canChat) return;
     const pusher = getPusher();
@@ -97,6 +113,11 @@ export function UnreadProvider({
 
       // Already on the thread and looking at it — the message is on screen.
       if (viewing && !hidden) return;
+
+      // Same condition as the toast, deliberately: if it is not worth
+      // interrupting them visually, it is not worth interrupting them audibly.
+      // Throttled and muteable inside playNotificationSound.
+      playNotificationSound();
 
       toast.show({
         key: data.conversationId,

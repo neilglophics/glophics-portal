@@ -8,7 +8,7 @@ Record answers **in this file**, with a date, and update the ADR in
 
 | | Question | Blocks | Status |
 |---|---|---|---|
-| [Q1](#q1) | How do health checks reach internal hosts? | Phase 6 | ⛔ **Blocking** |
+| [Q1](#q1) | How do health checks reach internal hosts? | Phase 6 | ✅ **Answered 2026-08-21** |
 | [Q2](#q2) | Does `viewer` get chat? | Phase 8 | Open |
 | [Q3](#q3) | IP allowlist semantics on a public URL | Phase 4 | ⛔ **Blocking** |
 | [Q4](#q4) | Which identity space is a chat participant? | Phase 2 (schema) | ⛔ **Blocking** |
@@ -45,7 +45,34 @@ failure than no health checks at all.
 about it. Option A is ~50 lines reusing `server/jobs/health.js` almost verbatim, and it inverts the
 direction of trust in the safer way.
 
-**Answer:** _(pending)_
+**Answer (2026-08-21): B, because the premise was wrong.** Not one URL configured on this board is on
+an internal hostname. All 93 are public dev domains — `dev-api.musticker.com`,
+`dev-2.stickerdot.co.nz`, and so on — reachable from anywhere a browser is. The question was written
+from `*.internal` examples in the docs rather than from `shared-data/servers.json`, and nothing in the
+data ever matched them. A cloud function needs no tunnel to reach these.
+
+So the checks simply run server-side, in `lib/health/check.ts`, triggered three ways:
+
+| Trigger | Cadence | Where |
+|---|---|---|
+| Vercel Cron | daily — see below | `/api/cron/health` |
+| The Health page, while open | hourly | `components/health/HealthActions.tsx` |
+| The **Check servers** button | on demand | `POST /api/health/check` |
+
+Verified against the live board on the day this was answered: 67 online, 25 offline, 1 with no URL, in
+7.3 seconds. The 25 are genuinely unreachable — spot-checked with `curl`, some time out and some do
+not resolve at all — which is a real finding about those environments and not a probe artefact.
+
+**Two caveats this answer carries.**
+
+1. **Cadence is capped by the Vercel plan, not by the design.** Hobby schedules a cron at most once a
+   day; that is what commit 3bb8d0f had to work around for every other job in `vercel.json`. So the
+   cron entry here is daily, and hourly checking comes from the page timer. On Pro, change that one
+   entry to `0 * * * *` and the schedule is hourly whether or not anybody is looking.
+2. **Option A is still the answer if an internal environment is ever added.** Its repositories would
+   read `offline` from the cloud while being perfectly healthy, and `offline` outranks everything on
+   the board. The escape hatch has not been built; the reason it is not needed is a property of the
+   current data, which could change with one new environment.
 
 ---
 

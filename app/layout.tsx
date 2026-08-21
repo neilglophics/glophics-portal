@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import NextTopLoader from "nextjs-toploader";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -65,7 +66,29 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       {/* overflow-hidden guarantees only the sidebar and main pane scroll, never
           the document, so the shell can never be pushed off-screen. */}
-      <body className="h-full overflow-hidden bg-canvas font-sans text-ink antialiased">{children}</body>
+      <body className="h-full overflow-hidden bg-canvas font-sans text-ink antialiased">
+        {/*
+          Navigation progress.
+
+          In the root layout, not the app one, so it also covers the sign-in
+          redirect — the one navigation that happens before any session exists.
+
+          The colour is the theme variable rather than a hex, so the bar follows
+          whichever palette is active instead of being brand-teal on an ocean
+          board. showSpinner is off: a corner spinner competes with the bar for
+          attention and says nothing extra.
+        */}
+        <NextTopLoader
+          color="var(--color-brand-500)"
+          height={2}
+          shadow="0 0 8px var(--color-brand-500)"
+          showSpinner={false}
+          // Below the modal backdrop (z-50) and the toaster (z-60), so a dialog
+          // is never underlined by a progress bar creeping across it.
+          zIndex={40}
+        />
+        {children}
+      </body>
     </html>
   );
 }

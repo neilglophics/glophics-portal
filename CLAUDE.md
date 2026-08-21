@@ -33,13 +33,20 @@ the best documentation of intended behaviour — but write in `app/` and `lib/`.
 | 8–12 | ⬜ Chat, presence, attachments, notifications |
 | 13 | ⬜ Cutover and deleting the legacy tree |
 
-Two things are genuinely missing rather than merely unbuilt:
+One thing is genuinely missing rather than merely unbuilt:
 
-- **Nothing writes repository health.** A serverless function cannot reach `*.internal`, so every
-  repo reads "Never checked". The UI says so honestly instead of showing a false `offline`, which
-  would outrank claim state and paint the whole board red. Blocked on
-  `docs/06-OPEN-QUESTIONS.md` **Q1**.
 - **No realtime.** Mutations call `revalidatePath`, which refreshes the acting tab only.
+
+**Repository health is now measured.** `lib/health/check.ts` probes every repo that has a URL and
+records the verdict *and* the time it was taken. Three triggers: a daily Vercel Cron
+(`/api/cron/health`), an hourly timer while somebody has `/health` open, and the **Check servers**
+button (`POST /api/health/check`). Run one by hand with `npm run verify:health`.
+
+Q1 turned out to rest on a false premise — none of the 93 configured URLs is on an internal
+hostname, they are all public dev domains — so no on-prem agent was needed. The answer, and the two
+caveats it carries, are in `docs/06-OPEN-QUESTIONS.md` **Q1**. The important one: an environment on a
+genuinely internal hostname would read `offline` from the cloud while being perfectly healthy, and
+`offline` outranks everything on the board.
 
 ## Running the new app
 
