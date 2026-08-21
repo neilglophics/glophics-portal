@@ -27,6 +27,7 @@ import {
   ImageLightbox,
 } from "./Attachments";
 import { ReplyComposerChip, ReplyQuote } from "./Reply";
+import { LinkPreviewCard, MessageText } from "./MessageText";
 import { useUploads } from "./useUploads";
 import { ACCEPT_ATTRIBUTE, ATTACHMENT_MAX_PER_MESSAGE } from "@/lib/chat/attachments";
 import type { AttachmentView } from "@/lib/db/queries/attachments";
@@ -1222,8 +1223,15 @@ function Bubble({
               ) : null}
 
               {/* An attachment-only message has no text, and an empty <span>
-                  would still take a line's height. */}
-              {body ? <span className="whitespace-pre-wrap break-words">{body}</span> : null}
+                  would still take a line's height.
+
+                  MessageText linkifies without producing any HTML — it splits the
+                  body into segments and renders each as a React child, so the
+                  escaping is exactly what it was when this was one text child. See
+                  its header; this is the one place in the app where one person's
+                  typing is rendered to another. */}
+              {body ? <MessageText body={body} mine={mine} /> : null}
+              {body ? <LinkPreviewCard body={body} mine={mine} /> : null}
               {files.length ? (
                 <AttachmentGrid
                   attachments={files}

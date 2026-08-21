@@ -55,6 +55,11 @@ export const LIMITS = {
    *  files a minute is more than anybody attaches deliberately and far less than a
    *  script would. */
   "chat.attachment.upload": { max: 10, windowSeconds: 60 },
+  /** Only counted on a cache MISS, so scrolling a thread full of familiar links
+   *  costs nothing. What this bounds is the abusable path: making our server fetch
+   *  a host of the caller's choosing. Low, because that is a capability rather
+   *  than a convenience. */
+  "chat.link.preview": { max: 20, windowSeconds: 300 },
   /** A health pass is one outbound request per configured repository — around a
    *  hundred of them, aimed at other people's dev boxes. This protects those as
    *  much as us, which is why it is far lower than it looks like it needs to be:

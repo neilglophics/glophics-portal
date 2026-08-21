@@ -32,7 +32,7 @@ the best documentation of intended behaviour — but write in `app/` and `lib/`.
 | 7 | ✅ Pusher realtime — board, per-user and per-conversation channels, reconnect catch-up |
 | 8–9 | ✅ Chat: DMs, groups, message reactions, read watermarks, typing, unread badge + toasts |
 | 10 | ✅ Presence, avatars (people and groups) |
-| 11 | ✅ Attachments (images, PDFs, documents) and Messenger-style reply threads |
+| 11 | ✅ Attachments (images, PDFs, documents), reply threads, clickable links with previews |
 | 12 | ⬜ Notification centre / digests (live toasts and the nav badge are done) |
 | 13 | ⬜ Cutover and deleting the legacy tree |
 
@@ -60,6 +60,17 @@ reactions and group management came just before them:
   answers 403 unauthenticated, so downloads go through `/api/chat/attachments/[id]`, which re-checks
   membership on every read. `blob_url` must never reach a client. This is the answer to Q6, and it
   came from probing the live store — see `docs/06-OPEN-QUESTIONS.md` **Q6**.
+- **Links are clickable, and carry an Open Graph card.** Linkifying does NOT use
+  `dangerouslySetInnerHTML` and must never start to: `lib/chat/links.ts` splits a body
+  into text/link segments and the renderer emits React children, so invariant 7 holds
+  unchanged. Only http and https become anchors — checked on a *parsed* URL's protocol,
+  so `javascript:` renders as text.
+- **The preview fetcher is the app's SSRF surface.** `lib/link-preview/fetch.ts` fetches a
+  URL a *user* supplied. Read its header before touching it: scheme allowlist, DNS
+  resolution with a private/loopback/link-local IP check, **manual** redirect following that
+  re-checks every hop, a byte cap, a timeout, and HTML-only. The remote `og:image` is never
+  given to a browser — it goes through `/api/chat/link-preview/image` so no third-party host
+  gets a read receipt for your conversations. Run `npm run verify:link-preview` (51 checks).
 - **Replies** needed no schema change: `reply_to_id` has been there since 0001. The quote is resolved
   on **read**, deliberately — the opposite of system messages, whose text is baked at write time. Both
   choices are explained in `docs/02-DATA-MODEL.md`.
@@ -90,7 +101,7 @@ Needs a Neon branch. Copy `.env.example` to `.env.local`, then:
 ```bash
 npm run db:migrate      # apply lib/db/migrations/*.sql
 npm run db:import       # load shared-data/ + config/auth.json into Postgres
-npm test                # 174 tests, node:test via tsx
+npm test                # 207 tests, node:test via tsx
 npm run typecheck
 ```
 

@@ -351,6 +351,7 @@ Enforce server-side, per user, in Postgres or a small counter table:
 | Mark read | 10 / 10 s |
 | React to a message | 30 / 10 s |
 | Upload an attachment | 10 / minute |
+| Fetch a link preview (cache miss only) | 20 / 5 min |
 | Manage a group (rename, avatar, add, remove, role) | 20 / minute |
 | Delete own message | 20 / minute |
 

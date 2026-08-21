@@ -25,7 +25,8 @@
     "verify:pusher": "tsx scripts/verify-pusher.mts",
     "verify:health": "tsx scripts/verify-health.mts",
     "check:secrets": "tsx scripts/check-staged-secrets.mts",
-    "verify:chat:files": "tsx scripts/verify-chat-files.mts"
+    "verify:chat:files": "tsx scripts/verify-chat-files.mts",
+    "verify:link-preview": "tsx scripts/verify-link-preview.mts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

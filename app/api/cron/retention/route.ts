@@ -3,6 +3,7 @@ import { requireCron } from "@/lib/cron";
 import { pruneExpiredSessions } from "@/lib/auth/session";
 import { sql } from "@/lib/db/client";
 import { sweepStaleStaged } from "@/lib/db/queries/attachments";
+import { sweepStalePreviews } from "@/lib/db/queries/link-previews";
 import { deleteAttachment } from "@/lib/blob/store";
 
 export const runtime = "nodejs";

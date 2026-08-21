@@ -267,7 +267,7 @@ export async function sweepStaleStaged(olderThanHours = 24): Promise<string[]> {
   const rows = (await sql`
     DELETE FROM chat_attachments
      WHERE message_id IS NULL
-       AND created_at < now() - make_interval(hours => ${olderThanHours})
+       AND created_at < now() - make_interval(hours => ${olderThanHours}::int)
     RETURNING blob_url
   `) as { blob_url: string }[];
 
