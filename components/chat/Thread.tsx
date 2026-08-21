@@ -18,7 +18,7 @@ import {
 } from "@/lib/chat/limits";
 import { applyReactionToggle, mergeReactionGroup, type ReactionGroup } from "@/lib/chat/reactions";
 import { formatDateTime } from "@/lib/shared/format";
-import { Reactions } from "./Reactions";
+import { HoverAction, ReactionPicker, ReactionPills } from "./Reactions";
 import { GroupDialog } from "./GroupDialog";
 import type { ConversationSummary, MessageRow } from "@/lib/db/queries/chat";
 import type { ConversationEvents } from "@/lib/realtime/events";
@@ -863,79 +863,171 @@ function Bubble({
   onRetry?: () => void;
 }) {
   return (
-    <div className={`group flex items-end gap-2 ${mine ? "justify-end" : "justify-start"}`}>
-      {/* Only on the other side: your own face beside your own words is noise. */}
+    /**
+     * ── The layout, and the two things it got wrong before ──
+     *
+     * 1. THE AVATAR MUST SHARE A ROW WITH THE BUBBLE, not with the whole column.
+     *    It used to be a sibling of a `flex-col` holding [name, bubble, pills,
+     *    timestamp] under `items-end`, which bottom-aligns it against the LAST of
+     *    those. Adding the reactions row therefore pushed the face down below the
+     *    bubble it belongs to — visible in the screenshot as a head floating
+     *    beside the timestamp. So the avatar now lives inside the bubble's own
+     *    row, and everything that stacks underneath is indented past it with
+     *    `pl-9` (h-7 avatar = 28px, plus gap-2 = 36px = 2.25rem) to keep the
+     *    left edges lined up.
+     *
+     * 2. THE ⊕ IS AN ACTION, so it belongs beside the bubble and only while the
+     *    message is hovered — not parked under every message forever. `group` on
+     *    this wrapper is what the reveal hangs off.
+     *
+     * `flex-col` is load-bearing, not decoration: without it the `items-*` classes
+     * are inert, the bubble stretches to full width, and a three-letter message
+     * renders in a bubble sized to its timestamp row.
+     */
+    <div className={`group flex flex-col ${mine ? "items-end" : "items-start"}`}>
       {!mine && author ? (
-        <Avatar person={{ id: authorId ?? author, name: author, avatarUrl: authorFace }} size="h-7 w-7" />
+        <p className="mb-0.5 pl-9 text-[10px] font-semibold text-faint">{author}</p>
       ) : null}
-      {/* flex-col is load-bearing, not decoration. Without it the items-* classes
-          below are inert, the bubble is a block element that stretches to this
-          wrapper's full width, and the wrapper is as wide as its widest child —
-          the timestamp-and-receipt row. A three-letter message then renders in a
-          bubble sized to "Aug 21, 07:25 AM  Read by …". */}
-      <div className={`flex max-w-[78%] flex-col ${mine ? "items-end" : "items-start"}`}>
+
+      {/* The row: face, words, and the controls that act on them. */}
+      <div className={`flex max-w-[85%] items-end gap-2 ${mine ? "flex-row-reverse" : ""}`}>
+        {/* Only on the other side: your own face beside your own words is noise. */}
         {!mine && author ? (
-          <p className="mb-0.5 px-1 text-[10px] font-semibold text-faint">{author}</p>
+          <Avatar
+            person={{ id: authorId ?? author, name: author, avatarUrl: authorFace }}
+            size="h-7 w-7"
+          />
         ) : null}
 
-        <div className={`flex items-center gap-1.5 ${mine ? "flex-row-reverse" : ""}`}>
-          <div
-            className={`rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${
-              deleted
-                ? "bg-subtle-2 italic text-faint"
-                : mine
-                  ? "bg-brand-500 text-white"
-                  : "bg-subtle text-ink-2"
-            } ${state === "failed" ? "ring-1 ring-bad" : ""} ${state === "sending" ? "opacity-60" : ""}`}
-          >
-            {deleted ? "Message deleted" : <span className="whitespace-pre-wrap break-words">{body}</span>}
-          </div>
-
-          {onDelete ? <DeleteButton onDelete={onDelete} /> : null}
+        <div
+          className={`min-w-0 rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${
+            deleted
+              ? "bg-subtle-2 italic text-faint"
+              : mine
+                ? "bg-brand-500 text-white"
+                : "bg-subtle text-ink-2"
+          } ${state === "failed" ? "ring-1 ring-bad" : ""} ${state === "sending" ? "opacity-60" : ""}`}
+        >
+          {deleted ? "Message deleted" : <span className="whitespace-pre-wrap break-words">{body}</span>}
         </div>
 
-        {/* Deleted messages show nothing — the server clears the rows, and a
-            count of laughs at something nobody can read is worse than nothing. */}
-        {onReact && viewerId && !deleted ? (
-          <Reactions
+        {/* `flex-row-reverse` above puts these on the far side of the bubble from
+            the edge, so they never sit between a message and the thread's margin. */}
+        {!deleted && (onDelete || (onReact && viewerId)) ? (
+          <span className="flex shrink-0 items-center gap-1">
+            {onReact && viewerId ? (
+              <ReactionPicker
+                reactions={reactions ?? []}
+                viewerId={viewerId}
+                align={mine ? "right" : "left"}
+                onToggle={onReact}
+              />
+            ) : null}
+            {onDelete ? (
+              <HoverAction>
+                <DeleteButton onDelete={onDelete} />
+              </HoverAction>
+            ) : null}
+          </span>
+        ) : null}
+      </div>
+
+      {/* Pills stack under the bubble, indented past the avatar. Nothing at all on
+          a deleted message — the server clears the rows, and a count of laughs at
+          something nobody can read is worse than nothing. */}
+      {onReact && viewerId && !deleted ? (
+        <div className={mine ? "" : "pl-9"}>
+          <ReactionPills
             reactions={reactions ?? []}
             viewerId={viewerId}
             align={mine ? "right" : "left"}
             onToggle={onReact}
           />
-        ) : null}
-
-        <div className={`mt-0.5 flex items-center gap-2 px-1 ${mine ? "justify-end" : ""}`}>
-          {state === "failed" ? (
-            <button
-              type="button"
-              onClick={onRetry}
-              className="text-[10px] font-semibold text-bad hover:underline"
-            >
-              Failed — retry
-            </button>
-          ) : state === "sending" ? (
-            <span className="text-[10px] text-faintest">Sending…</span>
-          ) : at ? (
-            <>
-              <span className="text-[10px] text-faintest">{formatDateTime(at)}</span>
-              {readBy ? (
-                <span
-                  className="text-[10px] font-medium text-brand-fg"
-                  title={readBy.length ? `Read by ${readBy.join(", ")}` : "Not read yet"}
-                >
-                  {readBy.length
-                    ? readBy.length === 1
-                      ? `Read by ${readBy[0]}`
-                      : `Read by ${readBy.length}`
-                    : "Sent"}
-                </span>
-              ) : null}
-            </>
-          ) : null}
         </div>
+      ) : null}
+
+      <div
+        className={`mt-0.5 flex items-center gap-1.5 ${mine ? "justify-end pr-1" : "pl-9"}`}
+      >
+        <Status state={state} at={at} readBy={readBy} onRetry={onRetry} />
       </div>
     </div>
+  );
+}
+
+/**
+ * Sent / sending / failed / read, as icons.
+ *
+ * ── Why icons and not words ──
+ *
+ * This line sits under every single message, so it is the most repeated text in
+ * the app — and it was carrying "Sending…", "Failed — retry" and "Read by 2" in
+ * prose. Four words of grey text under a three-word message reads as a caption on
+ * the message rather than as its status, and "Failed — retry" in particular looked
+ * like part of what somebody had written.
+ *
+ * A clock, a warning triangle and one or two ticks are the vocabulary every
+ * messaging app has already taught everybody, and they collapse the row to
+ * something the eye skips until it needs it. Every one keeps a `title`, so the
+ * words are still there for a cursor, and the retry stays a real button with an
+ * `aria-label` — an icon with no accessible name is a button nobody can identify.
+ */
+function Status({
+  state,
+  at,
+  readBy,
+  onRetry,
+}: {
+  state?: "sending" | "failed";
+  at: string | null;
+  readBy?: string[];
+  onRetry?: () => void;
+}) {
+  if (state === "failed") {
+    return (
+      <button
+        type="button"
+        onClick={onRetry}
+        title="Couldn't send — click to try again"
+        aria-label="Couldn't send — click to try again"
+        className="inline-flex items-center gap-1 text-bad transition hover:text-bad-strong"
+      >
+        <Icon name="alert" className="h-3 w-3" />
+        <Icon name="refresh" className="h-3 w-3" />
+      </button>
+    );
+  }
+
+  if (state === "sending") {
+    return (
+      <span title="Sending…" aria-label="Sending" className="text-faintest">
+        <Icon name="clock" className="h-3 w-3" />
+      </span>
+    );
+  }
+
+  if (!at) return null;
+
+  return (
+    <>
+      <span className="text-[10px] text-faintest">{formatDateTime(at)}</span>
+      {/* Only on your own newest message — a tick under every line is noise, and
+          the last one answers the actual question. */}
+      {readBy ? (
+        <span
+          className={readBy.length ? "text-brand-fg" : "text-faintest"}
+          title={readBy.length ? `Read by ${readBy.join(", ")}` : "Sent — not read yet"}
+          aria-label={readBy.length ? `Read by ${readBy.join(", ")}` : "Sent, not read yet"}
+        >
+          {/* One tick for delivered, two for read. The second is pulled left over
+              the first, which is the shape everybody already reads as "seen". */}
+          <span className="inline-flex items-center">
+            <Icon name="check" className="h-3 w-3" />
+            {readBy.length ? <Icon name="check" className="-ml-1.5 h-3 w-3" /> : null}
+          </span>
+        </span>
+      ) : null}
+    </>
   );
 }
 
@@ -983,9 +1075,9 @@ function SystemLine({ body, at }: { body: string; at: string }) {
  * until it is used, and disarms on a few seconds of inaction or on blur — so
  * walking away never leaves a live trigger sitting under the pointer.
  *
- * Revealed on hover or keyboard focus. `focus:opacity-100` is not decoration:
- * without it the button is unreachable by Tab, because a control that is only
- * `opacity-0` is still in the tab order and simply invisible while focused.
+ * The hover reveal is not here — `HoverAction` wraps this, so the ✕ and the ⊕
+ * beside it appear and disappear together instead of each owning a copy of the
+ * same opacity rules.
  */
 function DeleteButton({ onDelete }: { onDelete: () => void }) {
   const [armed, setArmed] = useState(false);
@@ -1029,7 +1121,7 @@ function DeleteButton({ onDelete }: { onDelete: () => void }) {
       onClick={() => setArmed(true)}
       title="Delete this message"
       aria-label="Delete this message"
-      className="shrink-0 rounded-full p-1 text-faintest opacity-0 transition hover:text-bad focus:opacity-100 focus-visible:outline-none group-hover:opacity-100"
+      className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-faintest ring-1 ring-line-2 transition hover:bg-subtle hover:text-bad"
     >
       <Icon name="close" className="h-3 w-3" />
     </button>
