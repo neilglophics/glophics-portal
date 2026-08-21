@@ -39,8 +39,15 @@ export function Table({
   );
 }
 
-export function Th({ children, className = "" }: { children?: React.ReactNode; className?: string }) {
-  return <th className={`px-5 py-3 font-bold ${className}`}>{children}</th>;
+/** Spreads the rest of its props, like Tr does, so a sortable header can carry
+ *  `aria-sort` — a screen reader otherwise has no way to know a column is
+ *  sorted, or which way. */
+export function Th({ children, className = "", ...rest }: React.ComponentProps<"th">) {
+  return (
+    <th className={`px-5 py-3 font-bold ${className}`} {...rest}>
+      {children}
+    </th>
+  );
 }
 
 export function Td({ children, className = "" }: { children?: React.ReactNode; className?: string }) {

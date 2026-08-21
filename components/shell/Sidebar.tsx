@@ -161,7 +161,7 @@ export function Sidebar({
         <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand-500 text-white shadow-lg shadow-brand-500/30">
           <Icon name="servers" className="h-4.5 w-4.5" />
         </span>
-        {collapsed ? null : <span className="flex-1 text-[17px] font-bold tracking-tight">Servers</span>}
+        {collapsed ? null : <span className="flex-1 text-[17px] font-bold tracking-tight">Glophics</span>}
         <button
           type="button"
           onClick={() => setCollapsed((value) => !value)}

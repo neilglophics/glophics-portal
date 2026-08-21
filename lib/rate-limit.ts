@@ -39,6 +39,11 @@ export const LIMITS = {
   "chat.typing": { max: 6, windowSeconds: 10 },
   "chat.read": { max: 10, windowSeconds: 10 },
   "chat.conversation.create": { max: 10, windowSeconds: 3600 },
+  /** A health pass is one outbound request per configured repository — around a
+   *  hundred of them, aimed at other people's dev boxes. This protects those as
+   *  much as us, which is why it is far lower than it looks like it needs to be:
+   *  the schedule does the routine work, and the button is for "right now". */
+  "health.check": { max: 6, windowSeconds: 300 },
   /** Each upload costs an optimiser round trip, so this is lower than it looks
    *  like it needs to be — it protects their service as much as ours. */
   "avatar.upload": { max: 10, windowSeconds: 600 },

@@ -17,9 +17,9 @@ criteria pass. Phases 1–8 must not regress any behaviour listed in the
 
 No application code.
 
-- [ ] Answer the blocking questions in [06-OPEN-QUESTIONS.md](06-OPEN-QUESTIONS.md): **Q1 (health
-      checks), Q3 (IP allowlist), Q4 (chat identity)**. The rest can be answered later; these three
-      change the schema or the architecture.
+- [ ] Answer the blocking questions in [06-OPEN-QUESTIONS.md](06-OPEN-QUESTIONS.md): ~~**Q1 (health
+      checks)**~~ answered 2026-08-21, **Q3 (IP allowlist), Q4 (chat identity)**. The rest can be
+      answered later; these three change the schema or the architecture.
 - [ ] Create the Neon project. Note **both** connection strings (pooled and direct).
 - [ ] Create the Pusher Channels app. Note cluster, key, secret, app id. Decide whether client events
       stay disabled (recommended — see [03-REALTIME-SPEC.md](03-REALTIME-SPEC.md) §6).
@@ -167,10 +167,12 @@ settings is refused by the server, not merely hidden; no route accepts more than
 - Jira config moves from `config/jira-config.json` to env vars. The settings UI shows the fields
   read-only, as the README already describes for deployments. **The token is never returned to the
   client, masked or otherwise, beyond what the current config route already does.**
-- Apply the **Q1 decision** for health checks. If it is the on-prem agent: build
-  `POST /api/health/report`, authenticated by a shared secret, writing `server_repos.health` and
-  `health_checked_at`. If health checks are dropped for now, make the UI say *"not checked"* rather
-  than rendering `offline` — otherwise the whole board paints red and `issue` outranks real claim state.
+- ✅ **Q1 applied (2026-08-21).** No on-prem agent was needed — every configured URL is public, so
+  `lib/health/check.ts` probes them from the function itself and writes `server_repos.health` and
+  `health_checked_at`. Cron (`/api/cron/health`), an hourly timer on the Health page, and a **Check
+  servers** button all trigger the same pass. The UI still says *"not checked"* rather than
+  `offline` for anything unmeasured, because that rule is about honesty, not about who does the
+  measuring — the whole board would otherwise paint red and `issue` would outrank real claim state.
 
 **Exit:** a cron-triggered sync produces the same claims the old sync produces from the same Jira data;
 an unauthenticated call to any cron route is refused; the Not-tracked page lists the same skip reasons;
