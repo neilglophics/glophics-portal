@@ -29,13 +29,30 @@ the best documentation of intended behaviour — but write in `app/` and `lib/`.
 | Phase | |
 |---|---|
 | 1–6 | ✅ Scaffold, schema, import script, auth + gate, board read/write, Jira sync + cron |
-| 7 | ⬜ Pusher realtime. **Not started.** No live updates yet — a change needs a refresh in other tabs. |
-| 8–12 | ⬜ Chat, presence, attachments, notifications |
+| 7 | ✅ Pusher realtime — board, per-user and per-conversation channels, reconnect catch-up |
+| 8–9 | ✅ Chat: DMs, groups, message reactions, read watermarks, typing, unread badge + toasts |
+| 10 | ✅ Presence, avatars (people and groups) |
+| 11 | ⬜ Attachments. `chat_attachments` exists; nothing writes to it. |
+| 12 | ⬜ Notification centre / digests (live toasts and the nav badge are done) |
 | 13 | ⬜ Cutover and deleting the legacy tree |
 
-One thing is genuinely missing rather than merely unbuilt:
+**Chat is real and worth reading before touching.** Reactions and group management are the newest
+part:
 
-- **No realtime.** Mutations call `revalidatePath`, which refreshes the acting tab only.
+- **Reactions** are `chat_message_reactions`, keyed `(message, user, emoji)` — the primary key *is* the
+  duplicate prevention, and the toggle is one `DELETE … RETURNING` so two taps cannot race into two
+  rows. The allowed emoji live in `lib/chat/reactions.ts` and nowhere else. Deleting a message
+  soft-deletes the message and **hard**-deletes its reactions.
+- **Groups** were half-present from the start (`chat_conversations.kind`, `chat_members.member_role`);
+  what 0004 added is the `admin` tier, a one-owner-per-group index, a group avatar, and system
+  messages. Permissions are pure functions in `lib/chat/groups.ts`, called by the browser to hide a
+  control and by every mutation to refuse one.
+- **System messages** ("Alex added Jamie") are ordinary `chat_messages` rows with `kind = 'system'`, so
+  they inherit ordering, pagination, unread and the list preview. Their text is baked at write time on
+  purpose — see `docs/02-DATA-MODEL.md`.
+
+Verify both against a real database with `npm run verify:chat:social` (61 checks); `npm run
+verify:chat` covers the DM and pagination behaviour it must not have broken.
 
 **Repository health is now measured.** `lib/health/check.ts` probes every repo that has a URL and
 records the verdict *and* the time it was taken. Three triggers: a daily Vercel Cron
@@ -59,7 +76,7 @@ Needs a Neon branch. Copy `.env.example` to `.env.local`, then:
 ```bash
 npm run db:migrate      # apply lib/db/migrations/*.sql
 npm run db:import       # load shared-data/ + config/auth.json into Postgres
-npm test                # 29 tests, node:test via tsx
+npm test                # 150 tests, node:test via tsx
 npm run typecheck
 ```
 

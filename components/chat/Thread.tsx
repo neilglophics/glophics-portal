@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
 import { useRealtime } from "@/components/providers/PusherProvider";
 import { usePresence } from "@/components/providers/PresenceProvider";
 import { useUnread } from "@/components/providers/UnreadProvider";
-import { conversationChannel } from "@/lib/realtime/channels";
+import { conversationChannel, userChannel } from "@/lib/realtime/channels";
 import { getPusher, realtimeHeaders } from "@/lib/realtime/client";
 import { dropConfirmedPending, mergeMessages } from "@/lib/chat/merge";
 import {
@@ -15,8 +16,12 @@ import {
   MESSAGE_MAX_LENGTH,
   messageLength,
 } from "@/lib/chat/limits";
+import { applyReactionToggle, mergeReactionGroup, type ReactionGroup } from "@/lib/chat/reactions";
 import { formatDateTime } from "@/lib/shared/format";
-import type { MessageRow } from "@/lib/db/queries/chat";
+import { Reactions } from "./Reactions";
+import { GroupDialog } from "./GroupDialog";
+import type { ConversationSummary, MessageRow } from "@/lib/db/queries/chat";
+import type { ConversationEvents } from "@/lib/realtime/events";
 
 /**
  * One conversation.
@@ -46,38 +51,59 @@ interface Pending {
   failed: boolean;
 }
 
-interface Member {
-  id: string;
-  displayName: string;
-  avatarUrl?: string | null;
-}
-
 const TYPING_PING_MS = 3000;
 const TYPING_EXPIRY_MS = 4000;
 /** Treat "within this many pixels of the bottom" as being at the bottom. */
 const STICK_THRESHOLD_PX = 120;
 
 export function Thread({
-  conversationId,
-  title,
-  members,
+  conversation,
   viewerId,
   initialMessages,
   initialHasMore,
   initialReadUpTo,
 }: {
-  conversationId: string;
-  title: string;
-  members: Member[];
+  /**
+   * The whole conversation, not a handful of fields.
+   *
+   * It used to be `conversationId` + `title` + `members`, which was enough for a
+   * DM — a DM's title and membership never change. A group's do, and both the
+   * header and the manage dialog need `kind`, `viewerRole` and each member's role
+   * to decide what to render. Passing the summary the page already loaded is
+   * cheaper than three more props that would have to be kept in step with it.
+   */
+  conversation: ConversationSummary;
   viewerId: string;
   initialMessages: MessageRow[];
   initialHasMore: boolean;
   /** Each other member's last-read message id, from chat_members. */
   initialReadUpTo: Record<string, number>;
 }) {
+  const router = useRouter();
   const { state: connectionState } = useRealtime();
   const { online, tracking } = usePresence();
   const { clear: clearUnread } = useUnread();
+
+  /**
+   * A local copy of the conversation, so a rename or a membership change repaints
+   * the header immediately rather than after a server round trip.
+   *
+   * The server's copy is still authoritative and replaces this whenever it
+   * changes — the effect below — exactly as `initialMessages` does for the list.
+   */
+  const [detail, setDetail] = useState<ConversationSummary>(conversation);
+  const [managing, setManaging] = useState(false);
+  /** Bumped on `members.changed`, so an open manage dialog refetches. */
+  const [membersVersion, setMembersVersion] = useState(0);
+
+  const conversationId = conversation.id;
+  const title = detail.title;
+  const members = detail.members;
+  const isGroup = detail.kind === "group";
+
+  useEffect(() => {
+    setDetail(conversation);
+  }, [conversation]);
 
   const [confirmed, setConfirmed] = useState<MessageRow[]>(initialMessages);
   const [pending, setPending] = useState<Pending[]>([]);
@@ -100,7 +126,11 @@ export function Thread({
   const readReported = useRef(0);
   const hasConnected = useRef(false);
 
-  const dmPartner = members.length === 2 ? members.find((m) => m.id !== viewerId) : undefined;
+  // Keyed on the conversation's kind, not on its member count. A group that
+  // happens to be down to two people is still a group: it has a name, a photo and
+  // an owner, and rendering the other person's face and presence for it would be
+  // showing something that is not what this conversation is.
+  const dmPartner = isGroup ? undefined : members.find((m) => m.id !== viewerId);
 
   const draftLength = messageLength(draft);
   const overLimit = draftLength > MESSAGE_MAX_LENGTH;
@@ -222,19 +252,136 @@ export function Thread({
       );
     };
 
+    /**
+     * A reaction landed.
+     *
+     * Applied through `mergeReactionGroup`, which takes the emoji's COMPLETE
+     * membership rather than a delta — so this is safe to receive twice, and safe
+     * to receive after this tab has already painted its own optimistic pill. The
+     * server does not exclude the acting socket from this event for exactly that
+     * reason: reconciling against server truth is the point.
+     */
+    const onReaction = (data: ConversationEvents["reaction.changed"]) => {
+      setConfirmed((prev) =>
+        prev.map((m) =>
+          m.id === data.messageId
+            ? {
+                ...m,
+                reactions: mergeReactionGroup(m.reactions, {
+                  emoji: data.emoji,
+                  users: data.users,
+                }),
+              }
+            : m,
+        ),
+      );
+    };
+
+    /**
+     * A message was deleted.
+     *
+     * Patched in place rather than dropped from the list: the bubble becomes
+     * "Message deleted" and keeps its slot, which is what the server does too —
+     * removing the row would put a hole in the pagination cursor and quietly
+     * change what the read watermark refers to. Its reactions go with it.
+     */
+    const onDeleted = (data: ConversationEvents["message.deleted"]) => {
+      setConfirmed((prev) =>
+        prev.map((m) =>
+          m.id === data.id
+            ? { ...m, body: "", deletedAt: m.deletedAt ?? new Date().toISOString(), reactions: [] }
+            : m,
+        ),
+      );
+    };
+
+    /** The group was renamed, or its photo changed. */
+    const onUpdated = (data: ConversationEvents["conversation.updated"]) => {
+      setDetail((prev) => ({
+        ...prev,
+        title: data.title ?? prev.title,
+        // A null version means "unchanged", not "there is no photo" — see the
+        // event's definition. Only an actual avatar change sends one.
+        avatarUrl: data.avatarVersion
+          ? `/api/chat/conversations/${prev.id}/avatar?v=${encodeURIComponent(data.avatarVersion)}`
+          : prev.avatarUrl,
+      }));
+      // The conversation list is server-rendered, so its copy of the title comes
+      // from here.
+      router.refresh();
+    };
+
+    /**
+     * Somebody joined, left, or changed tier.
+     *
+     * A signal, so this refetches rather than patching — the member list feeds the
+     * UI's own permission decisions, and a pushed copy of it is a copy that can be
+     * stale at the moment somebody clicks "Remove".
+     */
+    const onMembers = () => {
+      setMembersVersion((n) => n + 1);
+      void (async () => {
+        const res = await fetch(`/api/chat/conversations/${conversationId}`).catch(() => null);
+        const data = (await res?.json().catch(() => ({}))) as {
+          conversation?: ConversationSummary;
+        };
+        if (data.conversation) setDetail(data.conversation);
+      })();
+      router.refresh();
+    };
+
     channel.bind("message.new", onMessage);
     channel.bind("message.edited", onMessage);
+    channel.bind("message.deleted", onDeleted);
+    channel.bind("reaction.changed", onReaction);
+    channel.bind("conversation.updated", onUpdated);
+    channel.bind("members.changed", onMembers);
     channel.bind("typing.start", onTyping);
     channel.bind("read.changed", onRead);
 
     return () => {
       channel.unbind("message.new", onMessage);
       channel.unbind("message.edited", onMessage);
+      channel.unbind("message.deleted", onDeleted);
+      channel.unbind("reaction.changed", onReaction);
+      channel.unbind("conversation.updated", onUpdated);
+      channel.unbind("members.changed", onMembers);
       channel.unbind("typing.start", onTyping);
       channel.unbind("read.changed", onRead);
       pusher.unsubscribe(conversationChannel(conversationId));
     };
-  }, [conversationId, viewerId]);
+  }, [conversationId, viewerId, router]);
+
+  /**
+   * Removed from the group, or left it from another tab.
+   *
+   * Has to come from the per-user channel: by the time this is published the
+   * membership row is gone, so /api/pusher/auth would refuse a fresh subscription
+   * to the conversation channel and any event there is already unreachable.
+   *
+   * Bound but never unsubscribed — PusherProvider owns this channel's lifetime and
+   * also listens on it for `session.revoked`, which unsubscribing here would take
+   * with it. Same arrangement as UnreadProvider.
+   */
+  useEffect(() => {
+    const pusher = getPusher();
+    if (!pusher) return;
+
+    const channel = pusher.subscribe(userChannel(viewerId));
+
+    const onRemoved = ({ conversationId: gone }: { conversationId: string }) => {
+      if (gone !== conversationId) return;
+      // Out of a thread that is no longer readable, rather than leaving somebody
+      // looking at a conversation whose next request will 404.
+      router.refresh();
+      router.push("/chat");
+    };
+
+    channel.bind("conversation.removed", onRemoved);
+    return () => {
+      channel.unbind("conversation.removed", onRemoved);
+    };
+  }, [conversationId, viewerId, router]);
 
   /**
    * Catch-up. PUSHER DOES NOT REPLAY, so anything published while this tab was
@@ -334,6 +481,84 @@ export function Thread({
     [conversationId],
   );
 
+  // ---------- reactions ----------
+
+  /**
+   * Toggles the viewer's reaction on a message.
+   *
+   * Optimistic, and deliberately not rolled back on failure. The event that
+   * follows carries the emoji's complete membership, so a failed request is
+   * corrected by the next thing the server says about that emoji — and if nothing
+   * follows, the next page load is authoritative. Rolling back manually would mean
+   * guessing which of two racing taps to undo.
+   */
+  const toggleReaction = useCallback(
+    async (messageId: number, emoji: string) => {
+      const me = {
+        id: viewerId,
+        displayName: members.find((m) => m.id === viewerId)?.displayName ?? "You",
+      };
+
+      setConfirmed((prev) =>
+        prev.map((m) =>
+          m.id === messageId
+            ? { ...m, reactions: applyReactionToggle(m.reactions, emoji, me) }
+            : m,
+        ),
+      );
+
+      const res = await fetch(
+        `/api/chat/conversations/${conversationId}/messages/${messageId}/reactions`,
+        {
+          method: "POST",
+          headers: { ...realtimeHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({ emoji }),
+        },
+      ).catch(() => null);
+
+      const data = (await res?.json().catch(() => ({}))) as {
+        ok?: boolean;
+        reaction?: ReactionGroup;
+      };
+
+      // The response is server truth for this emoji, same shape as the event.
+      // Applied whether or not the event also arrives, because this tab is not
+      // excluded from the fan-out and merging is idempotent either way.
+      if (res?.ok && data.ok && data.reaction) {
+        setConfirmed((prev) =>
+          prev.map((m) =>
+            m.id === messageId
+              ? { ...m, reactions: mergeReactionGroup(m.reactions, data.reaction!) }
+              : m,
+          ),
+        );
+      }
+    },
+    [conversationId, members, viewerId],
+  );
+
+  /** Deletes one of your own messages. The bubble keeps its slot and becomes
+   *  "Message deleted"; its reactions go, on the server and here. */
+  const removeMessage = useCallback(
+    async (messageId: number) => {
+      const res = await fetch(
+        `/api/chat/conversations/${conversationId}/messages/${messageId}`,
+        { method: "DELETE", headers: realtimeHeaders() },
+      ).catch(() => null);
+
+      if (!res?.ok) return;
+
+      setConfirmed((prev) =>
+        prev.map((m) =>
+          m.id === messageId
+            ? { ...m, body: "", deletedAt: new Date().toISOString(), reactions: [] }
+            : m,
+        ),
+      );
+    },
+    [conversationId],
+  );
+
   /** Clears the composer first, so a slow send does not leave the text sitting
    *  there looking unsent while the optimistic bubble is already below it. */
   const submitDraft = useCallback(() => {
@@ -392,24 +617,48 @@ export function Thread({
           person={{
             id: conversationId,
             name: title,
-            avatarUrl: dmPartner?.avatarUrl ?? null,
+            // A group's own photo; a DM's is the other person's face. Initials of
+            // the group name when it has none, which reads as a group rather than
+            // as a person.
+            avatarUrl: isGroup ? detail.avatarUrl : (dmPartner?.avatarUrl ?? null),
           }}
           size="h-9 w-9"
           online={tracking && dmPartner ? online.has(dmPartner.id) : undefined}
         />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-bold">{title}</p>
           <p className="truncate text-[11px] text-faint">
-            {dmPartner
-              ? tracking
-                ? online.has(dmPartner.id)
-                  ? "Online"
-                  : "Offline"
-                : `${members.length} members`
-              : `${members.length} member${members.length === 1 ? "" : "s"}`}
+            {isGroup ? (
+              // Names rather than a bare count: in a group of five, who is in it
+              // is the thing you actually want to know at a glance.
+              members.map((m) => (m.id === viewerId ? "You" : m.displayName)).join(", ")
+            ) : dmPartner && tracking ? (
+              online.has(dmPartner.id) ? "Online" : "Offline"
+            ) : (
+              `${members.length} member${members.length === 1 ? "" : "s"}`
+            )}
           </p>
         </div>
+
+        {isGroup ? (
+          <Button size="sm" variant="quiet" className="shrink-0" onClick={() => setManaging(true)}>
+            {/* Everyone gets the button, not only admins: a plain member still
+                needs to see who is in the group and to be able to leave it. The
+                dialog hides the controls they cannot use, and the server refuses
+                them regardless. */}
+            Group
+          </Button>
+        ) : null}
       </div>
+
+      {managing && isGroup ? (
+        <GroupDialog
+          conversation={detail}
+          viewerId={viewerId}
+          refreshKey={membersVersion}
+          onClose={() => setManaging(false)}
+        />
+      ) : null}
 
       <div
         ref={scroller}
@@ -431,27 +680,45 @@ export function Thread({
         ) : null}
 
         <div className="space-y-2.5">
-          {confirmed.map((m) => (
-            <Bubble
-              key={m.id}
-              // Only on the newest message you sent: a tick under every line is
-              // noise, and the last one answers the actual question.
-              readBy={
-                m.senderId === viewerId && m.id === lastMineId
-                  ? members
-                      .filter((x) => x.id !== viewerId && (readUpTo[x.id] ?? 0) >= m.id)
-                      .map((x) => x.displayName)
-                  : undefined
-              }
-              mine={m.senderId === viewerId}
-              author={memberName(m.senderId)}
-              authorId={m.senderId}
-              authorFace={memberFace(m.senderId)}
-              body={m.body}
-              at={m.createdAt}
-              deleted={!!m.deletedAt}
-            />
-          ))}
+          {confirmed.map((m) =>
+            // A membership or rename event, not somebody's words. Centred, no
+            // bubble, no avatar, no reactions — it is the group narrating itself,
+            // and dressing it as a message would invite replying to it.
+            m.kind === "system" ? (
+              <SystemLine key={m.id} body={m.body} at={m.createdAt} />
+            ) : (
+              <Bubble
+                key={m.id}
+                // Only on the newest message you sent: a tick under every line is
+                // noise, and the last one answers the actual question.
+                readBy={
+                  m.senderId === viewerId && m.id === lastMineId
+                    ? members
+                        .filter((x) => x.id !== viewerId && (readUpTo[x.id] ?? 0) >= m.id)
+                        .map((x) => x.displayName)
+                    : undefined
+                }
+                mine={m.senderId === viewerId}
+                author={memberName(m.senderId)}
+                authorId={m.senderId}
+                authorFace={memberFace(m.senderId)}
+                body={m.body}
+                at={m.createdAt}
+                deleted={!!m.deletedAt}
+                reactions={m.reactions}
+                viewerId={viewerId}
+                onReact={(emoji) => void toggleReaction(m.id, emoji)}
+                onDelete={
+                  // Your own, and not already gone. There is no admin override:
+                  // somebody who could silently remove other people's words is a
+                  // different product with different promises.
+                  m.senderId === viewerId && !m.deletedAt
+                    ? () => void removeMessage(m.id)
+                    : undefined
+                }
+              />
+            ),
+          )}
 
           {pending.map((p) => (
             <Bubble
@@ -569,6 +836,10 @@ function Bubble({
   state,
   deleted,
   readBy,
+  reactions,
+  viewerId,
+  onReact,
+  onDelete,
   onRetry,
 }: {
   mine: boolean;
@@ -582,10 +853,17 @@ function Bubble({
   /** Names of the other members who have read this. Undefined on messages that
    *  carry no receipt, which is all of them except your latest. */
   readBy?: string[];
+  reactions?: ReactionGroup[];
+  viewerId?: string;
+  /** Absent on an optimistic bubble: there is no server-side id to hang a
+   *  reaction on until the POST comes back. */
+  onReact?: (emoji: string) => void;
+  /** Absent unless this is the viewer's own, undeleted message. */
+  onDelete?: () => void;
   onRetry?: () => void;
 }) {
   return (
-    <div className={`flex items-end gap-2 ${mine ? "justify-end" : "justify-start"}`}>
+    <div className={`group flex items-end gap-2 ${mine ? "justify-end" : "justify-start"}`}>
       {/* Only on the other side: your own face beside your own words is noise. */}
       {!mine && author ? (
         <Avatar person={{ id: authorId ?? author, name: author, avatarUrl: authorFace }} size="h-7 w-7" />
@@ -600,17 +878,32 @@ function Bubble({
           <p className="mb-0.5 px-1 text-[10px] font-semibold text-faint">{author}</p>
         ) : null}
 
-        <div
-          className={`rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${
-            deleted
-              ? "bg-subtle-2 italic text-faint"
-              : mine
-                ? "bg-brand-500 text-white"
-                : "bg-subtle text-ink-2"
-          } ${state === "failed" ? "ring-1 ring-bad" : ""} ${state === "sending" ? "opacity-60" : ""}`}
-        >
-          {deleted ? "Message deleted" : <span className="whitespace-pre-wrap break-words">{body}</span>}
+        <div className={`flex items-center gap-1.5 ${mine ? "flex-row-reverse" : ""}`}>
+          <div
+            className={`rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${
+              deleted
+                ? "bg-subtle-2 italic text-faint"
+                : mine
+                  ? "bg-brand-500 text-white"
+                  : "bg-subtle text-ink-2"
+            } ${state === "failed" ? "ring-1 ring-bad" : ""} ${state === "sending" ? "opacity-60" : ""}`}
+          >
+            {deleted ? "Message deleted" : <span className="whitespace-pre-wrap break-words">{body}</span>}
+          </div>
+
+          {onDelete ? <DeleteButton onDelete={onDelete} /> : null}
         </div>
+
+        {/* Deleted messages show nothing — the server clears the rows, and a
+            count of laughs at something nobody can read is worse than nothing. */}
+        {onReact && viewerId && !deleted ? (
+          <Reactions
+            reactions={reactions ?? []}
+            viewerId={viewerId}
+            align={mine ? "right" : "left"}
+            onToggle={onReact}
+          />
+        ) : null}
 
         <div className={`mt-0.5 flex items-center gap-2 px-1 ${mine ? "justify-end" : ""}`}>
           {state === "failed" ? (
@@ -643,5 +936,102 @@ function Bubble({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * "Alex added Jamie." A group narrating itself.
+ *
+ * Rendered as a centred line rather than a bubble, deliberately: it has no
+ * author to reply to, no receipt, and nothing to react to. Dressing it like a
+ * message would invite all three.
+ *
+ * `body` is baked server-side with the names as they were when it happened (see
+ * lib/chat/groups.ts), so this component does no name resolution — a line that
+ * rewrote itself when somebody was renamed would not be a log.
+ *
+ * A text child, so React escapes it. Same rule as Bubble: there is no
+ * dangerouslySetInnerHTML here and there must not be, even though this string is
+ * server-composed — a group NAME is user input, and it is interpolated into it.
+ */
+function SystemLine({ body, at }: { body: string; at: string }) {
+  return (
+    <div className="flex justify-center py-1">
+      <p
+        className="max-w-[85%] rounded-full bg-subtle-2 px-3 py-1 text-center text-[11px] text-faint"
+        title={formatDateTime(at) ?? undefined}
+      >
+        {body}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Two clicks to delete a message, with no dialog.
+ *
+ * ── Why two clicks and not one, and why not a modal ──
+ *
+ * Deletion here is irreversible: the body is cleared server-side and the
+ * reactions are removed outright. A single ✕ sitting next to every bubble, which
+ * appears on hover exactly where a cursor already is, is a mis-click away from
+ * losing something — so the first click only arms it.
+ *
+ * A modal would be the other answer and is worse for this: it steals focus from
+ * the composer, covers the thread you are deleting from, and is far more ceremony
+ * than one message deserves. The armed state says what will happen, stays put
+ * until it is used, and disarms on a few seconds of inaction or on blur — so
+ * walking away never leaves a live trigger sitting under the pointer.
+ *
+ * Revealed on hover or keyboard focus. `focus:opacity-100` is not decoration:
+ * without it the button is unreachable by Tab, because a control that is only
+ * `opacity-0` is still in the tab order and simply invisible while focused.
+ */
+function DeleteButton({ onDelete }: { onDelete: () => void }) {
+  const [armed, setArmed] = useState(false);
+
+  useEffect(() => {
+    if (!armed) return;
+    const timer = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(timer);
+  }, [armed]);
+
+  if (armed) {
+    return (
+      <span className="flex shrink-0 items-center gap-1">
+        <button
+          type="button"
+          onClick={onDelete}
+          onBlur={() => setArmed(false)}
+          // Autofocus so Enter confirms and Escape-then-Tab does not leave a
+          // primed button behind. It is a deliberate focus move: the reader just
+          // asked for this control.
+          autoFocus
+          className="rounded-full bg-bad-strong px-2 py-0.5 text-[10px] font-semibold text-white"
+        >
+          Delete
+        </button>
+        <button
+          type="button"
+          onClick={() => setArmed(false)}
+          aria-label="Keep this message"
+          className="text-[10px] font-semibold text-faint hover:text-ink-2"
+        >
+          Keep
+        </button>
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setArmed(true)}
+      title="Delete this message"
+      aria-label="Delete this message"
+      className="shrink-0 rounded-full p-1 text-faintest opacity-0 transition hover:text-bad focus:opacity-100 focus-visible:outline-none group-hover:opacity-100"
+    >
+      <Icon name="close" className="h-3 w-3" />
+    </button>
   );
 }

@@ -18,6 +18,7 @@
     "auth:set-password": "tsx scripts/set-password.ts set-password",
     "verify:chat": "tsx scripts/verify-chat.mts",
     "verify:chat:http": "tsx scripts/verify-chat-http.mts",
+    "verify:chat:social": "tsx scripts/verify-chat-social.mts",
     "verify:avatar": "tsx scripts/verify-avatar.mts",
     "verify:presence": "tsx scripts/verify-presence.mts",
     "auth:unlock": "tsx scripts/set-password.ts unlock",

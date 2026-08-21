@@ -57,9 +57,10 @@ export default async function ConversationPage({
 
   return (
     <Thread
-      conversationId={conversationId}
-      title={conversation.title}
-      members={conversation.members}
+      // The whole summary, not three fields off it: a group's title, photo,
+      // membership and the viewer's standing in it all change while the thread is
+      // open, and the header and the manage dialog read all four.
+      conversation={conversation}
       viewerId={user.id}
       // The query returns newest-first for pagination; the thread reads
       // oldest-first, so it is reversed once here rather than in the client.

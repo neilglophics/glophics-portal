@@ -105,10 +105,37 @@ the publisher and the subscriber, so a renamed event breaks the build rather tha
 |---|---|---|
 | `message.new` | `{ id, conversationId, senderId, clientMsgId, body, kind, replyToId, createdAt, attachments[] }` | yes |
 | `message.edited` | `{ id, conversationId, body, editedAt }` | yes |
-| `message.deleted` | `{ id, conversationId, deletedAt }` | soft |
+| `message.deleted` | `{ id, conversationId }` | soft |
+| `reaction.changed` | `{ messageId, conversationId, emoji, users[] }` | yes |
+| `conversation.updated` | `{ conversationId, title, avatarVersion }` | yes |
+| `members.changed` | `{ conversationId }` | yes |
 | `typing.start` | `{ conversationId, userId }` | **no** |
 | `read.changed` | `{ conversationId, userId, lastReadMessageId }` | watermark only |
-| `member.added` / `member.removed` | `{ conversationId, userId }` | yes |
+
+`reaction.changed` carries the **complete membership of one emoji**, never a delta. A delta is not
+idempotent: a duplicate event, or one arriving after the acting tab already painted its own optimistic
+pill, would count the same tap twice — and a client cannot tell those cases apart. A whole group is
+order-independent, so applying it twice is the same as applying it once, which is also why this is the
+one event the server does *not* exclude the acting socket from. An empty `users` means the last reactor
+removed theirs and the pill goes.
+
+It is the second place the "signals not state" rule bends, within the same reasoning as `message.new`
+and no worse: the payload is one emoji and its reactors, and the channel is already gated on
+membership — the same gate that lets `message.new` carry a body at all.
+
+`members.changed` is the strict rule instead: an id and nothing else, because the member list feeds
+the UI's *own* permission decisions (who may remove whom), and a pushed copy of it is a copy that can
+be stale at the moment somebody clicks. `conversation.updated` splits the difference — `title` rides
+along because a rename visibly lagging behind the system message announcing it looks broken, while the
+avatar is bytes behind a versioned URL, so `avatarVersion` is only the cache key. A null
+`avatarVersion` means *unchanged*, not *there is no photo*.
+
+Membership and rename changes also write a **system message**, published as an ordinary `message.new`.
+The thread renders it through exactly the path every other message takes, so there is no second code
+path to keep in step — and because it is a real row, it moves `last_message_at`, becomes the
+conversation-list preview, and counts towards unread. The per-member `unread.changed` that follows is
+therefore not optional: skip it and the live badge silently disagrees with the next server render.
+`lib/chat/publish.ts` does all four publishes in one place for exactly that reason.
 
 `message.new` **inlines the body** — chat latency does not tolerate a signal-then-refetch round trip.
 That is a deliberate trade: message text leaves your infrastructure and transits Pusher. It is the
@@ -126,7 +153,14 @@ timeout cannot.
 |---|---|
 | `unread.changed` | `{ conversationId, unreadCount, lastMessagePreview }` |
 | `conversation.added` | `{ conversationId }` — you were added; go subscribe |
+| `conversation.removed` | `{ conversationId }` — you left or were removed; drop it and unsubscribe |
 | `session.revoked` | `{}` — password/role/active changed; the client reloads to the sign-in screen |
+
+`conversation.removed` **has to** be a per-user event. By the time it is published the `chat_members`
+row is gone, so `/api/pusher/auth` would refuse a fresh subscription to `private-conv-<id>` and
+anything published there is already unreachable. It carries an id and nothing else: whether they were
+removed or left is a system message in a thread they can no longer read, and putting "removed by Alex"
+on this channel would be telling somebody what the group said after they left.
 
 `session.revoked` closes a real gap. In the current system a revoked session keeps receiving pushes
 until its stream happens to drop, because the client only re-checks on disconnect. Publishing this
@@ -308,6 +342,19 @@ Enforce server-side, per user, in Postgres or a small counter table:
 | Create conversation | 10 / hour |
 | Upload token request | 20 / hour |
 | Mark read | 10 / 10 s |
+| React to a message | 30 / 10 s |
+| Manage a group (rename, avatar, add, remove, role) | 20 / minute |
+| Delete own message | 20 / minute |
+
+Reactions are looser than sends because a reaction is one tap and people do go down a thread reacting
+to several messages in a row. Group management is tighter than it looks like it needs to be, and the
+thing being limited there is not load: every one of those writes a system message into a thread
+everybody sees, so the failure mode is somebody making the history unreadable.
+
+Reactions deliberately do **not** touch `last_message_at` or unread counts. A thumbs-up is
+acknowledgement, not a message; bumping a conversation to the top of everybody's list and lighting up a
+badge for one would make the cheapest gesture in the app the loudest — and it would cost a per-member
+`unread.changed` fan-out per tap.
 
 ⚠ **Pusher plans cap concurrent connections and daily messages** (*verify* — the free tier is
 commonly 100 connections / 200k messages per day). Budget the noisy publishers before shipping:

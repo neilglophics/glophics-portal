@@ -55,6 +55,17 @@ export async function putAvatar(input: {
   return { updatedAt: rows[0]!.updated_at };
 }
 
+/**
+ * The driver hands bytea back as a Buffer, or as a hex string in some paths.
+ * Normalising here means no route has to care which — and there are two callers
+ * now, one for a person's face and one for a group's.
+ */
+function toBuffer(value: unknown): Buffer {
+  return typeof value === "string"
+    ? Buffer.from(value.replace(/^\\x/, ""), "hex")
+    : Buffer.from(value as Uint8Array);
+}
+
 export async function getAvatar(userId: string): Promise<StoredAvatar | null> {
   const rows = (await sql`
     SELECT bytes, mime, updated_at FROM auth_user_avatars WHERE user_id = ${userId}
@@ -63,14 +74,7 @@ export async function getAvatar(userId: string): Promise<StoredAvatar | null> {
   const row = rows[0];
   if (!row) return null;
 
-  // The driver hands bytea back as a Buffer, or as a hex string in some paths.
-  // Normalising here means the route never has to care which.
-  const bytes =
-    typeof row.bytes === "string"
-      ? Buffer.from(row.bytes.replace(/^\\x/, ""), "hex")
-      : Buffer.from(row.bytes as Uint8Array);
-
-  return { bytes, mime: row.mime, updatedAt: row.updated_at };
+  return { bytes: toBuffer(row.bytes), mime: row.mime, updatedAt: row.updated_at };
 }
 
 export async function deleteAvatar(userId: string): Promise<boolean> {
@@ -93,6 +97,62 @@ export async function avatarVersions(): Promise<Map<string, string>> {
   `) as { user_id: string; updated_at: string }[];
 
   return new Map(rows.map((r) => [r.user_id, r.updated_at]));
+}
+
+// ---------- group avatars ----------
+
+/**
+ * A group's photo.
+ *
+ * Same table shape, same functions, same reasoning as a person's — see
+ * lib/db/migrations/0004_chat_reactions_and_groups.sql. Kept in this module
+ * rather than in queries/chat.ts because what it is doing is avatar storage, and
+ * a second copy of "normalise bytea, hand back a Buffer" would be a second place
+ * to get that wrong.
+ *
+ * There is no capability check here. The route that calls it does that, and the
+ * permission question — owner or admin — belongs to the group, not to the bytes.
+ */
+export async function putConversationAvatar(input: {
+  conversationId: string;
+  bytes: Buffer;
+  mime: string;
+  width: number;
+  height: number;
+}): Promise<{ updatedAt: string }> {
+  const rows = (await sql`
+    INSERT INTO chat_conversation_avatars
+      (conversation_id, bytes, mime, width, height, byte_size, updated_at)
+    VALUES (${input.conversationId}, ${input.bytes}, ${input.mime},
+            ${input.width}, ${input.height}, ${input.bytes.length}, now())
+    ON CONFLICT (conversation_id) DO UPDATE SET
+      bytes = EXCLUDED.bytes, mime = EXCLUDED.mime,
+      width = EXCLUDED.width, height = EXCLUDED.height,
+      byte_size = EXCLUDED.byte_size, updated_at = now()
+    RETURNING updated_at
+  `) as { updated_at: string }[];
+
+  return { updatedAt: rows[0]!.updated_at };
+}
+
+export async function getConversationAvatar(conversationId: string): Promise<StoredAvatar | null> {
+  const rows = (await sql`
+    SELECT bytes, mime, updated_at FROM chat_conversation_avatars
+     WHERE conversation_id = ${conversationId}
+  `) as { bytes: unknown; mime: string; updated_at: string }[];
+
+  const row = rows[0];
+  if (!row) return null;
+
+  return { bytes: toBuffer(row.bytes), mime: row.mime, updatedAt: row.updated_at };
+}
+
+export async function deleteConversationAvatar(conversationId: string): Promise<boolean> {
+  const rows = (await sql`
+    DELETE FROM chat_conversation_avatars WHERE conversation_id = ${conversationId}
+    RETURNING conversation_id
+  `) as unknown[];
+  return rows.length > 0;
 }
 
 /** The URL for a login's avatar, or null when they have not uploaded one. */

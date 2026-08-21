@@ -69,14 +69,14 @@ export function ConversationList({
                   active ? "bg-brand-soft" : "hover:bg-subtle"
                 }`}
               >
-                {/* For a DM this is the other member's face; a group falls back
-                    to initials of its name, which reads as a group rather than
-                    as a person. */}
+                {/* For a DM this is the other member's face; for a group its own
+                    photo, falling back to initials of its name — which reads as a
+                    group rather than as a person. */}
                 <Avatar
                   person={{
                     id: c.id,
                     name: c.title,
-                    avatarUrl: other?.avatarUrl ?? null,
+                    avatarUrl: c.kind === "group" ? c.avatarUrl : (other?.avatarUrl ?? null),
                   }}
                   size="h-9 w-9"
                   // A dot only where it means something: on one identifiable
@@ -114,8 +114,12 @@ export function ConversationList({
                   </div>
 
                   {c.kind === "group" ? (
-                    <p className="mt-1 truncate text-[10px] text-faintest">
+                    <p className="mt-1 flex items-center gap-1 truncate text-[10px] text-faintest">
+                      {/* Says "group" as well as counting, so a two-person group
+                          is not mistaken for a DM at a glance. */}
+                      <Icon name="users" className="h-2.5 w-2.5" />
                       {c.members.length} member{c.members.length === 1 ? "" : "s"}
+                      {c.viewerRole === "member" ? null : ` · you're the ${c.viewerRole}`}
                     </p>
                   ) : null}
                 </div>
