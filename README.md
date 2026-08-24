@@ -1,4 +1,4 @@
-# Server Management
+# Glophics
 
 Tracks which QA/staging environments are free and which are held by a Jira
 ticket, so nobody has to ask in chat before deploying.

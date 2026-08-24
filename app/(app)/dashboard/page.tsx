@@ -3,6 +3,7 @@ import { AvatarStack } from "@/components/ui/Avatar";
 import { JiraAutoSync } from "@/components/dashboard/JiraAutoSync";
 import { Chip, Dash, JiraChip } from "@/components/ui/Chips";
 import { Icon } from "@/components/ui/Icon";
+import { ClaimRepoLinks, TicketLink } from "@/components/ui/JiraLinks";
 import { Empty, Page, StatTile } from "@/components/ui/Layout";
 import { RepoStrip } from "@/components/ui/RepoStrip";
 import { Table, Td, Th, Tr } from "@/components/ui/Table";
@@ -15,7 +16,7 @@ import { jiraActivity } from "@/lib/shared/activity";
 import { agoText } from "@/lib/shared/format";
 import { jiraBranchConflicts, type JiraBranchConflict } from "@/lib/shared/jira-conflicts";
 import { ENV_STATE, TONE, shortRepo } from "@/lib/shared/tokens";
-import type { Environment } from "@/lib/types";
+import type { Claim, Environment } from "@/lib/types";
 import {
   boardRows,
   claimRows,
@@ -33,57 +34,6 @@ import {
 export const metadata = { title: "Dashboard · Glophics Portal" };
 
 const TABLE_LIMIT = 5;
-
-function JiraTicketLink({ ticket_key, jira_base_url }: { ticket_key: string; jira_base_url: string }) {
-  return (
-    <a
-      href={issueUrl(jira_base_url, ticket_key)}
-      target="_blank"
-      rel="noopener noreferrer"
-      title={`Open ${ticket_key} in Jira`}
-      className="inline-flex items-center gap-1 whitespace-nowrap text-[13px] font-bold text-brand-fg hover:underline"
-    >
-      {ticket_key}
-      <Icon name="external" className="h-3 w-3 opacity-60" />
-      <span className="sr-only">(opens in a new tab)</span>
-    </a>
-  );
-}
-
-function JiraRepoLinks({ row, environments }: { row: TicketRow; environments: Environment[] }) {
-  const environment = environments.find((item) => item.id === row.serverId);
-  const class_name = `inline-flex items-center whitespace-nowrap rounded-md px-2 py-1 text-[10px] font-bold tracking-wide ${
-    row.holding ? "bg-warn-soft text-warn" : "bg-subtle-2 text-muted"
-  }`;
-
-  return (
-    <div className="flex min-w-[5rem] flex-wrap gap-1.5">
-      {row.claim.repos.map((repo_name) => {
-        const repo = environment?.repos.find(
-          (item) => item.repoName.toLowerCase() === repo_name.toLowerCase(),
-        );
-        const label = shortRepo(repo_name);
-
-        return repo?.url ? (
-          <a
-            key={repo_name}
-            href={repo.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            title={`${repo.repoName}\n${repo.url}`}
-            className={`${class_name} transition hover:brightness-110 hover:ring-2 hover:ring-brand-300`}
-          >
-            {label}
-          </a>
-        ) : (
-          <span key={repo_name} title={`${repo_name}: no URL configured`} className={class_name}>
-            {label}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
 
 function JiraConflictNotice({
   conflicts,
@@ -211,21 +161,24 @@ function JiraUpdateRow({
   activity,
   jira_base_url,
   environments,
+  claims,
 }: {
   row: TicketRow;
   activity: ReturnType<typeof jiraActivity>;
   jira_base_url: string | null;
   environments: Environment[];
+  claims: Claim[];
 }) {
   return (
     <Tr className="group">
       <Td className="w-[23%] align-top">
         <span className="inline-flex items-center gap-1.5">
-          {jira_base_url ? (
-            <JiraTicketLink ticket_key={row.claim.id} jira_base_url={jira_base_url} />
-          ) : (
-            <span className="whitespace-nowrap text-xs font-bold text-brand-fg">{row.claim.id}</span>
-          )}
+          <TicketLink
+            ticketKey={row.claim.id}
+            source={row.claim.source}
+            jiraBaseUrl={jira_base_url}
+            className="text-[13px] font-bold text-brand-fg"
+          />
           {activity ? <Chip className={activity.chipClassName}>{activity.badge}</Chip> : null}
         </span>
         {row.claim.jiraUpdatedAt ? (
@@ -257,7 +210,12 @@ function JiraUpdateRow({
       </Td>
       <Td className="w-[7%] align-top">
         {row.claim.repos.length ? (
-          <JiraRepoLinks row={row} environments={environments} />
+          <ClaimRepoLinks
+            repos={row.claim.repos}
+            environment={environments.find((env) => env.id === row.serverId)}
+            claims={claims}
+            className="min-w-[5rem]"
+          />
         ) : (
           <Dash />
         )}
@@ -443,6 +401,7 @@ export default async function DashboardPage() {
                 activity={jiraActivity(row, directory, user)}
                 jira_base_url={jira_base_url}
                 environments={environments}
+                claims={claims}
               />
             ))}
           </Table>

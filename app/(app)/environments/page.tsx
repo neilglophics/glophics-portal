@@ -2,12 +2,14 @@ import Link from "next/link";
 import { AvatarStack } from "@/components/ui/Avatar";
 import { ButtonLink } from "@/components/ui/Button";
 import { Dash, StatusChip } from "@/components/ui/Chips";
+import { TicketLink } from "@/components/ui/JiraLinks";
 import { Page, PageHead } from "@/components/ui/Layout";
 import { RepoStrip } from "@/components/ui/RepoStrip";
 import { Table, Td, Th, Tr } from "@/components/ui/Table";
 import { currentUserOrNull } from "@/lib/auth/require";
 import { getBoard } from "@/lib/db/queries/board";
 import { avatarVersions } from "@/lib/db/queries/avatars";
+import { describeJiraConfig } from "@/lib/jira/client";
 import { myClaims } from "@/lib/shared/mine";
 import { ENV_STATE } from "@/lib/shared/tokens";
 import {
@@ -83,9 +85,12 @@ function StatusFilter({
   );
 }
 
-function EnvironmentRow({ row }: { row: EnvRow }) {
+function EnvironmentRow({ row, jiraBaseUrl }: { row: EnvRow; jiraBaseUrl: string | null }) {
   const token = ENV_STATE[row.state];
   const minutes = row.soonest ? minutesLeft(row.soonest) : null;
+  /* The first ticket is the one the row reports on; the rest are a count, and
+     the environment page lists them all. */
+  const first_claim = row.claims[0] ?? null;
 
   return (
     <Tr>
@@ -112,9 +117,13 @@ function EnvironmentRow({ row }: { row: EnvRow }) {
       <Td>{row.people.length ? <AvatarStack people={row.people} /> : <Dash />}</Td>
 
       <Td>
-        {row.ticketIds.length ? (
+        {first_claim ? (
           <>
-            <span className="whitespace-nowrap text-xs font-semibold text-brand-fg">{row.ticketIds[0]}</span>
+            <TicketLink
+              ticketKey={first_claim.id}
+              source={first_claim.source}
+              jiraBaseUrl={jiraBaseUrl}
+            />
             {row.ticketIds.length > 1 ? (
               <span className="ml-1 text-[11px] text-faint">+{row.ticketIds.length - 1}</span>
             ) : null}
@@ -172,7 +181,15 @@ function ViewToggle({ search, value, label }: { search: Search; value: "table" |
   );
 }
 
-function MatrixView({ rows, accounts }: { rows: EnvRow[]; accounts: Account[] }) {
+function MatrixView({
+  rows,
+  accounts,
+  jiraBaseUrl,
+}: {
+  rows: EnvRow[];
+  accounts: Account[];
+  jiraBaseUrl: string | null;
+}) {
   const repoOrder = ["storefront", "backend", "admin"];
   const repoNames = [...new Set(rows.flatMap((row) => row.repos.map((repo) => repo.repoName)))];
   const orderedRepos = [...repoOrder.filter((repo) => repoNames.includes(repo)), ...repoNames.filter((repo) => !repoOrder.includes(repo))];
@@ -222,12 +239,13 @@ function MatrixView({ rows, accounts }: { rows: EnvRow[]; accounts: Account[] })
                           <div className="space-y-2">
                             {cells.map(({ claim, envName, people }) => (
                               <div key={`${claim.id}-${repo}`} className="rounded-lg border border-line-soft bg-subtle-2 p-2">
-                                <Link
-                                  href={`/environments/${encodeURIComponent(claim.serverId)}`}
-                                  className="text-xs font-bold text-brand-fg hover:underline"
-                                >
-                                  {claim.id}
-                                </Link>
+                                <TicketLink
+                                  ticketKey={claim.id}
+                                  source={claim.source}
+                                  jiraBaseUrl={jiraBaseUrl}
+                                  className="text-xs font-bold text-brand-fg"
+                                  iconClassName="h-2.5 w-2.5 opacity-60"
+                                />
                                 <div className="mt-1 flex items-center gap-2 min-w-0">
                                   {people.length ? <AvatarStack people={people} max={2} /> : null}
                                   {people.length ? (
@@ -237,9 +255,17 @@ function MatrixView({ rows, accounts }: { rows: EnvRow[]; accounts: Account[] })
                                     </span>
                                   ) : null}
                                 </div>
-                                <p className="mt-1 truncate text-[10px] text-faint" title={envName}>
+                                {/* The cell used to send you to the environment
+                                    from the ticket key. The key now opens the
+                                    ticket, so the environment keeps its own
+                                    link here rather than losing one. */}
+                                <Link
+                                  href={`/environments/${encodeURIComponent(claim.serverId)}`}
+                                  className="mt-1 block truncate text-[10px] text-faint hover:text-brand-fg hover:underline"
+                                  title={envName}
+                                >
                                   {envName}
-                                </p>
+                                </Link>
                               </div>
                             ))}
                           </div>
@@ -259,6 +285,7 @@ function MatrixView({ rows, accounts }: { rows: EnvRow[]; accounts: Account[] })
 
 export default async function EnvironmentsPage({ searchParams }: { searchParams: Promise<Search> }) {
   const search = await searchParams;
+  const jiraBaseUrl = describeJiraConfig().baseUrl;
   const [board, user, avatars] = await Promise.all([
     getBoard(),
     currentUserOrNull(),
@@ -346,7 +373,7 @@ export default async function EnvironmentsPage({ searchParams }: { searchParams:
       </div>
 
       {view === "matrix" ? (
-        <MatrixView rows={rows} accounts={accounts} />
+        <MatrixView rows={rows} accounts={accounts} jiraBaseUrl={jiraBaseUrl} />
       ) : (
         <Table
           isEmpty={!rows.length}
@@ -368,7 +395,7 @@ export default async function EnvironmentsPage({ searchParams }: { searchParams:
           }
         >
           {rows.map((row) => (
-            <EnvironmentRow key={row.id} row={row} />
+            <EnvironmentRow key={row.id} row={row} jiraBaseUrl={jiraBaseUrl} />
           ))}
         </Table>
       )}

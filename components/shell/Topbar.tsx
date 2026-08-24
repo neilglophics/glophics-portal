@@ -3,9 +3,9 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/ui/Icon";
-import { agoText } from "@/lib/shared/format";
 import { ConnectionDot } from "./ConnectionDot";
 import { NotificationToggle } from "./NotificationToggle";
+import { SyncButton } from "./SyncButton";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 
 /**
@@ -15,6 +15,11 @@ import { ThemeSwitcher } from "./ThemeSwitcher";
  * people's* changes reach this tab; "Synced Nm ago" is how fresh the Jira data
  * is. One can be fine while the other is not, and a single combined light would
  * hide that.
+ *
+ * Only one of them is pressable, and only one of them can be: freshness is
+ * something you can go and fix, so the sync indicator is the button that fixes
+ * it. A dropped realtime connection is not — it reconnects on its own — so the
+ * dot stays a light.
  */
 export function Topbar({
   jiraEnabled,
@@ -64,12 +69,6 @@ export function Topbar({
     return () => document.removeEventListener("keydown", onShortcut);
   }, []);
 
-  const syncLabel = !jiraEnabled
-    ? "Jira off"
-    : lastSyncAt
-      ? `Synced ${agoText(lastSyncAt)} ago`
-      : "Not synced yet";
-
   return (
     <header className="relative z-30 flex h-[72px] shrink-0 items-center gap-3 border-b border-line bg-surface/95 px-4 shadow-[0_1px_0_rgba(0,0,0,0.02)] backdrop-blur-xl sm:px-6">
       <label className="group relative min-w-0 flex-1 sm:max-w-xl">
@@ -101,16 +100,12 @@ export function Topbar({
       </label>
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
-        <div className="hidden items-center gap-2 lg:flex">
+        <div className="hidden items-center lg:flex">
           <ConnectionDot />
-          <div
-            title={jiraEnabled ? syncLabel : "Jira integration is off"}
-            className="flex h-9 max-w-[170px] items-center gap-2 rounded-xl bg-subtle px-3 text-xs font-semibold text-muted ring-1 ring-line-soft"
-          >
-            <Icon name="refresh" className="h-3.5 w-3.5 shrink-0 text-faint" />
-            <span className="truncate">{syncLabel}</span>
-          </div>
         </div>
+        {/* Outside the lg-only group on purpose: the freshness label can go when
+            the header is tight, but the way to sync should not. */}
+        <SyncButton jiraEnabled={jiraEnabled} lastSyncAt={lastSyncAt} />
         <NotificationToggle />
         <ThemeSwitcher />
       </div>

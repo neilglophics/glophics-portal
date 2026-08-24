@@ -4,7 +4,7 @@ Context for AI sessions in this repo. Read this first, then the doc it points yo
 
 ## What this project is
 
-**Server Management** — a board tracking which QA/staging environments are free and which are held by a
+**Glophics** — a board tracking which QA/staging environments are free and which are held by a
 Jira ticket, so nobody has to ask in chat before deploying.
 
 Accounts (clients) own environments; each environment has repository slots (`storefront`, `backend`,

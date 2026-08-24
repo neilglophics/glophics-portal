@@ -38,7 +38,7 @@ const LoginScreen = (() => {
           <span class="grid h-10 w-10 place-items-center rounded-xl bg-white/15 backdrop-blur">
             ${H.icon("servers", "h-5 w-5")}
           </span>
-          <span class="text-lg font-bold tracking-tight">Server Management</span>
+          <span class="text-lg font-bold tracking-tight">Glophics</span>
         </div>
         <div class="relative max-w-md">
           <h2 class="text-[28px] font-bold leading-tight tracking-tight">

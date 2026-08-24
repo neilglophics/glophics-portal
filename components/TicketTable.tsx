@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { AvatarStack } from "@/components/ui/Avatar";
-import { Chip, JiraChip } from "@/components/ui/Chips";
+import { JiraChip } from "@/components/ui/Chips";
+import { ClaimRepoLinks, TicketLink } from "@/components/ui/JiraLinks";
 import { Table, Td, Th, Tr } from "@/components/ui/Table";
-import { shortRepo } from "@/lib/shared/tokens";
-import { isUrgent, leftText, type TicketRow } from "@/lib/shared/view-model";
+import { type TicketRow, isUrgent, leftText } from "@/lib/shared/view-model";
+import type { Claim, Environment } from "@/lib/types";
 
 /**
  * One table for every ticket list — Active tickets, My tickets, In use.
@@ -11,16 +12,30 @@ import { isUrgent, leftText, type TicketRow } from "@/lib/shared/view-model";
  *
  * `holding` is the only thing that separates a claim from any other ticket the
  * sync saw, so both kinds render here and the column says which.
+ *
+ * The Ticket and Holding columns are addresses rather than labels — the key
+ * opens the issue in Jira, each repository badge opens that repository. Both
+ * degrade to plain text on their own terms; see components/ui/JiraLinks.tsx.
  */
 export function TicketTable({
   rows,
   empty,
   showHolding = false,
+  environments = [],
+  claims = [],
+  jiraBaseUrl = null,
 }: {
   rows: TicketRow[];
   empty: string;
   /** Show the "Holding" column. Off for lists that are all one kind. */
   showHolding?: boolean;
+  /** Where the repository URLs and health verdicts live. Without them a badge
+   *  cannot say whether the repository is up. */
+  environments?: Environment[];
+  /** Every claim on the board — what makes a badge able to say "occupied". */
+  claims?: Claim[];
+  /** From describeJiraConfig(). Null when Jira is not configured. */
+  jiraBaseUrl?: string | null;
 }) {
   return (
     <Table
@@ -63,7 +78,11 @@ export function TicketTable({
           </Td>
 
           <Td>
-            <span className="whitespace-nowrap text-xs font-semibold text-brand-fg">{row.claim.id}</span>
+            <TicketLink
+              ticketKey={row.claim.id}
+              source={row.claim.source}
+              jiraBaseUrl={jiraBaseUrl}
+            />
           </Td>
 
           <Td>
@@ -73,7 +92,11 @@ export function TicketTable({
           {showHolding ? (
             <Td>
               {row.holding && row.claim.repos.length ? (
-                <Chip className="bg-warn-soft text-warn">{row.claim.repos.map(shortRepo).join(" ")}</Chip>
+                <ClaimRepoLinks
+                  repos={row.claim.repos}
+                  environment={environments.find((env) => env.id === row.serverId)}
+                  claims={claims}
+                />
               ) : (
                 <span className="text-[11px] text-faint">Nothing</span>
               )}

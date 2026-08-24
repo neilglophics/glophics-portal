@@ -1,5 +1,5 @@
 /**
- * Local sync server for the Server Management dashboard.
+ * Local sync server for the Glophics dashboard.
  *
  * This file is the wiring and nothing else: the gate, the routing table, the
  * boot-time migrations, and what gets printed on start. Every piece of work
@@ -141,7 +141,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Server Management running at http://localhost:${PORT}`);
+  console.log(`Glophics running at http://localhost:${PORT}`);
 
   StateStore.describe().forEach(({ file, lines }) => {
     console.log(`  shared-data/${file.padEnd(14)} ${String(lines).padStart(5)} lines`);

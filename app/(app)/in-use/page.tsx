@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { AvatarStack } from "@/components/ui/Avatar";
-import { Chip, JiraChip } from "@/components/ui/Chips";
+import { JiraChip } from "@/components/ui/Chips";
+import { ClaimRepoLinks, TicketLink } from "@/components/ui/JiraLinks";
 import { Page, PageHead, StatTile } from "@/components/ui/Layout";
 import { Table, Td, Th, Tr } from "@/components/ui/Table";
 import { getBoard } from "@/lib/db/queries/board";
 import { avatarVersions } from "@/lib/db/queries/avatars";
-import { shortRepo } from "@/lib/shared/tokens";
+import { describeJiraConfig } from "@/lib/jira/client";
 import { isUrgent, leftText, minutesLeft, nullsLast, peopleOf } from "@/lib/shared/view-model";
 
 /**
@@ -18,6 +19,7 @@ import { isUrgent, leftText, minutesLeft, nullsLast, peopleOf } from "@/lib/shar
 export const metadata = { title: "In use · Glophics Portal" };
 
 export default async function InUsePage() {
+  const jiraBaseUrl = describeJiraConfig().baseUrl;
   const [{ accounts, environments, claims, directory }, avatars] = await Promise.all([
     getBoard(),
     avatarVersions(),
@@ -31,6 +33,7 @@ export default async function InUsePage() {
       return claim.repos.map((repo) => ({
         claim,
         repo,
+        env_record: env,
         serverId: env?.id ?? null,
         env: env?.name ?? claim.branch ?? "—",
         accountName: account?.displayName ?? claim.accountName ?? "—",
@@ -90,8 +93,16 @@ export default async function InUsePage() {
             </Td>
 
             <Td>
-              <Chip className="bg-warn-soft text-warn">{shortRepo(row.repo)}</Chip>
-              <span className="ml-2 text-xs text-muted">{row.repo}</span>
+              <div className="flex items-center gap-2">
+                {/* One row is one held repository, so there is exactly one badge —
+                    and it opens that repository. */}
+                <ClaimRepoLinks
+                  repos={[row.repo]}
+                  environment={row.env_record ?? undefined}
+                  claims={claims}
+                />
+                <span className="text-xs text-muted">{row.repo}</span>
+              </div>
             </Td>
 
             <Td>
@@ -111,7 +122,11 @@ export default async function InUsePage() {
             </Td>
 
             <Td>
-              <span className="whitespace-nowrap text-xs font-semibold text-brand-fg">{row.claim.id}</span>
+              <TicketLink
+                ticketKey={row.claim.id}
+                source={row.claim.source}
+                jiraBaseUrl={jiraBaseUrl}
+              />
             </Td>
 
             <Td>

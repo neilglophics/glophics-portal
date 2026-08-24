@@ -3,6 +3,7 @@ import { Notice, Page, PageHead } from "@/components/ui/Layout";
 import { currentUserOrNull } from "@/lib/auth/require";
 import { getBoard, getJiraIssues } from "@/lib/db/queries/board";
 import { avatarVersions } from "@/lib/db/queries/avatars";
+import { describeJiraConfig } from "@/lib/jira/client";
 import { claimIsMine, identityValues } from "@/lib/shared/mine";
 import { boardRows, claimRows } from "@/lib/shared/view-model";
 
@@ -16,6 +17,7 @@ import { boardRows, claimRows } from "@/lib/shared/view-model";
 export const metadata = { title: "My tickets · Glophics Portal" };
 
 export default async function MyTicketsPage() {
+  const jiraBaseUrl = describeJiraConfig().baseUrl;
   const [{ accounts, environments, claims, directory }, issues, user, avatars] = await Promise.all([
     getBoard(),
     getJiraIssues(),
@@ -53,7 +55,14 @@ export default async function MyTicketsPage() {
         </Notice>
       ) : null}
 
-      <TicketTable rows={rows} showHolding empty="Nothing on the board is assigned to you." />
+      <TicketTable
+        rows={rows}
+        showHolding
+        environments={environments}
+        claims={claims}
+        jiraBaseUrl={jiraBaseUrl}
+        empty="Nothing on the board is assigned to you."
+      />
     </Page>
   );
 }

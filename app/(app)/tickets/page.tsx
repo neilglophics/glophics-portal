@@ -2,6 +2,7 @@ import { TicketTable } from "@/components/TicketTable";
 import { Page, PageHead } from "@/components/ui/Layout";
 import { getBoard, getJiraIssues } from "@/lib/db/queries/board";
 import { avatarVersions } from "@/lib/db/queries/avatars";
+import { describeJiraConfig } from "@/lib/jira/client";
 import { boardRows, claimRows } from "@/lib/shared/view-model";
 
 /**
@@ -11,6 +12,7 @@ import { boardRows, claimRows } from "@/lib/shared/view-model";
 export const metadata = { title: "Active tickets · Glophics Portal" };
 
 export default async function TicketsPage() {
+  const jiraBaseUrl = describeJiraConfig().baseUrl;
   const [{ accounts, environments, claims, directory }, issues, avatars] = await Promise.all([
     getBoard(),
     getJiraIssues(),
@@ -32,7 +34,14 @@ export default async function TicketsPage() {
           </>
         }
       />
-      <TicketTable rows={rows} showHolding empty="No tickets — the last sync found nothing." />
+      <TicketTable
+        rows={rows}
+        showHolding
+        environments={environments}
+        claims={claims}
+        jiraBaseUrl={jiraBaseUrl}
+        empty="No tickets — the last sync found nothing."
+      />
     </Page>
   );
 }

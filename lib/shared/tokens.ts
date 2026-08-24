@@ -6,7 +6,7 @@
  * referring to the semantic variables defined in app/globals.css.
  */
 
-import type { EnvStatus, RepoHealth, RoleId } from "@/lib/types";
+import type { EnvStatus, RepoHealth, RoleId, ServerRepo } from "@/lib/types";
 
 export interface StateToken {
   label: string;
@@ -39,6 +39,51 @@ export const HEALTH: Record<RepoHealth, { label: string; chip: string; dot: stri
   checking: { label: "Checking", chip: "bg-subtle-2 text-muted", dot: "bg-faint" },
   unconfigured: { label: "No URL set", chip: "bg-subtle-2 text-muted", dot: "bg-faintest" },
 };
+
+/**
+ * The state a repository badge reports on a ticket row: is this repository
+ * reachable, and is anyone on it.
+ *
+ * Same vocabulary and the same precedence as the SF/API/ADM strip on the board
+ * (see components/ui/RepoStrip.tsx) — offline outranks occupancy, per invariant
+ * 1 — but in the soft tones the tables use, so a row of badges sits beside a
+ * status chip without shouting over it.
+ *
+ * `unknown` is not a health value: it is a repository we cannot resolve, either
+ * because the ticket matched no environment or because that slot has no URL, so
+ * nothing has ever been checked.
+ */
+export type RepoBadgeState = "offline" | "occupied" | "free" | "unknown";
+
+export const REPO_BADGE: Record<RepoBadgeState, { word: string; chip: string; dot: string }> = {
+  offline: { word: "offline", chip: "bg-bad-soft text-bad", dot: "bg-bad" },
+  occupied: { word: "occupied", chip: "bg-warn-soft text-warn", dot: "bg-warn" },
+  free: { word: "online, free", chip: "bg-ok-soft text-ok", dot: "bg-ok" },
+  unknown: { word: "no URL configured", chip: "bg-subtle-2 text-muted", dot: "bg-faint" },
+};
+
+/**
+ * Which of those a repository is in. The precedence is the board's, not a new
+ * one:
+ *
+ * 1. **offline outranks everything** — invariant 1. A ticket holding a box that
+ *    is down is the case people most need to see, and it must not read amber.
+ * 2. **unknown** — no repository resolved, or the slot has no URL, so no check
+ *    has ever run. Grey, because "we don't know" is not "free".
+ * 3. **occupied** — some claim holds it. Ask lib/shared/occupancy.ts rather
+ *    than assuming from the row: a board row that merely *names* a repository
+ *    should still tell the truth about who is on it.
+ * 4. **free** — reachable, and nobody on it.
+ *
+ * `repo` is undefined when the ticket matched no environment, which is the
+ * Not-tracked case — we do not know which box it meant, so we do not guess.
+ */
+export function repoBadgeState(repo: ServerRepo | undefined, held: boolean): RepoBadgeState {
+  if (!repo) return "unknown";
+  if (repo.health === "offline") return "offline";
+  if (!repo.url || repo.health === "unconfigured") return "unknown";
+  return held ? "occupied" : "free";
+}
 
 /**
  * Jira workflow statuses arrive in Jira's own casing ("QA Testing (Stg)"), so

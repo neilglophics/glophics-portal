@@ -27,7 +27,7 @@ function BrandPanel() {
         <span className="grid h-10 w-10 place-items-center rounded-xl bg-white/15 backdrop-blur">
           <Icon name="servers" className="h-5 w-5" />
         </span>
-        <span className="text-lg font-bold tracking-tight">Server Management</span>
+        <span className="text-lg font-bold tracking-tight">Glophics</span>
       </div>
 
       <div className="relative max-w-md">

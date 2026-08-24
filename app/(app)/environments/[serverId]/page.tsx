@@ -2,12 +2,14 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AvatarStack } from "@/components/ui/Avatar";
 import { Dash, HealthChip, JiraChip, Muted, StatusChip } from "@/components/ui/Chips";
+import { ClaimRepoLinks, TicketLink } from "@/components/ui/JiraLinks";
 import { Card, Notice, Page, PageHead } from "@/components/ui/Layout";
 import { Table, Td, Th, Tr } from "@/components/ui/Table";
 import { AssignButton, ForceFreeClaimButton, ForceFreeServerButton, NoteButton } from "@/components/env/EnvActions";
 import { currentUserOrNull, can } from "@/lib/auth/require";
 import { getBoard } from "@/lib/db/queries/board";
 import { avatarVersions } from "@/lib/db/queries/avatars";
+import { describeJiraConfig } from "@/lib/jira/client";
 import { agoText, formatDateTime } from "@/lib/shared/format";
 import { shortRepo } from "@/lib/shared/tokens";
 import { envRow, isUrgent, leftText, minutesLeft, peopleOf } from "@/lib/shared/view-model";
@@ -35,6 +37,7 @@ export default async function EnvironmentDetailPage({
 }) {
   const { serverId } = await params;
   const id = decodeURIComponent(serverId);
+  const jiraBaseUrl = describeJiraConfig().baseUrl;
 
   const [board, user, avatars] = await Promise.all([
     getBoard(),
@@ -105,9 +108,27 @@ export default async function EnvironmentDetailPage({
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="rounded-md bg-subtle-2 px-2 py-0.5 text-[10px] font-bold tracking-wide text-muted">
-                      {shortRepo(repo.repoName)}
-                    </span>
+                    {/* The badge is the same button as everywhere else on the
+                        board: it opens the repository. The full address is
+                        spelled out below, for copying. */}
+                    {repo.url ? (
+                      <a
+                        href={repo.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={`${repo.repoName}\n${repo.url}`}
+                        className="rounded-md bg-subtle-2 px-2 py-0.5 text-[10px] font-bold tracking-wide text-muted transition hover:brightness-110 hover:ring-2 hover:ring-brand-300"
+                      >
+                        {shortRepo(repo.repoName)}
+                      </a>
+                    ) : (
+                      <span
+                        title={`${repo.repoName}: no URL configured`}
+                        className="rounded-md bg-subtle-2 px-2 py-0.5 text-[10px] font-bold tracking-wide text-muted"
+                      >
+                        {shortRepo(repo.repoName)}
+                      </span>
+                    )}
                     <h3 className="truncate text-sm font-bold">{repo.repoName}</h3>
                   </div>
                   <div className="mt-2">
@@ -145,8 +166,17 @@ export default async function EnvironmentDetailPage({
                   <>
                     <div className="flex items-center gap-2.5">
                       <AvatarStack people={people} />
-                      <span className="truncate text-[11px] font-semibold text-brand-fg">
-                        {holders.map((c) => c.id).join(", ")}
+                      <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                        {holders.map((holder) => (
+                          <TicketLink
+                            key={holder.id}
+                            ticketKey={holder.id}
+                            source={holder.source}
+                            jiraBaseUrl={jiraBaseUrl}
+                            className="text-[11px] font-semibold text-brand-fg"
+                            iconClassName="h-2.5 w-2.5 opacity-60"
+                          />
+                        ))}
                       </span>
                     </div>
                     {/* More than one claim on one repo is legal, and the legacy
@@ -205,14 +235,18 @@ export default async function EnvironmentDetailPage({
                   <AvatarStack people={people} />
                 </Td>
                 <Td>
-                  <span className="whitespace-nowrap text-xs font-semibold text-brand-fg">{claim.id}</span>
+                  <TicketLink
+                    ticketKey={claim.id}
+                    source={claim.source}
+                    jiraBaseUrl={jiraBaseUrl}
+                  />
                   <p className="text-[11px] text-faint">{claim.source === "jira" ? "From Jira" : "Manual"}</p>
                 </Td>
                 <Td>
                   <JiraChip status={claim.status} />
                 </Td>
                 <Td>
-                  <span className="text-xs text-body">{claim.repos.map(shortRepo).join(" ")}</span>
+                  <ClaimRepoLinks repos={claim.repos} environment={env} claims={claims} />
                 </Td>
                 <Td>
                   {claim.startTime || claim.endTime ? (
