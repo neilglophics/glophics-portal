@@ -8,10 +8,64 @@ export interface JiraStoredNotification {
   body: string;
   href: string;
   createdAt: string;
+  readAt?: string | null;
 }
 
-export interface JiraNewNotification extends Omit<JiraStoredNotification, "id" | "createdAt"> {
+export interface JiraNewNotification extends Omit<JiraStoredNotification, "id" | "createdAt" | "readAt"> {
   authUserId: string;
+}
+
+export interface JiraNotificationHistory {
+  notifications: JiraStoredNotification[];
+  unreadCount: number;
+}
+
+/** Most recent alerts for the notification centre, newest first. */
+export async function jiraNotificationHistory(
+  auth_user_id: string,
+  limit = 50,
+): Promise<JiraNotificationHistory> {
+  const safe_limit = Math.max(1, Math.min(100, Math.trunc(limit)));
+  const [rows, unread_rows] = await Promise.all([
+    sql`
+      SELECT id, kind, ticket_id, title, body, href, created_at, read_at
+        FROM jira_notifications
+       WHERE auth_user_id = ${auth_user_id}
+       ORDER BY created_at DESC, id DESC
+       LIMIT ${safe_limit}
+    `,
+    sql`
+      SELECT count(*)::int AS count
+        FROM jira_notifications
+       WHERE auth_user_id = ${auth_user_id} AND read_at IS NULL
+    `,
+  ]) as [
+    {
+      id: number;
+      kind: JiraStoredNotification["kind"];
+      ticket_id: string;
+      title: string;
+      body: string;
+      href: string;
+      created_at: string;
+      read_at: string | null;
+    }[],
+    { count: number }[],
+  ];
+
+  return {
+    notifications: rows.map((row) => ({
+      id: Number(row.id),
+      kind: row.kind,
+      ticketId: row.ticket_id,
+      title: row.title,
+      body: row.body,
+      href: row.href,
+      createdAt: row.created_at,
+      readAt: row.read_at,
+    })),
+    unreadCount: Number(unread_rows[0]?.count ?? 0),
+  };
 }
 
 export async function createJiraNotifications(
@@ -80,6 +134,29 @@ export async function markJiraNotificationsDelivered(
        SET delivered_at = now()
      WHERE auth_user_id = ${auth_user_id}
        AND id = ANY(${notification_ids}::bigint[])
+  `;
+}
+
+export async function markJiraNotificationsRead(
+  auth_user_id: string,
+  notification_ids?: readonly number[],
+): Promise<void> {
+  if (notification_ids && !notification_ids.length) return;
+
+  if (notification_ids) {
+    await sql`
+      UPDATE jira_notifications
+         SET read_at = COALESCE(read_at, now())
+       WHERE auth_user_id = ${auth_user_id}
+         AND id = ANY(${notification_ids}::bigint[])
+    `;
+    return;
+  }
+
+  await sql`
+    UPDATE jira_notifications
+       SET read_at = now()
+     WHERE auth_user_id = ${auth_user_id} AND read_at IS NULL
   `;
 }
 

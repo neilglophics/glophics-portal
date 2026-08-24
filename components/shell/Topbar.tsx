@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/ui/Icon";
 import { ConnectionDot } from "./ConnectionDot";
-import { NotificationToggle } from "./NotificationToggle";
+import { NotificationCenter } from "./NotificationCenter";
 import { SyncButton } from "./SyncButton";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 
@@ -106,7 +106,7 @@ export function Topbar({
         {/* Outside the lg-only group on purpose: the freshness label can go when
             the header is tight, but the way to sync should not. */}
         <SyncButton jiraEnabled={jiraEnabled} lastSyncAt={lastSyncAt} />
-        <NotificationToggle />
+        <NotificationCenter />
         <ThemeSwitcher />
       </div>
     </header>

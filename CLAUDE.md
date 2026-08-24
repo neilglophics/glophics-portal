@@ -33,7 +33,7 @@ the best documentation of intended behaviour — but write in `app/` and `lib/`.
 | 8–9 | ✅ Chat: DMs, groups, message reactions, read watermarks, typing, unread badge + toasts |
 | 10 | ✅ Presence, avatars (people and groups) |
 | 11 | ✅ Attachments (images, PDFs, documents), reply threads, clickable links with previews |
-| 12 | ⬜ Notification centre / digests (live toasts and the nav badge are done) |
+| 12 | 🟡 Notification centre/history and live toasts are done; scheduled digests remain |
 | 13 | ⬜ Cutover and deleting the legacy tree |
 
 **Chat is real and worth reading before touching.** Attachments and reply threads are the newest part;
