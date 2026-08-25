@@ -7,6 +7,7 @@ import { ConnectionDot } from "./ConnectionDot";
 import { NotificationCenter } from "./NotificationCenter";
 import { SyncButton } from "./SyncButton";
 import { ThemeSwitcher } from "./ThemeSwitcher";
+import { HealthButton } from "./HealthButton";
 
 /**
  * Search, freshness, connection status, and appearance controls.
@@ -119,6 +120,7 @@ export function Topbar({
             when the header is tight, but the ways to act on them should not.
             Both pills drop to their icon below lg for exactly that reason. */}
         <SyncButton jiraEnabled={jiraEnabled} lastSyncAt={lastSyncAt} />
+        <HealthButton lastCheckedAt={healthCheckedAt} checkableCount={checkableRepoCount} />
         <NotificationCenter />
         <ThemeSwitcher />
       </div>
