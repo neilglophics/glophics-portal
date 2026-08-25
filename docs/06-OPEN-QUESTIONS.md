@@ -175,7 +175,12 @@ nobody can honestly tell the team whether DMs are private.
 
 Whatever the answer, **say it in the UI.** If admins can read DMs, the team should know before typing.
 
-**Answer:** _(pending)_
+**Answer:** _(pending)_ — but **narrowed by ADR-012.** The team task viewer at `/team` is the first
+feature that gives one role a view of everybody, and it deliberately stops at the board: it reads
+claims and the Jira cache, and holding `oversee` grants no conversation access of any kind. The
+recommendation above is therefore still (a), and the page carries the sentence this section asks for
+— it says in as many words that it shows no chat. If (b) is ever wanted, it is a separate decision
+with its own capability and its own log, not an extension of `oversee`.
 
 ---
 

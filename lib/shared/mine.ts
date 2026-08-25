@@ -34,11 +34,28 @@ export function identityValues(user: AuthUser | null, directory: DirectoryUser[]
   // The linked person's own display name, which is what an unresolved raw
   // assignee label most often looks like.
   const person = directory.find((d) => d.id === user.directoryUserId);
-  if (person) {
-    values.add(norm(person.name));
-    for (const name of person.jiraNames) values.add(norm(name));
-  }
+  if (person) for (const value of directoryIdentityValues(person)) values.add(value);
 
+  values.delete("");
+  return values;
+}
+
+/**
+ * The same question asked of a **directory person** rather than a login: every
+ * string a ticket could name them by.
+ *
+ * This exists so the team roster can bucket tickets per person using the rule
+ * claimIsMine() already implements, instead of a second rule that agrees with it
+ * until it doesn't. It is also the half of identityValues() above that reads
+ * through the link, so that function now calls it rather than repeating it.
+ *
+ * Note what is NOT here: a username. A directory person has no login — most of
+ * the board has none — so there is no username to answer to. identityValues()
+ * adds the account's own username on top for the signed-in case.
+ */
+export function directoryIdentityValues(person: DirectoryUser): Set<string> {
+  const values = new Set<string>([norm(person.id), norm(person.name)]);
+  for (const name of person.jiraNames) values.add(norm(name));
   values.delete("");
   return values;
 }

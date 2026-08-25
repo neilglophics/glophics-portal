@@ -21,7 +21,15 @@ import type { BoardEvents } from "@/lib/realtime/events";
  */
 
 /** Pages whose content depends on claims or occupancy. */
-const OCCUPANCY_PAGES = ["/dashboard", "/environments", "/tickets", "/my-tickets", "/in-use"];
+const OCCUPANCY_PAGES = [
+  "/dashboard",
+  "/environments",
+  "/tickets",
+  "/my-tickets",
+  "/in-use",
+  // The roster is who holds what, so a claim changing hands changes it.
+  "/team",
+];
 
 /** Pages that depend on the shape of the board: accounts, environments, people. */
 const CONFIG_PAGES = [...OCCUPANCY_PAGES, "/health", "/settings", "/users", "/not-tracked"];
@@ -30,6 +38,9 @@ function revalidateOccupancyPaths(serverId?: string): void {
   for (const path of OCCUPANCY_PAGES) revalidatePath(path);
   if (serverId) revalidatePath(`/environments/${serverId}`);
   else revalidatePath("/environments/[serverId]", "page");
+  // Every person's drill-down at once: which one changed is not knowable from
+  // here, since a claim names directory ids AND raw labels that resolve to more.
+  revalidatePath("/team/[personId]", "page");
 }
 
 function revalidateConfigPaths(): void {

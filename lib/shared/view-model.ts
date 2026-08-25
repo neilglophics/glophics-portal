@@ -141,6 +141,26 @@ export function envRows(
  * held by a label nobody recognises still shows *someone* rather than an empty
  * cell that reads as unassigned.
  */
+/**
+ * A directory person's picture, or null.
+ *
+ * A face is uploaded by a LOGIN, so a person's is read through their link — the
+ * same "read through the link" rule jiraNames follows, and null for most of the
+ * board, which has no login at all. The version is what makes the URL cacheable
+ * forever and still current.
+ *
+ * Exported because the team roster builds Person objects for people who are on
+ * no ticket at all, so it cannot get their faces from peopleOf().
+ */
+export function personAvatarUrl(
+  person: Pick<DirectoryUser, "avatarUserId">,
+  avatars?: Map<string, string>,
+): string | null {
+  if (!avatars || !person.avatarUserId) return null;
+  const version = avatars.get(person.avatarUserId);
+  return version ? `/api/avatar/${person.avatarUserId}?v=${encodeURIComponent(version)}` : null;
+}
+
 export function peopleOf(
   claims: Claim[],
   directory: DirectoryUser[],
@@ -150,14 +170,7 @@ export function peopleOf(
 ): Person[] {
   const byId = new Map<string, Person>();
 
-  const faceFor = (person: DirectoryUser): string | null => {
-    if (!avatars || !person.avatarUserId) return null;
-    const version = avatars.get(person.avatarUserId);
-    // The version is what makes the URL cacheable forever and still current.
-    return version
-      ? `/api/avatar/${person.avatarUserId}?v=${encodeURIComponent(version)}`
-      : null;
-  };
+  const faceFor = (person: DirectoryUser): string | null => personAvatarUrl(person, avatars);
 
   for (const claim of claims) {
     for (const id of claim.userIds) {

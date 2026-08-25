@@ -6,7 +6,7 @@
  * referring to the semantic variables defined in app/globals.css.
  */
 
-import type { EnvStatus, RepoHealth, RoleId, ServerRepo } from "@/lib/types";
+import type { Availability, EnvStatus, RepoHealth, RoleId, ServerRepo } from "@/lib/types";
 
 export interface StateToken {
   label: string;
@@ -33,6 +33,22 @@ export const ENV_STATE: Record<EnvStatus, StateToken> = {
 };
 
 /** Per-repo reachability. */
+/**
+ * How loaded somebody is, on the team roster.
+ *
+ * Overloaded is `warn`, not `bad`, deliberately: on this board red means
+ * *broken* — an offline repository, the one state that outranks everything in
+ * the derived status. Somebody holding four environments is a scheduling
+ * problem, not a fault, and painting it the same colour as a dead server would
+ * make both read as noise.
+ */
+export const AVAILABILITY: Record<Availability, { label: string; chip: string; dot: string; tone: Tone }> = {
+  free: { label: "Free", chip: "bg-ok-soft text-ok", dot: "bg-ok", tone: "ok" },
+  assigned: { label: "Working", chip: "bg-info-soft text-info", dot: "bg-info", tone: "info" },
+  busy: { label: "Holding", chip: "bg-brand-soft text-brand-fg", dot: "bg-brand-500", tone: "brand" },
+  overloaded: { label: "Overloaded", chip: "bg-warn-soft text-warn", dot: "bg-warn", tone: "warn" },
+};
+
 export const HEALTH: Record<RepoHealth, { label: string; chip: string; dot: string }> = {
   online: { label: "Online", chip: "bg-ok-soft text-ok", dot: "bg-ok" },
   offline: { label: "Offline", chip: "bg-bad-soft text-bad", dot: "bg-bad" },
