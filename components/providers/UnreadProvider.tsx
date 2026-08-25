@@ -284,33 +284,60 @@ export function UnreadProvider({
     [],
   );
 
+  /**
+   * A conversation has been read. Drop its badge locally.
+   *
+   * ── Why this records a ZERO rather than deleting the entry ──
+   *
+   * The list reads `byConversation[id] ?? conversation.unreadCount`, so a missing
+   * entry falls back to whatever the SERVER last rendered. Deleting the entry
+   * therefore un-read the conversation again, and the race is routine rather than
+   * exotic:
+   *
+   *   1. a message arrives while you are reading the thread
+   *   2. `unread.changed` sets the live count to 1 — and PusherProvider schedules
+   *      a `router.refresh()`
+   *   3. the server re-renders BEFORE the read POST fires (it is on a 600 ms
+   *      debounce), so `conversation.unreadCount` is now 1 as well
+   *   4. the read fires and deletes the live entry
+   *   5. the fallback finds the server's stale 1 and the badge comes back
+   *
+   * An explicit 0 wins over the fallback and the badge stays gone. The server
+   * catches up on the next render, and Thread asks for one as soon as the read is
+   * persisted — so this local zero only has to bridge one round trip.
+   *
+   * `useCallback` with no dependencies matters too: this is in the dependency
+   * array of Thread's read effect, and an identity that changed on every incoming
+   * message would re-arm that 600 ms timer over and over, so a busy conversation
+   * would never get around to reporting itself read.
+   */
+  const clear = useCallback((conversationId: string) => {
+    setByConversation((prev) => {
+      if (prev[conversationId] === 0) return prev;
+      const had = prev[conversationId] ?? 0;
+      // Only what we know about is subtracted. When the count came from the
+      // server rather than from a live event there is nothing to subtract here,
+      // and the refresh Thread triggers is what corrects the total.
+      if (had) setTotal((t) => Math.max(0, t - had));
+      return { ...prev, [conversationId]: 0 };
+    });
+
+    setActivity((prev) => {
+      const current = prev[conversationId];
+      if (!current || current.unreadCount === 0) return prev;
+      return { ...prev, [conversationId]: { ...current, unreadCount: 0 } };
+    });
+  }, []);
+
   const value = useMemo<UnreadValue>(
     () => ({
       total,
       byConversation,
       activity,
       bump,
-      clear: (conversationId: string) => {
-        setByConversation((prev) => {
-          const had = prev[conversationId] ?? 0;
-          if (!had) return prev;
-          // Drop this conversation's share of the total rather than refetching:
-          // the server will confirm on the next render either way.
-          setTotal((t) => Math.max(0, t - had));
-          const next = { ...prev };
-          delete next[conversationId];
-          return next;
-        });
-        // The unread count on the live activity row goes too, or the list keeps
-        // showing a badge on a thread that is open and read.
-        setActivity((prev) => {
-          const current = prev[conversationId];
-          if (!current || current.unreadCount === 0) return prev;
-          return { ...prev, [conversationId]: { ...current, unreadCount: 0 } };
-        });
-      },
+      clear,
     }),
-    [total, byConversation, activity, bump],
+    [total, byConversation, activity, bump, clear],
   );
 
   return <UnreadContext.Provider value={value}>{children}</UnreadContext.Provider>;

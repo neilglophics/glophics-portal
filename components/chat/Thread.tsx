@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
@@ -346,6 +346,22 @@ export function Thread({
 
   // ---------- read watermark ----------
 
+  /**
+   * Forget what was reported when the conversation changes.
+   *
+   * `readReported` is a high-water mark of message ids, and **ids are global** —
+   * one bigserial across every conversation. Switching from a busy thread
+   * (newest id 5000) to a quiet one (newest id 300) therefore left the mark above
+   * anything the new thread contains, so `newestId <= readReported.current` was
+   * true forever and it was **never marked read**. The badge simply stayed.
+   *
+   * A layout effect, so the reset lands before the effect below runs for the new
+   * conversation rather than one render later.
+   */
+  useLayoutEffect(() => {
+    readReported.current = 0;
+  }, [conversationId]);
+
   useEffect(() => {
     if (!newestId || newestId <= readReported.current) return;
     if (!atBottom.current) return;
@@ -360,14 +376,23 @@ export function Thread({
         method: "POST",
         headers: { ...realtimeHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({ lastReadMessageId: newestId }),
-      }).catch(() => {
-        // Reset so a later attempt retries rather than believing it reported.
-        readReported.current = 0;
-      });
+      })
+        .then((res) => {
+          // The watermark is now persisted, so ask the server for the numbers
+          // again. Without this the conversation list and the nav badge keep
+          // whatever they were last rendered with — which, if a refresh happened
+          // to land between the message arriving and this read, is a count that
+          // has already been read.
+          if (res.ok) router.refresh();
+        })
+        .catch(() => {
+          // Reset so a later attempt retries rather than believing it reported.
+          readReported.current = 0;
+        });
     }, 600);
 
     return () => clearTimeout(timer);
-  }, [conversationId, newestId, clearUnread]);
+  }, [conversationId, newestId, clearUnread, router]);
 
   // ---------- live events ----------
 
