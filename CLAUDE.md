@@ -83,8 +83,15 @@ reactions and group management came just before them:
   fallback for somebody who has left. Anything that MEASURES or SUMMARISES a body must use
   `plainText()` first — the length limit, the list preview and the toast all do, or a uuid nobody
   typed gets counted and displayed. `chat_message_mentions` exists to answer "which messages mention
-  me" without a LIKE over every body. Non-members are filtered server-side in `sendMessage`; the
+  me" without a LIKE over every body. **Every place that previews or measures a body must call
+  `plainText()`** — the conversation list, the reply quote, the toast and the length check all do,
+  and each one was a separate bug that showed a raw uuid to somebody. Non-members are filtered server-side in `sendMessage`; the
   picker only offering members is courtesy. Run `npm run verify:chat:mentions` (15 checks).
+- **Desktop notifications are the Notification API, not Web Push.** `lib/notify/desktop.ts`, opt-in
+  from the account menu, permission requested only on the click. They fire while a tab is open —
+  background, minimised, behind other windows — and **not** when the site is closed. Notifying a
+  closed site needs a Service Worker plus Web Push/VAPID and a stored per-device subscription; the
+  toggle says "Only while a tab is open" so the setting is not read as more than it is.
 - **Replies** needed no schema change: `reply_to_id` has been there since 0001. The quote is resolved
   on **read**, deliberately — the opposite of system messages, whose text is baked at write time. Both
   choices are explained in `docs/02-DATA-MODEL.md`.

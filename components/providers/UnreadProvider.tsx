@@ -6,6 +6,7 @@ import { userChannel } from "@/lib/realtime/channels";
 import { getPusher } from "@/lib/realtime/client";
 import { useToast } from "@/components/ui/Toaster";
 import { playNotificationSound, unlockSound } from "@/lib/notify/sound";
+import { showDesktopNotification } from "@/lib/notify/desktop";
 import type { UserEvents } from "@/lib/realtime/events";
 
 /**
@@ -194,6 +195,29 @@ export function UnreadProvider({
         data.senderName && data.conversationTitle !== data.senderName
           ? `${data.senderName}: `
           : "";
+
+      /**
+       * An OS-level notification, but only when the tab is not in front.
+       *
+       * A stricter condition than the toast's on purpose. The toast is inside the
+       * page and costs nothing if it is not needed; a desktop notification puts
+       * this app over whatever somebody is doing. Raising one while they are
+       * looking at the app — which already toasted — would be telling them twice.
+       *
+       * No-ops unless they turned it on and the browser granted permission. Note
+       * this only works while a tab is open; see lib/notify/desktop.ts for why
+       * notifying a closed site is a different feature.
+       */
+      if (hidden) {
+        showDesktopNotification({
+          title: data.mentioned
+            ? `${data.conversationTitle} — mentioned you`
+            : data.conversationTitle,
+          body: `${author}${data.preview}`,
+          conversationId: data.conversationId,
+          href: `/chat/${data.conversationId}`,
+        });
+      }
 
       toast.show({
         key: data.conversationId,

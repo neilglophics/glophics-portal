@@ -6,6 +6,13 @@ import { Avatar } from "@/components/ui/Avatar";
 import { Icon } from "@/components/ui/Icon";
 import { useIsOnline } from "@/components/providers/PresenceProvider";
 import { playNotificationSound, setSoundEnabled, soundEnabled } from "@/lib/notify/sound";
+import {
+  desktopEnabled,
+  desktopPermission,
+  requestDesktopPermission,
+  setDesktopEnabled,
+  type DesktopPermission,
+} from "@/lib/notify/desktop";
 import { roleLabel } from "@/lib/shared/roles";
 import { AvatarDialog } from "./AvatarDialog";
 import { ChangePasswordDialog } from "./ChangePasswordDialog";
@@ -24,6 +31,38 @@ export function AccountMenu({ user, avatar_url }: { user: AuthUser; avatar_url: 
   // during the server render, and reading it there would break hydration.
   const [sound, setSound] = useState(true);
   useEffect(() => setSound(soundEnabled()), []);
+
+  /**
+   * Desktop notifications.
+   *
+   * Both pieces of state are read on mount rather than rendered from the server:
+   * `Notification.permission` only exists in the browser, and rendering a toggle
+   * position on the server would flash the wrong one on hydration.
+   */
+  const [desktop, setDesktop] = useState(false);
+  const [permission, setPermission] = useState<DesktopPermission>("default");
+  useEffect(() => {
+    setDesktop(desktopEnabled());
+    setPermission(desktopPermission());
+  }, []);
+
+  async function toggleDesktop() {
+    if (desktop) {
+      setDesktop(false);
+      setDesktopEnabled(false);
+      return;
+    }
+
+    // Asked HERE, inside a click. Browsers refuse — or permanently block — a
+    // permission prompt raised without a user gesture, which is why nothing
+    // requests this on page load.
+    const result = await requestDesktopPermission();
+    setPermission(result);
+    if (result === "granted") {
+      setDesktopEnabled(true);
+      setDesktop(true);
+    }
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -123,6 +162,44 @@ export function AccountMenu({ user, avatar_url }: { user: AuthUser; avatar_url: 
                   }`}
                 >
                   {sound ? "ON" : "OFF"}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => void toggleDesktop()}
+                aria-pressed={desktop}
+                disabled={permission === "unsupported"}
+                title={
+                  permission === "denied"
+                    ? "Blocked in your browser settings for this site"
+                    : permission === "unsupported"
+                      ? "This browser has no notification support"
+                      : "Show a notification outside the browser when a message arrives"
+                }
+                className="flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs font-semibold text-body transition hover:bg-subtle hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Icon name="alert" className="h-3.5 w-3.5 shrink-0 text-faint" />
+                <span className="flex-1">
+                  Desktop alerts
+                  {/* Said out loud, because the obvious assumption about a
+                      "desktop notification" is that it works with the site
+                      closed — and this one does not. A setting that quietly does
+                      less than the user expects is worse than one that is
+                      honest about its limits. */}
+                  <span className="mt-0.5 block text-[10px] font-normal text-faint">
+                    {permission === "denied"
+                      ? "Blocked — allow notifications in your browser settings"
+                      : permission === "unsupported"
+                        ? "Not supported by this browser"
+                        : "Only while a tab is open"}
+                  </span>
+                </span>
+                <span
+                  className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
+                    desktop ? "bg-ok-soft text-ok" : "bg-subtle-2 text-muted"
+                  }`}
+                >
+                  {desktop ? "ON" : "OFF"}
                 </span>
               </button>
               <button
