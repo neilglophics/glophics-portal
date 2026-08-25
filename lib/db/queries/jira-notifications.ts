@@ -1,5 +1,7 @@
 import { sql, withTransaction } from "@/lib/db/client";
 
+const NOTIFICATION_FETCH_LIMIT = 5;
+
 export interface JiraStoredNotification {
   id: number;
   kind: "assigned" | "status-changed" | "conflict";
@@ -23,9 +25,9 @@ export interface JiraNotificationHistory {
 /** Most recent alerts for the notification centre, newest first. */
 export async function jiraNotificationHistory(
   auth_user_id: string,
-  limit = 50,
+  limit = NOTIFICATION_FETCH_LIMIT,
 ): Promise<JiraNotificationHistory> {
-  const safe_limit = Math.max(1, Math.min(100, Math.trunc(limit)));
+  const safe_limit = Math.max(1, Math.min(NOTIFICATION_FETCH_LIMIT, Math.trunc(limit)));
   const [rows, unread_rows] = await Promise.all([
     sql`
       SELECT id, kind, ticket_id, title, body, href, created_at, read_at
@@ -102,7 +104,7 @@ export async function pendingJiraNotifications(
       FROM jira_notifications
      WHERE auth_user_id = ${auth_user_id} AND delivered_at IS NULL
      ORDER BY created_at ASC
-     LIMIT 20
+     LIMIT ${NOTIFICATION_FETCH_LIMIT}
   `) as {
     id: number;
     kind: JiraStoredNotification["kind"];
