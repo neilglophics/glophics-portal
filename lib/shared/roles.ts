@@ -14,6 +14,7 @@
  *   configure     settings, Jira credentials, the directories
  *   manage-users  create sign-in credentials and hand out roles
  *   chat          send messages  (new — see docs/06-OPEN-QUESTIONS.md Q2)
+ *   oversee       read the whole team's workload  (see docs/05-DECISIONS.md ADR-012)
  *
  * Ordered most-privileged first; the pickers render them in this order.
  */
@@ -31,8 +32,9 @@ export const AUTH_ROLES: readonly Role[] = [
   {
     id: "superadmin",
     label: "Super admin",
-    description: "Full access, plus creating sign-in credentials and roles.",
-    capabilities: ["view", "claim", "configure", "manage-users", "chat"],
+    description:
+      "Full access, plus creating sign-in credentials, handing out roles, and seeing the whole team's workload.",
+    capabilities: ["view", "claim", "configure", "manage-users", "chat", "oversee"],
   },
   {
     id: "admin",

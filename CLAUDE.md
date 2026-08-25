@@ -34,6 +34,7 @@ the best documentation of intended behaviour — but write in `app/` and `lib/`.
 | 10 | ✅ Presence, avatars (people and groups) |
 | 11 | ✅ Attachments, reply threads, clickable links with previews, live ordering, @mentions |
 | 12 | 🟡 Notification centre/history and live toasts are done; scheduled digests remain |
+| — | ✅ Team task viewer (`/team`), gated on the new `oversee` capability |
 | 13 | ⬜ Cutover and deleting the legacy tree |
 
 **Chat is real and worth reading before touching.** Attachments and reply threads are the newest part;
@@ -121,6 +122,29 @@ cache any more. Three things to know before touching it:
 
 Run `npm run verify:tickets` (103 checks): it walks every page against the unpaged result, and checks
 the SQL filter against `claimIsMine` ticket by ticket for every account that can sign in.
+
+**The team roster is the board asked by person, and it is superadmin-only.** `/team` answers "what is
+Jerome on, and is anybody free" — the question no environment- or ticket-shaped page can. Four things
+to know before touching it:
+
+- **It is gated on a capability, not a role.** `oversee`, held by `superadmin` alone
+  (`docs/05-DECISIONS.md` **ADR-012**). Reusing `manage-users` would have been free and wrong: the day
+  `admin` is given that, this page widens with it and nobody reviewing the change would see it coming.
+  Widening is deliberately one array entry in `AUTH_ROLES`.
+- **`lib/shared/workload.ts` is a pure function, not a query — on purpose.** Its header says why: the
+  Jira cache is hard-capped at 500 rows by `MAX_PAGES` in `lib/jira/sync.ts`, so there is nothing for
+  LIMIT to save, and a SQL aggregate would have meant writing the assignee-matching rule a **third**
+  time. It buckets with `claimIsMine()` itself, so the roster and the per-person drill-down cannot
+  disagree — the drill-down is `getTicketPage({ mine })` fed `directoryIdentityValues(person)`, which
+  is why that parameter took identity strings rather than a user id in the first place.
+- **The roster is driven by the directory, so most rows have no login.** A login only adds presence.
+  Two identity spaces, as ever.
+- **"Still working on it" is `statusFrees()` negated** — invariant 2, not a second status list. And
+  `/team` reads the board and Jira only: `oversee` grants **no chat access**, the page says so, and
+  `docs/06-OPEN-QUESTIONS.md` **Q5** records that.
+
+Run `npm run verify:team` (150 checks): it walks every person's drill-down page by page against their
+roster row, checks every live ticket lands on somebody or in "unassigned", and asserts the gate itself.
 
 **Repository health is now measured.** `lib/health/check.ts` probes every repo that has a URL and
 records the verdict *and* the time it was taken. Three triggers: a daily Vercel Cron

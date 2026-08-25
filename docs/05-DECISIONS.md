@@ -260,3 +260,40 @@ expect.
 consideration for the privacy policy [Q8](06-OPEN-QUESTIONS.md#q8) — "delete" in the UI is not
 immediately "gone from the database", and saying so honestly matters. Attachment blobs must be deleted
 by the same job, or they become billable orphans.
+
+---
+
+## ADR-012 — `oversee`: a sixth capability, for the team task viewer
+
+**Status:** Accepted
+
+**Context.** `/team` answers the question a project manager asks and no existing page does: not "who
+holds environment 4", but "what is Jerome on, and is anybody free". It needs to be visible to a lead
+and not to the team it reports on.
+
+The obvious shortcut was to gate it on `manage-users`, which today only `superadmin` holds. That would
+have been zero new surface — and wrong. `manage-users` means *can create a login and hand out a role*.
+Reading everyone's workload is a different power that happens to belong to the same person right now.
+Conflating them means the day `admin` is given `manage-users` — a plausible, small decision — this page
+silently widens with it, and nobody reviewing that change would see it coming.
+
+**Decision.** A new capability, `oversee`, granted to `superadmin` alone. Checked by
+`requireUser("oversee")` in both `/team` Server Components and by `requires: "oversee"` on the nav
+entry.
+
+**Why a capability and not a role check.** Invariant 3: one capability list, enforced twice. A
+`user.role === "superadmin"` test in a page would be a third boundary, invisible to `AUTH_ROLES`, and
+the first thing to drift. Adding to the list means the Users page's role card describes the new power
+without being edited.
+
+**Scope — what this deliberately does not grant.** `/team` reads the board and the Jira cache. It shows
+**no chat**, and holding `oversee` gives no access to any conversation:
+[Q5](06-OPEN-QUESTIONS.md#q5) says membership is the boundary and a silent superadmin bypass is
+indistinguishable from the bug that boundary exists to prevent. That answer is unchanged here. Q5 also
+says *whatever the answer, say it in the UI*, so the page says in as many words that it reads tickets
+and not messages.
+
+**Consequences.** Widening to `admin` later is one array entry, which is the point. The cost is that
+"superadmin" is now two separable things and somebody could grant one without the other — that is a
+feature, but it does mean the capability list is the thing to read, not the role name. There is no
+audit log of who looked; if that is ever wanted it is a new decision, not an extension of this one.

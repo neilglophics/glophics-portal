@@ -35,6 +35,10 @@ export const NAV: readonly NavItem[] = [
   { group: "overview", href: "/dashboard", label: "Dashboard", icon: "grid" },
   { group: "overview", href: "/tickets", label: "Active tickets", icon: "list", badge: "claims" },
   { group: "overview", href: "/my-tickets", label: "My tickets", icon: "users", badge: "myTickets" },
+  // Superadmin only. No badge: the shell renders on every page, and a count
+  // here would mean the roster aggregate runs for every request of every
+  // page — for a number nobody is waiting on.
+  { group: "overview", href: "/team", label: "Team", icon: "users", requires: "oversee" },
   { group: "overview", href: "/environments", label: "Environments", icon: "servers" },
   { group: "overview", href: "/health", label: "Health", icon: "pulse", badge: "repoOffline", tone: "rose" },
 

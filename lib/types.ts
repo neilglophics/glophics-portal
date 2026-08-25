@@ -8,7 +8,14 @@
 
 // ---------- roles and capabilities ----------
 
-export type Capability = "view" | "claim" | "configure" | "manage-users" | "chat";
+export type Capability =
+  | "view"
+  | "claim"
+  | "configure"
+  | "manage-users"
+  | "chat"
+  /** Read the whole team's workload — /team. Superadmin only; see ADR-012. */
+  | "oversee";
 export type RoleId = "superadmin" | "admin" | "member" | "viewer";
 
 // ---------- derived status ----------
@@ -17,6 +24,17 @@ export type RoleId = "superadmin" | "admin" | "member" | "viewer";
 export type EnvStatus = "free" | "partial" | "inuse" | "issue";
 
 export type RepoHealth = "online" | "offline" | "checking" | "unconfigured";
+
+/**
+ * How loaded one person is — derived from their claims and live Jira tickets,
+ * never stored. See lib/shared/workload.ts.
+ *
+ *   free        nothing assigned that is still live
+ *   assigned    live work, but holding no environment
+ *   busy        holding at least one environment
+ *   overloaded  holding OVERLOADED_AT or more
+ */
+export type Availability = "free" | "assigned" | "busy" | "overloaded";
 
 // ---------- the two identity spaces ----------
 // Kept as distinct branded-ish aliases because confusing them is the single
