@@ -1,69 +1,63 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
 import { realtimeHeaders } from "@/lib/realtime/client";
-import { HEALTH_CHECK_INTERVAL_MS, isPassDue } from "@/lib/shared/health";
+import { HEALTH_CHECK_INTERVAL_MS } from "@/lib/shared/health";
 
 /**
- * "Check servers", and the timer that means nobody has to press it.
+ * "Check servers" — the forcing path, for when the schedule is not soon enough.
  *
- * ── Why the page carries a schedule at all ──
+ * ── Where the schedule went ──
  *
- * The scheduled pass is a Vercel Cron entry, and cron only exists on a
- * deployment. Under `npm run dev` there is no scheduler, so on localhost the
- * board would be exactly as fresh as the last button press. This closes that:
- * while somebody has the Health page open, a pass is requested whenever the
- * newest result is more than an hour old. In development that IS the schedule;
- * in production it is a harmless duplicate of one.
+ * This component used to carry the automatic timer as well, because a Vercel
+ * Cron entry only exists on a deployment and `npm run dev` would otherwise have
+ * no scheduler at all. That timer now lives in components/shell/HealthButton.tsx
+ * instead, and it is strictly better placed: the Topbar is in the app shell, so
+ * it ticks on every page rather than only while somebody is looking at this one
+ * — and this is not a page anybody leaves open. Development still gets a
+ * scheduler, just a better-covered one.
  *
- * Same division of labour as JiraAutoSync on the dashboard: the tab asks, the
- * SERVER decides. The automatic path does not force, so several open tabs all
- * deciding a check is due at the same moment coalesce into one pass instead of
- * one each. The button forces, because a person pressing it wants a measurement
- * rather than the server's opinion of whether one is needed.
+ * Keeping a second timer here would have meant two of them racing on this page.
+ * The five-minute floor in lib/shared/health.ts would have made the loser a
+ * no-op, so nothing would break — but the loser reports `skipped`, and landing
+ * on this page would greet you with "Checked a moment ago" under a button you
+ * never pressed.
  *
- * `attemptedAt` records the attempt and not the result, so a pass the server
- * skipped — or one that failed outright — still counts as "this tab tried" and
- * cannot spin into a retry loop.
+ * What stays is the button, because it is the only control that FORCES a pass.
+ * A person pressing it wants a measurement rather than the server's opinion of
+ * whether one is needed; every automatic caller passes `force: false` so that
+ * several open tabs coalesce into one pass instead of one each.
  */
 
-/** How often the tab reconsiders whether a pass is due. It is a comparison, and
- *  only a due check costs a request — a repeating tick survives a sleeping
- *  laptop that would silently stretch one long timeout. */
-const TICK_MS = 60_000;
-
 export function HealthActions({
-  lastCheckedAt,
   checkableCount,
 }: {
-  lastCheckedAt: string | null;
   /** Repositories with a URL — the ones a pass can actually probe. Zero means
-   *  there is nothing to measure and the automatic path must stay off, or it
-   *  would ask for ever: with no URLs anywhere, no pass can ever set a
-   *  `health_checked_at` for it to be satisfied by. */
+   *  there is nothing to measure, so the button has nothing to do. */
   checkableCount: number;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  // Set BEFORE the request, so the automatic path cannot start a second pass
-  // while the first is still in flight.
-  const attemptedAt = useRef<number>(0);
+  // The button disables itself while busy, so this is belt and braces against a
+  // press landing in the gap before that render commits.
   const inFlight = useRef(false);
 
+  // Always forces. This is the only control that does — every automatic caller
+  // passes false so that open tabs coalesce, and there is no automatic caller
+  // left in this file.
   const run = useCallback(
-    async (force: boolean) => {
+    async () => {
       if (inFlight.current) return;
       inFlight.current = true;
-      attemptedAt.current = Date.now();
       setBusy(true);
       setMessage(null);
 
-      const res = await fetch(`/api/health/check${force ? "?force=1" : ""}`, {
+      const res = await fetch(`/api/health/check?force=1`, {
         method: "POST",
         headers: realtimeHeaders(),
       }).catch(() => null);
@@ -100,39 +94,19 @@ export function HealthActions({
     [router],
   );
 
-  useEffect(() => {
-    if (checkableCount === 0) return;
-
-    const tick = () => {
-      if (document.visibilityState === "hidden") return;
-      // Whichever is later wins. A stamp from somebody else's pass means the
-      // data is current; an attempt of our own means we have already asked.
-      const latest = Math.max(attemptedAt.current, lastCheckedAt ? new Date(lastCheckedAt).getTime() : 0);
-      if (isPassDue(latest ? new Date(latest).toISOString() : null)) void run(false);
-    };
-
-    tick();
-    const timer = window.setInterval(tick, TICK_MS);
-    const onVisible = () => tick();
-    document.addEventListener("visibilitychange", onVisible);
-
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [lastCheckedAt, checkableCount, run]);
-
   return (
     <div className="flex flex-col items-end gap-1">
-      <Button variant="dark" onClick={() => void run(true)} disabled={busy || checkableCount === 0}>
+      <Button variant="dark" onClick={() => void run()} disabled={busy || checkableCount === 0}>
         <Icon name="refresh" className={`h-3.5 w-3.5 ${busy ? "animate-spin" : ""}`} />
         {busy ? "Checking…" : "Check servers"}
       </Button>
       <span className="text-[11px] text-faint" role="status">
+        {/* "while this page is open" would now be wrong: the timer moved to the
+            header, so it runs on every page. */}
         {message ??
           (checkableCount === 0
             ? "No repository has a URL to check"
-            : `Auto-checks every ${Math.round(HEALTH_CHECK_INTERVAL_MS / 60_000)} min while this page is open`)}
+            : `Auto-checks every ${Math.round(HEALTH_CHECK_INTERVAL_MS / 60_000)} min while you're signed in`)}
       </span>
     </div>
   );

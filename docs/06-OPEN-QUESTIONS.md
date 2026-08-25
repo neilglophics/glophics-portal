@@ -56,8 +56,16 @@ So the checks simply run server-side, in `lib/health/check.ts`, triggered three 
 | Trigger | Cadence | Where |
 |---|---|---|
 | Vercel Cron | daily — see below | `/api/cron/health` |
-| The Health page, while open | hourly | `components/health/HealthActions.tsx` |
-| The **Check servers** button | on demand | `POST /api/health/check` |
+| The header health pill, on any page | hourly | `components/shell/HealthButton.tsx` |
+| The pill itself, or **Check servers** on /health | on demand | `POST /api/health/check` |
+
+The hourly timer started life in `HealthActions` on `/health` and moved to the Topbar on 2026-08-25.
+The reason is coverage: `/health` is a page you visit, not one you leave open, so the schedule only
+ran while somebody happened to be looking at the very page that reports the results. The Topbar is in
+the app shell, so it now ticks on every page behind the sign-in gate. `HealthActions` kept the
+forcing button and lost its timer, because two timers on `/health` would have raced — harmlessly,
+since the five-minute floor makes the loser a no-op, but the loser reports `skipped`, so landing on
+the page would have shown "Checked a moment ago" under a button nobody pressed.
 
 Verified against the live board on the day this was answered: 67 online, 25 offline, 1 with no URL, in
 7.3 seconds. The 25 are genuinely unreachable — spot-checked with `curl`, some time out and some do

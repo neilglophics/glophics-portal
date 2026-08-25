@@ -4,29 +4,42 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/ui/Icon";
 import { ConnectionDot } from "./ConnectionDot";
+import { HealthButton } from "./HealthButton";
 import { NotificationToggle } from "./NotificationToggle";
 import { SyncButton } from "./SyncButton";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 
 /**
- * Search, connection status, and appearance controls.
+ * Search, freshness, connection status, and appearance controls.
  *
- * The two indicators are deliberately separate. "Live" is whether *other
+ * The three indicators are deliberately separate. "Live" is whether *other
  * people's* changes reach this tab; "Synced Nm ago" is how fresh the Jira data
- * is. One can be fine while the other is not, and a single combined light would
- * hide that.
+ * is; "Checked Nm ago" is when anything last measured whether the environments
+ * are actually up. Any one of them can be fine while another is not — Jira can
+ * be hours stale with every box healthy, and every box can be unmeasured with
+ * Jira perfectly current — and a single combined light would hide which.
  *
- * Only one of them is pressable, and only one of them can be: freshness is
- * something you can go and fix, so the sync indicator is the button that fixes
- * it. A dropped realtime connection is not — it reconnects on its own — so the
- * dot stays a light.
+ * Two of them are pressable, and only those two can be: staleness is something
+ * you can go and fix, so each freshness indicator is the button that fixes
+ * itself. A dropped realtime connection is not — it reconnects on its own — so
+ * the dot stays a light.
+ *
+ * Putting the health check here rather than only on /health is the point of it:
+ * you notice the board looks wrong from wherever you happen to be, and the fix
+ * should not be a navigation. It also means the hourly automatic pass rides the
+ * shell, so it runs on every page instead of only while somebody has /health
+ * open — see HealthButton.
  */
 export function Topbar({
   jiraEnabled,
   lastSyncAt,
+  healthCheckedAt,
+  checkableRepoCount,
 }: {
   jiraEnabled: boolean;
   lastSyncAt: string | null;
+  healthCheckedAt: string | null;
+  checkableRepoCount: number;
 }) {
   const router = useRouter();
   const params = useSearchParams();
@@ -103,9 +116,11 @@ export function Topbar({
         <div className="hidden items-center lg:flex">
           <ConnectionDot />
         </div>
-        {/* Outside the lg-only group on purpose: the freshness label can go when
-            the header is tight, but the way to sync should not. */}
+        {/* Outside the lg-only group on purpose: the freshness labels can go
+            when the header is tight, but the ways to act on them should not.
+            Both pills drop to their icon below lg for exactly that reason. */}
         <SyncButton jiraEnabled={jiraEnabled} lastSyncAt={lastSyncAt} />
+        <HealthButton lastCheckedAt={healthCheckedAt} checkableCount={checkableRepoCount} />
         <NotificationToggle />
         <ThemeSwitcher />
       </div>

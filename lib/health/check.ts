@@ -7,9 +7,11 @@
  *
  *   1. THERE IS NO LOOP. The legacy job was a setInterval inside a long-lived
  *      process. A serverless function is invoked and then gone, so a pass is
- *      triggered from outside: hourly by Vercel Cron (app/api/cron/health), on
- *      demand by the button (app/api/health/check), and by a timer in the Health
- *      page while somebody has it open. Cadence lives in lib/shared/health.ts.
+ *      triggered from outside: daily by Vercel Cron (app/api/cron/health), on
+ *      demand by the "Check servers" button (app/api/health/check), and hourly
+ *      by a timer in the header pill (components/shell/HealthButton.tsx), which
+ *      is in the app shell and so runs on every page anybody has open. Cadence
+ *      lives in lib/shared/health.ts.
  *
  *   2. THE CHECK TIME IS RECORDED, NOT JUST THE RESULT. `health_checked_at` is
  *      what separates "this repository is up" from "this repository was up at
@@ -83,7 +85,7 @@ interface RepoRow {
  * Run one pass and write the results.
  *
  * `force` bypasses the "somebody just did this" floor. The button forces; the
- * page timer and every other automatic caller does not.
+ * header timer and every other automatic caller does not.
  */
 export async function runHealthChecks({ force = false } = {}): Promise<HealthPass> {
   const startedAt = Date.now();

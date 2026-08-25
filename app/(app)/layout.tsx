@@ -10,6 +10,7 @@ import { Toaster } from "@/components/ui/Toaster";
 import { getBoard, getJiraSkippedCount, getJiraSyncState } from "@/lib/db/queries/board";
 import { currentUserOrNull } from "@/lib/auth/require";
 import { displayStatus } from "@/lib/shared/occupancy";
+import { newestCheck } from "@/lib/shared/health";
 import { myClaims } from "@/lib/shared/mine";
 import { totalUnread } from "@/lib/db/queries/chat";
 import { avatarUrl, avatarVersions } from "@/lib/db/queries/avatars";
@@ -50,6 +51,23 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     (n, env) => n + env.repos.filter((r) => r.health === "offline").length,
     0,
   );
+
+  // What the header's health pill needs: when the newest result was measured,
+  // and how many repositories a pass could actually probe. Both come off the
+  // board this layout has already loaded for the sidebar rollups, so the pill
+  // costs no query of its own. `checkableRepoCount` of zero is what stops the
+  // pill's timer asking for ever on a board where no repository has a URL —
+  // no pass can ever stamp a `health_checked_at` for it to be satisfied by.
+  //
+  // Normalised on the way out, for the reason the Health page spells out: every
+  // timestamp in lib/db/queries is TYPED as a string and is really a Date — the
+  // Neon driver parses timestamptz — which server-only callers get away with
+  // because `new Date()` accepts either. A prop crossing to a client component
+  // should not rely on that.
+  const allRepos = environments.flatMap((env) => env.repos);
+  const newestHealthCheck = newestCheck(allRepos.map((repo) => repo.healthCheckedAt));
+  const healthCheckedAt = newestHealthCheck ? new Date(newestHealthCheck).toISOString() : null;
+  const checkableRepoCount = allRepos.filter((repo) => repo.url).length;
   const reposHeld = new Set(claims.flatMap((c) => c.repos.map((r) => `${c.serverId}::${r}`))).size;
 
   const counts: NavCounts = {
@@ -106,6 +124,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                   <Topbar
                     jiraEnabled={settings.jira.enabled}
                     lastSyncAt={syncState.lastSyncAt}
+                    healthCheckedAt={healthCheckedAt}
+                    checkableRepoCount={checkableRepoCount}
                   />
                 </Suspense>
 

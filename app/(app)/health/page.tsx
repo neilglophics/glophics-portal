@@ -22,9 +22,11 @@ import type { RepoHealth } from "@/lib/types";
  *
  * Something writes this now. lib/health/check.ts probes every repository that
  * has a URL and records both the verdict AND the time it was taken; a pass is
- * triggered hourly by Vercel Cron, by the "Check servers" button here, and by a
- * timer in HealthActions while this page is open (which is the only scheduler
- * `npm run dev` has).
+ * triggered daily by Vercel Cron, by the "Check servers" button here, and hourly
+ * by a timer in the header pill (components/shell/HealthButton.tsx). That pill
+ * is in the app shell, so the schedule follows you around the app instead of
+ * living on this page — which also makes it the scheduler `npm run dev` has,
+ * since cron only exists on a deployment.
  *
  * Two things this page must keep doing regardless:
  *
@@ -178,12 +180,10 @@ export default async function HealthPage({ searchParams }: { searchParams: Promi
         }
         actions={
           <HealthActions
-            // Normalised on the way out. Every timestamp in lib/db/queries is
-            // TYPED as a string and is really a Date — the Neon driver parses
-            // timestamptz — which the server-only callers get away with because
-            // `new Date()` accepts either. A prop crossing to a client component
-            // should not rely on that.
-            lastCheckedAt={newest ? new Date(newest).toISOString() : null}
+            // No `lastCheckedAt` any more: this is now purely the forcing
+            // button, and only the timer needed to know when the last pass was.
+            // That timer lives in the header — components/shell/HealthButton.tsx
+            // — where it covers every page instead of just this one.
             checkableCount={checkable.length}
           />
         }
