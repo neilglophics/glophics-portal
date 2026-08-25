@@ -23,7 +23,7 @@
  * paginate() clamps.
  */
 
-import type { PageLink, Paged } from "./pagination-types";
+import type { PageLink, PagePosition, Paged } from "./pagination-types";
 
 /** Ten rows a page across the ticket tables. */
 export const TICKETS_PER_PAGE = 10;
@@ -42,7 +42,13 @@ export function pageNumber(value: string | undefined): number {
 }
 
 /**
- * A page's worth of a longer list, plus where it sits within it.
+ * Where a page sits in a list of `total` rows — WITHOUT the rows.
+ *
+ * This half is separate because the rows may not be in memory to slice. A
+ * database-paged list knows its total from a count() and needs `from` to build
+ * the OFFSET, so it computes the position first and fetches second; an
+ * in-memory list does both at once in paginate() below. Both go through here,
+ * so the clamping rules cannot drift apart.
  *
  * The page is CLAMPED at both ends. A number kept from before a claim freed —
  * a bookmark, a back button, a hand-edited URL — would otherwise land past the
@@ -50,22 +56,32 @@ export function pageNumber(value: string | undefined): number {
  * rows. So an unclamped page 99 would tell somebody looking at a full board that
  * the last sync found nothing. Clamping turns that into the last real page.
  */
-export function paginate<T>(items: T[], page: number, perPage: number = TICKETS_PER_PAGE): Paged<T> {
-  const total = items.length;
+export function pagePosition(
+  total: number,
+  page: number,
+  perPage: number = TICKETS_PER_PAGE,
+): PagePosition {
   const pageCount = Math.max(1, Math.ceil(total / perPage));
   const current = Math.min(Math.max(1, Math.floor(page) || 1), pageCount);
 
   const start = (current - 1) * perPage;
-  const slice = items.slice(start, start + perPage);
+  const size = Math.max(0, Math.min(perPage, total - start));
 
   return {
-    items: slice,
     page: current,
     pageCount,
     total,
-    from: slice.length ? start + 1 : 0,
-    to: start + slice.length,
+    from: size ? start + 1 : 0,
+    to: start + size,
   };
+}
+
+/** A page's worth of a list already in memory. */
+export function paginate<T>(items: T[], page: number, perPage: number = TICKETS_PER_PAGE): Paged<T> {
+  const position = pagePosition(items.length, page, perPage);
+  const start = (position.page - 1) * perPage;
+
+  return { ...position, items: items.slice(start, start + perPage) };
 }
 
 /**

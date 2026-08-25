@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   TICKETS_PER_PAGE,
   pageNumber,
+  pagePosition,
   pageWindow,
   paginate,
 } from "../lib/shared/pagination.ts";
@@ -28,6 +29,43 @@ describe("pageNumber", () => {
   it("takes a real page number", () => {
     assert.equal(pageNumber("3"), 3);
     assert.equal(pageNumber("117"), 117);
+  });
+});
+
+describe("pagePosition", () => {
+  // The database path cannot slice an array to find out where it is — it knows
+  // only a count() — so it computes the position and then builds an OFFSET from
+  // `from`. These are the numbers that OFFSET is derived from.
+
+  it("agrees with paginate() for every page of every length", () => {
+    for (let total = 0; total <= 35; total += 1) {
+      const items = list(total);
+      for (let page = 0; page <= Math.ceil(total / 10) + 2; page += 1) {
+        const { items: _dropped, ...sliced } = paginate(items, page);
+        assert.deepEqual(pagePosition(total, page), sliced, `total ${total}, page ${page}`);
+      }
+    }
+  });
+
+  it("yields an OFFSET that lands on the right row", () => {
+    // from is 1-based; OFFSET is 0-based. Off by one here shows the wrong page.
+    const p = pagePosition(148, 3);
+    assert.equal(p.from, 21);
+    assert.equal((p.page - 1) * 10, 20, "OFFSET for page 3 at 10 a page");
+    assert.equal(p.to, 30);
+  });
+
+  it("clamps without needing the rows", () => {
+    assert.equal(pagePosition(148, 9999).page, 15);
+    assert.equal(pagePosition(148, 0).page, 1);
+    assert.equal(pagePosition(0, 5).page, 1);
+    assert.equal(pagePosition(0, 5).to, 0);
+  });
+
+  it("does not report rows a short last page does not have", () => {
+    const p = pagePosition(148, 15);
+    assert.equal(p.from, 141);
+    assert.equal(p.to, 148, "not 150");
   });
 });
 

@@ -2,11 +2,12 @@ import { TicketTable } from "@/components/TicketTable";
 import { Notice, Page, PageHead } from "@/components/ui/Layout";
 import { Pagination } from "@/components/ui/Pagination";
 import { currentUserOrNull } from "@/lib/auth/require";
-import { getBoard, getJiraIssues } from "@/lib/db/queries/board";
+import { getBoard } from "@/lib/db/queries/board";
 import { avatarVersions } from "@/lib/db/queries/avatars";
+import { getTicketPage } from "@/lib/db/queries/tickets";
 import { describeJiraConfig } from "@/lib/jira/client";
-import { claimIsMine, identityValues } from "@/lib/shared/mine";
-import { pageNumber, pageWindow, paginate } from "@/lib/shared/pagination";
+import { identityValues } from "@/lib/shared/mine";
+import { pageNumber, pageWindow } from "@/lib/shared/pagination";
 import { boardRows, claimRows } from "@/lib/shared/view-model";
 
 /**
@@ -16,9 +17,16 @@ import { boardRows, claimRows } from "@/lib/shared/view-model";
  * the Jira labels that person answers to, never through a copy stored on the
  * login. So fixing a mistyped label in the directory fixes this page with it.
  *
- * Paged the same way as Active tickets, and for the same reason — see the note
- * on the slice in app/(app)/tickets/page.tsx. Here the filter runs BEFORE the
- * slice, so the page numbers count your tickets rather than the board's.
+ * Paged by Postgres, like Active tickets. The filter has to go down WITH the
+ * page: counting in SQL and then filtering in JS would number the pages off the
+ * whole board and then show ten rows of somebody's four tickets. So
+ * identityValues() runs here — that is the fiddly half, and it stays in the one
+ * place — and the strings it produces go to the query, which only asks whether a
+ * ticket names any of them. See lib/db/queries/tickets.ts.
+ *
+ * The cost is that this page's reads are sequential rather than parallel: the
+ * identity values need the directory, and the directory comes from getBoard().
+ * One extra round trip, against not fetching the Jira cache at all.
  */
 export const metadata = { title: "My tickets · Glophics Portal" };
 
@@ -31,30 +39,31 @@ function pageHref(n: number): string {
 export default async function MyTicketsPage({ searchParams }: { searchParams: Promise<Search> }) {
   const search = await searchParams;
   const jiraBaseUrl = describeJiraConfig().baseUrl;
-  const [{ accounts, environments, claims, directory }, issues, user, avatars] = await Promise.all([
+  const [{ accounts, environments, claims, directory }, user, avatars] = await Promise.all([
     getBoard(),
-    getJiraIssues(),
     currentUserOrNull(),
     avatarVersions(),
   ]);
 
+  // An empty set matches nothing, which is what claimIsMine() does too: a login
+  // linked to nobody has no tickets rather than everybody's.
   const values = identityValues(user, directory);
-  const all = [
-    ...claimRows(environments, accounts, claims, directory, avatars),
-    ...boardRows(issues, environments, accounts, directory, avatars),
-  ];
-  const rows = all.filter((row) => claimIsMine(row.claim, values, directory));
+  const page = await getTicketPage({ page: pageNumber(search.page), mine: [...values] });
 
-  const holding = rows.filter((r) => r.holding).length;
-  const paged = paginate(rows, pageNumber(search.page));
+  const rows = [
+    ...claimRows(environments, accounts, page.claims, directory, avatars),
+    ...boardRows(page.issues, environments, accounts, directory, avatars),
+  ];
 
   return (
     <Page>
       <PageHead
         title="My tickets"
+        // Counts from the query, not the length of this page.
         sub={
-          rows.length
-            ? `${rows.length} ticket${rows.length === 1 ? "" : "s"}, ${holding} holding a repository`
+          page.position.total
+            ? `${page.position.total} ticket${page.position.total === 1 ? "" : "s"}, ` +
+              `${page.holdingTotal} holding a repository`
             : "Nothing is assigned to you right now"
         }
       />
@@ -70,7 +79,7 @@ export default async function MyTicketsPage({ searchParams }: { searchParams: Pr
       ) : null}
 
       <TicketTable
-        rows={paged.items}
+        rows={rows}
         showHolding
         environments={environments}
         claims={claims}
@@ -78,10 +87,10 @@ export default async function MyTicketsPage({ searchParams }: { searchParams: Pr
         empty="Nothing on the board is assigned to you."
       />
       <Pagination
-        {...paged}
+        {...page.position}
         label="tickets"
         href={pageHref}
-        window={pageWindow(paged.page, paged.pageCount)}
+        window={pageWindow(page.position.page, page.position.pageCount)}
       />
     </Page>
   );

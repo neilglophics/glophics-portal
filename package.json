@@ -27,7 +27,8 @@
     "check:secrets": "tsx scripts/check-staged-secrets.mts",
     "verify:chat:files": "tsx scripts/verify-chat-files.mts",
     "verify:link-preview": "tsx scripts/verify-link-preview.mts",
-    "verify:chat:mentions": "tsx scripts/verify-chat-mentions.mts"
+    "verify:chat:mentions": "tsx scripts/verify-chat-mentions.mts",
+    "verify:tickets": "tsx scripts/verify-tickets.mts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
