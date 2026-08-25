@@ -97,6 +97,56 @@ export async function getEnvironments(): Promise<Environment[]> {
 
 // ---------- claims ----------
 
+/**
+ * The claims SELECT's row shape and its mapper, shared by every query that
+ * returns claims — the whole list here, and the paged slice in
+ * lib/db/queries/tickets.ts. The column list itself cannot be shared: the
+ * tagged template parameterises `${}`, so a fragment interpolated into one
+ * would arrive as a bind value rather than as SQL. Sharing the mapper is what
+ * matters — that is where the snake_case boundary is crossed.
+ */
+export interface ClaimRow {
+  id: string;
+  source: "jira" | "manual";
+  server_id: string;
+  account_name: string | null;
+  branch: string | null;
+  status: string;
+  summary: string | null;
+  note: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  claimed_at: string;
+  last_synced_at: string | null;
+  jira_created_at: string | null;
+  jira_updated_at: string | null;
+  repos: string[];
+  user_ids: string[];
+  raw_assignees: string[];
+}
+
+export function toClaim(r: ClaimRow): Claim {
+  return {
+    id: r.id,
+    source: r.source,
+    serverId: r.server_id,
+    accountName: r.account_name,
+    branch: r.branch,
+    repos: r.repos ?? [],
+    userIds: r.user_ids ?? [],
+    rawAssignees: r.raw_assignees ?? [],
+    status: r.status,
+    summary: r.summary,
+    note: r.note,
+    startTime: r.start_time,
+    endTime: r.end_time,
+    claimedAt: r.claimed_at,
+    lastSyncedAt: r.last_synced_at,
+    jiraCreatedAt: r.jira_created_at,
+    jiraUpdatedAt: r.jira_updated_at,
+  };
+}
+
 export async function getClaims(): Promise<Claim[]> {
   const rows = (await sql`
     SELECT c.id, c.source, c.server_id, c.account_name, c.branch, c.status,
@@ -116,45 +166,9 @@ export async function getClaims(): Promise<Claim[]> {
            ) AS raw_assignees
       FROM claims c
      ORDER BY c.claimed_at DESC
-  `) as {
-    id: string;
-    source: "jira" | "manual";
-    server_id: string;
-    account_name: string | null;
-    branch: string | null;
-    status: string;
-    summary: string | null;
-    note: string | null;
-    start_time: string | null;
-    end_time: string | null;
-    claimed_at: string;
-    last_synced_at: string | null;
-    jira_created_at: string | null;
-    jira_updated_at: string | null;
-    repos: string[];
-    user_ids: string[];
-    raw_assignees: string[];
-  }[];
+  `) as ClaimRow[];
 
-  return rows.map((r) => ({
-    id: r.id,
-    source: r.source,
-    serverId: r.server_id,
-    accountName: r.account_name,
-    branch: r.branch,
-    repos: r.repos ?? [],
-    userIds: r.user_ids ?? [],
-    rawAssignees: r.raw_assignees ?? [],
-    status: r.status,
-    summary: r.summary,
-    note: r.note,
-    startTime: r.start_time,
-    endTime: r.end_time,
-    claimedAt: r.claimed_at,
-    lastSyncedAt: r.last_synced_at,
-    jiraCreatedAt: r.jira_created_at,
-    jiraUpdatedAt: r.jira_updated_at,
-  }));
+  return rows.map(toClaim);
 }
 
 // ---------- the people directory ----------
@@ -220,30 +234,26 @@ export async function getSettings(): Promise<Settings> {
 
 // ---------- the Jira-derived cache ----------
 
-export async function getJiraIssues(): Promise<JiraIssue[]> {
-  const rows = (await sql`
-    SELECT key, server_id, account_name, branch, status, summary,
-           start_time, end_time, repos, user_ids, raw_assignees,
-           jira_created_at, jira_updated_at
-      FROM jira_issues
-     ORDER BY key
-  `) as {
-    key: string;
-    server_id: string | null;
-    account_name: string | null;
-    branch: string | null;
-    status: string | null;
-    summary: string | null;
-    start_time: string | null;
-    end_time: string | null;
-    repos: string[];
-    user_ids: string[];
-    raw_assignees: string[];
-    jira_created_at: string | null;
-    jira_updated_at: string | null;
-  }[];
+/** The jira_issues SELECT's row shape and mapper. Shared for the same reason
+ *  ClaimRow/toClaim are — see the note there. */
+export interface JiraIssueRow {
+  key: string;
+  server_id: string | null;
+  account_name: string | null;
+  branch: string | null;
+  status: string | null;
+  summary: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  repos: string[];
+  user_ids: string[];
+  raw_assignees: string[];
+  jira_created_at: string | null;
+  jira_updated_at: string | null;
+}
 
-  return rows.map((r) => ({
+export function toJiraIssue(r: JiraIssueRow): JiraIssue {
+  return {
     key: r.key,
     serverId: r.server_id,
     accountName: r.account_name,
@@ -257,7 +267,19 @@ export async function getJiraIssues(): Promise<JiraIssue[]> {
     endTime: r.end_time,
     jiraCreatedAt: r.jira_created_at,
     jiraUpdatedAt: r.jira_updated_at,
-  }));
+  };
+}
+
+export async function getJiraIssues(): Promise<JiraIssue[]> {
+  const rows = (await sql`
+    SELECT key, server_id, account_name, branch, status, summary,
+           start_time, end_time, repos, user_ids, raw_assignees,
+           jira_created_at, jira_updated_at
+      FROM jira_issues
+     ORDER BY key
+  `) as JiraIssueRow[];
+
+  return rows.map(toJiraIssue);
 }
 
 export async function getJiraSkipped(): Promise<JiraSkipped[]> {
