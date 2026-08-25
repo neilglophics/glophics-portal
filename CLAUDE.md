@@ -94,6 +94,27 @@ Verify against a real database with `npm run verify:chat:social` (61), `npm run 
 (51, makes real outbound requests); `npm run verify:chat` (32) covers the DM, pagination and
 notification-target behaviour none of them must have broken.
 
+**The ticket tables are paged by Postgres, not by JavaScript.** `/tickets` and `/my-tickets` take
+`?page=N` and ask `lib/db/queries/tickets.ts` for ten rows, so neither page fetches the whole Jira
+cache any more. Three things to know before touching it:
+
+- **The list is two tables concatenated** — every claim holding a repository, then every other issue
+  the last sync saw. The sync keeps `claims` and `jira_issues` **disjoint** (the `record()` versus
+  `toClaim.push()` branches in `lib/jira/sync.ts`), and because every claim sorts before every issue a
+  page is a slice of one block or the tail of one plus the head of the other. That is why there is a
+  count query and some arithmetic rather than a UNION ALL — and why page 1 never touches
+  `jira_issues` at all.
+- **Every ORDER BY ends in a unique column, and that is load-bearing.** Most rows have no `end_time`,
+  and every claim written by one sync pass shares `claimed_at` to the millisecond — two of them do on
+  the current board. Without the final `id` / `key` tiebreak those ties make OFFSET show one row twice
+  and lose another. The old unpaged `ORDER BY claimed_at DESC` left them genuinely undetermined.
+- **`mine` is the one rule written twice.** The filter has to sit next to LIMIT or the count and the
+  page disagree, so the SQL reimplements `claimIsMine`. Only the *matching* is duplicated —
+  `identityValues()` still runs in JS and its strings are passed down as a parameter.
+
+Run `npm run verify:tickets` (103 checks): it walks every page against the unpaged result, and checks
+the SQL filter against `claimIsMine` ticket by ticket for every account that can sign in.
+
 **Repository health is now measured.** `lib/health/check.ts` probes every repo that has a URL and
 records the verdict *and* the time it was taken. Three triggers: a daily Vercel Cron
 (`/api/cron/health`), an hourly timer while somebody has `/health` open, and the **Check servers**
