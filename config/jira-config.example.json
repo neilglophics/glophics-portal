@@ -1,5 +1,0 @@
-{
-  "baseUrl": "your-site.atlassian.net",
-  "email": "you@company.com",
-  "apiToken": "your-jira-api-token"
-}
