@@ -1,7 +1,9 @@
 import { Chip } from "@/components/ui/Chips";
+import { TicketLink } from "@/components/ui/JiraLinks";
 import { Notice, Page, PageHead } from "@/components/ui/Layout";
 import { Table, Td, Th, Tr } from "@/components/ui/Table";
 import { getJiraSkipped } from "@/lib/db/queries/board";
+import { describeJiraConfig } from "@/lib/jira/client";
 
 /**
  * Tickets the sync could not place, with the reason and the fix.
@@ -29,6 +31,7 @@ function fixFor(reason: string): string {
 
 export default async function NotTrackedPage() {
   const skipped = await getJiraSkipped();
+  const jiraBaseUrl = describeJiraConfig().baseUrl;
 
   return (
     <Page>
@@ -65,7 +68,11 @@ export default async function NotTrackedPage() {
         {skipped.map((row) => (
           <Tr key={row.key}>
             <Td>
-              <span className="whitespace-nowrap text-xs font-semibold text-brand-fg">{row.key}</span>
+              {/* The fix for every row on this page is "correct the ticket in
+                  Jira", so the key is the way there. Everything here came out of
+                  a Jira query by definition — there are no manual claims to
+                  guard against. */}
+              <TicketLink ticketKey={row.key} jiraBaseUrl={jiraBaseUrl} />
             </Td>
             <Td>{row.status ? <Chip className="bg-subtle-2 text-muted">{row.status}</Chip> : "—"}</Td>
             <Td>

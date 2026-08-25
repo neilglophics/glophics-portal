@@ -102,7 +102,7 @@ function Bar({ pct, className }: { pct: number; className: string }) {
   );
 }
 
-function HeldCard({ row }: { row: EnvRow }) {
+function HeldCard({ row, jira_base_url }: { row: EnvRow; jira_base_url: string | null }) {
   const token = ENV_STATE[row.state];
   const tone = TONE[token.tone];
   const minutes = row.soonest ? minutesLeft(row.soonest) : null;
@@ -141,7 +141,22 @@ function HeldCard({ row }: { row: EnvRow }) {
           {row.claims.length ? (
             <>
               <AvatarStack people={row.people} />
-              <p className="ml-1 truncate text-[11px] text-faint">{row.ticketIds.join(", ")}</p>
+              {/* No external icon here: several keys share one truncated line,
+                  and an icon each would eat the width the keys need. */}
+              <p className="ml-1 flex min-w-0 items-center gap-1 truncate text-[11px] text-faint">
+                {row.ticketIds.map((ticket_id, index) => (
+                  <span key={ticket_id} className="whitespace-nowrap">
+                    <TicketLink
+                      ticketKey={ticket_id}
+                      source={row.claims.find((claim) => claim.id === ticket_id)?.source}
+                      jiraBaseUrl={jira_base_url}
+                      icon={false}
+                      className="text-[11px] font-semibold text-faint hover:text-brand-fg"
+                    />
+                    {index < row.ticketIds.length - 1 ? "," : ""}
+                  </span>
+                ))}
+              </p>
             </>
           ) : (
             <p className="text-[11px] text-faint">
@@ -214,7 +229,6 @@ function JiraUpdateRow({
             repos={row.claim.repos}
             environment={environments.find((env) => env.id === row.serverId)}
             claims={claims}
-            className="min-w-[5rem]"
           />
         ) : (
           <Dash />
@@ -352,7 +366,7 @@ export default async function DashboardPage() {
         </div>
         <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {held.length ? (
-            held.map((row) => <HeldCard key={row.id} row={row} />)
+            held.map((row) => <HeldCard key={row.id} row={row} jira_base_url={jira_base_url} />)
           ) : (
             <Empty message="Nothing is held — every environment is free." />
           )}

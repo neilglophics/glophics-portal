@@ -27,7 +27,7 @@ import type { Claim, ClaimSource, Environment } from "@/lib/types";
  */
 
 const REPO_CHIP =
-  "inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1 text-[10px] font-bold tracking-wide";
+  "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-1 text-[10px] font-bold tracking-wide";
 
 /** Lift on hover, so a linked badge reads as pressable. Colour is already
  *  spoken for — it is the state — so hover cannot use it. */
@@ -37,6 +37,7 @@ export function TicketLink({
   ticketKey,
   jiraBaseUrl,
   source = "jira",
+  icon = true,
   className = "text-xs font-semibold text-brand-fg",
   iconClassName = "h-3 w-3 opacity-60",
 }: {
@@ -44,6 +45,10 @@ export function TicketLink({
   jiraBaseUrl: string | null;
   /** Manual claims have no Jira issue to open. */
   source?: ClaimSource;
+  /** Off where several keys sit on one truncated line and an icon each would
+   *  cost more width than it buys. The underline and the tooltip still say it
+   *  is a link, and the screen-reader note is not part of the icon. */
+  icon?: boolean;
   /** Typography only — the layout classes are shared. */
   className?: string;
   iconClassName?: string;
@@ -61,7 +66,7 @@ export function TicketLink({
       className={`inline-flex items-center gap-1 whitespace-nowrap hover:underline ${className}`}
     >
       {ticketKey}
-      <Icon name="external" className={iconClassName} />
+      {icon ? <Icon name="external" className={iconClassName} /> : null}
       <span className="sr-only">(opens in a new tab)</span>
     </a>
   );
@@ -78,6 +83,13 @@ export function TicketLink({
  *
  * Pass `claims` — the whole board's claims — to have occupancy answered rather
  * than assumed. Without them a badge can only report reachability.
+ *
+ * The badges do NOT wrap. A ticket holding all three repositories was stacking
+ * two-then-one inside a table cell, which reads as two separate facts and
+ * throws the row out of line with the ticket key beside it. The tables these
+ * sit in already scroll inside their own card rather than squeeze a column
+ * (see components/ui/Table.tsx) — so the badges follow the same rule the ticket
+ * keys and URLs there already do.
  */
 export function ClaimRepoLinks({
   repos,
@@ -89,12 +101,11 @@ export function ClaimRepoLinks({
   environment: Environment | undefined;
   /** Every claim on the board. Omit only where occupancy is not knowable. */
   claims?: Claim[];
-  /** Extra layout classes for the row of badges — a column that needs a floor
-   *  width passes one so a two-repo ticket does not wrap. */
+  /** Extra layout classes for the row of badges. */
   className?: string;
 }) {
   return (
-    <div className={`flex flex-wrap items-center gap-1.5 ${className}`}>
+    <div className={`flex flex-nowrap items-center gap-1 ${className}`}>
       {repos.map((repoName) => {
         const repo = environment?.repos.find(
           (item) => item.repoName.toLowerCase() === repoName.toLowerCase(),

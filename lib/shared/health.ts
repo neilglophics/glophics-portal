@@ -18,11 +18,13 @@ import type { RepoHealth } from "@/lib/types";
  * ⚠ Cadence changed with the platform, exactly as it did for the Jira sync. The
  * legacy server pinged every 30 seconds because it was a long-lived process on
  * the same LAN. A serverless deployment has no process to hold a timer, so this
- * is driven by Vercel Cron ("0 * * * *" in vercel.json) and, while somebody has
- * the Health page open, by a timer in components/health/HealthActions.tsx.
- * Hourly is the honest floor for the cron half — Vercel's Hobby tier does not
- * schedule below a day, and nothing here is worth a paid tier on its own. The
- * "Check servers" button is what covers "I need to know right now".
+ * is driven by Vercel Cron (daily in vercel.json — the Hobby tier does not
+ * schedule below a day, and nothing here is worth a paid tier on its own) and,
+ * whenever anybody is signed in, by a timer in components/shell/HealthButton.tsx.
+ * That timer is what actually delivers this interval: it lives in the Topbar,
+ * which is in the app shell, so it ticks on every page rather than only while
+ * somebody has /health open. The "Check servers" button and the header pill
+ * itself cover "I need to know right now".
  */
 export const HEALTH_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -33,10 +35,10 @@ export const HEALTH_CHECK_TIMEOUT_MS = 5_000;
  * The floor under an *unforced* pass.
  *
  * A pass is ~one outbound request per configured repository, so it is not free
- * for us or for the environments being pinged. Several tabs with the Health page
- * open will each decide a pass is due at roughly the same moment; this makes all
- * but the first of them a no-op instead of a stampede. The button bypasses it —
- * somebody pressing it has a reason.
+ * for us or for the environments being pinged. Every open tab carries the header
+ * timer, so they will each decide a pass is due at roughly the same moment; this
+ * makes all but the first of them a no-op instead of a stampede. The button
+ * bypasses it — somebody pressing it has a reason.
  */
 export const HEALTH_MIN_INTERVAL_MS = 5 * 60 * 1000;
 

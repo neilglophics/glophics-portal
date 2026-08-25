@@ -19,10 +19,11 @@ export const maxDuration = 60;
  * nothing else.
  *
  * Hourly checking therefore comes from the OTHER two triggers: the timer in
- * components/health/HealthActions.tsx, which asks for a pass whenever the newest
- * result is over an hour old while somebody has /health open, and the "Check
- * servers" button for when even that is too slow. This job is the backstop that
- * runs when nobody is looking. See docs/06-OPEN-QUESTIONS.md Q1.
+ * components/shell/HealthButton.tsx, which asks for a pass whenever the newest
+ * result is over an hour old — and which, being in the Topbar, runs on every
+ * page rather than only on /health — and the header pill or the "Check servers"
+ * button for when even that is too slow. This job is the backstop that runs when
+ * nobody is signed in at all. See docs/06-OPEN-QUESTIONS.md Q1.
  *
  * force: true — the schedule *is* the throttle here, exactly as in
  * /api/cron/jira-sync. Honouring the unforced floor as well would let a manual
