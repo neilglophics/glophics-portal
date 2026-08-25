@@ -21,9 +21,14 @@ import { loadEnv, requireEnv } from "./_env";
 loadEnv();
 const sql = neon(requireEnv("DATABASE_URL"));
 
-const { createGroup, deleteMessage, listMessages, openDirectMessage, sendMessage } = await import(
-  "../lib/db/queries/chat"
-);
+const {
+  createGroup,
+  deleteMessage,
+  listConversations,
+  listMessages,
+  openDirectMessage,
+  sendMessage,
+} = await import("../lib/db/queries/chat");
 const { mentionToken, plainText } = await import("../lib/chat/mentions");
 const { MESSAGE_MAX_LENGTH } = await import("../lib/chat/limits");
 
@@ -116,6 +121,38 @@ try {
 
   const long = await sendMessage(group.id, alice, { clientMsgId: "vfy-mention-long", body: many });
   check("so it sends", long.created === true);
+
+  console.log("\nno uuid ever reaches a preview");
+
+  // The bug this guards: both of these built their preview from the RAW body, so
+  // a message mentioning somebody showed "@[Jerome Madelo](5df31793-...)" in the
+  // sidebar, and in any reply quoting it.
+  const previewMsg = await sendMessage(group.id, alice, {
+    clientMsgId: "vfy-mention-preview",
+    body: `ping ${mentionToken(bob, "Verify b")} please`,
+  });
+
+  const list = await listConversations(bob);
+  const row = list.find((c) => c.id === group.id)!;
+  check(
+    "the conversation-list preview shows the name",
+    row.lastMessagePreview === "ping @Verify b please",
+    JSON.stringify(row.lastMessagePreview),
+  );
+  check("and carries no uuid", !row.lastMessagePreview?.includes(bob));
+
+  const quote = await sendMessage(group.id, bob, {
+    clientMsgId: "vfy-mention-quote",
+    body: "on it",
+    replyToId: previewMsg.message.id,
+  });
+  check(
+    "a reply quoting it shows the name too",
+    quote.message.replyTo?.preview === "ping @Verify b please",
+    JSON.stringify(quote.message.replyTo?.preview),
+  );
+  check("and carries no uuid", !quote.message.replyTo?.preview.includes(bob));
+
 
   console.log("\ndeleting takes the mentions with it");
 

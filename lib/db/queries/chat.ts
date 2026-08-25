@@ -329,7 +329,13 @@ export async function listConversations(viewerId: AuthUserId): Promise<Conversat
       // otherwise. One helper, shared with the reply quote, so a preview and a
       // quote of the same message never disagree.
       lastMessagePreview: r.last_message
-        ? attachmentSummary(r.last_message.body, r.last_message.attachments ?? []) || null
+        ? // `plainText` FIRST. This is the server-rendered preview, and without it
+          // a message containing a mention shows its raw `@[Name](uuid)` token in
+          // the sidebar — 36 characters of uuid where a name should be.
+          attachmentSummary(
+            plainText(r.last_message.body),
+            r.last_message.attachments ?? [],
+          ) || null
         : null,
       muted: r.muted,
     };
@@ -497,7 +503,12 @@ function replyPreviewFrom(row: {
     // parent's own body is not.
     preview: deleted
       ? "Message deleted"
-      : attachmentSummary(row.parent_body ?? "", attachments).slice(0, REPLY_PREVIEW_MAX),
+      : // Same rule as the list preview: a quote of a message containing a
+        // mention must read "@Alex", never the stored token.
+        attachmentSummary(plainText(row.parent_body ?? ""), attachments).slice(
+          0,
+          REPLY_PREVIEW_MAX,
+        ),
     deleted,
     // The first image, so the chip shows the picture rather than the word for it.
     thumbnailAttachmentId:
