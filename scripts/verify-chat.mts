@@ -145,20 +145,33 @@ try {
     perThread > 0 && overall >= perThread, `thread=${perThread} total=${overall}`);
   check("the sender counts none of it as unread", (await conversationUnread(first.id, alice)) === 0);
 
+  // ---- notification targets ----
+  //
+  // The contract CHANGED with real-time conversation ordering: this used to
+  // return only non-muted non-senders, and now it returns every member tagged
+  // with `muted` and `isSender`. The old shape meant a muted conversation and the
+  // sender's own second tab were never told a message had arrived, so neither
+  // list reordered. Mute is still honoured — it moved to the client, which can
+  // tell "don't interrupt me" apart from "don't tell me".
   const targets = await notificationTargets(first.id, alice);
-  check("targets exclude the sender", !targets.recipients.includes(alice));
-  check("targets include the other member", targets.recipients.includes(bob));
+  const find = (id: string) => targets.recipients.find((r) => r.userId === id);
+
+  check("targets include EVERY member", targets.recipients.length === 2, JSON.stringify(targets.recipients));
+  check("the sender is included, and tagged as such", find(alice)?.isSender === true);
+  check("the other member is included, and is not the sender", find(bob)?.isSender === false);
   check("a DM reports kind=dm", targets.kind === "dm");
 
-  // Mute is honoured on the SERVER, so a muted thread costs no Pusher message
-  // at all rather than being filtered in the client.
   await sql`
     UPDATE chat_members SET muted = true
      WHERE conversation_id = ${first.id} AND user_id = ${bob}
   `;
   const muted = await notificationTargets(first.id, alice);
-  check("a MUTED member is not a notification target", !muted.recipients.includes(bob),
-    JSON.stringify(muted.recipients));
+  const mutedBob = muted.recipients.find((r) => r.userId === bob);
+  // Still a target — their list has to reorder — but flagged, so the client
+  // suppresses the toast and the sound.
+  check("a MUTED member is still a target", !!mutedBob, JSON.stringify(muted.recipients));
+  check("and is flagged muted", mutedBob?.muted === true);
+  check("while an unmuted member is not", muted.recipients.find((r) => r.userId === alice)?.muted === false);
   await sql`
     UPDATE chat_members SET muted = false
      WHERE conversation_id = ${first.id} AND user_id = ${bob}

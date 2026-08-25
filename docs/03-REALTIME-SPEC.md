@@ -158,7 +158,7 @@ timeout cannot.
 
 | Event | Payload |
 |---|---|
-| `unread.changed` | `{ conversationId, unreadCount, lastMessagePreview }` |
+| `unread.changed` | `{ conversationId, conversationTitle, senderName, preview, unreadCount, totalUnread, lastMessageAt, muted, ownMessage, mentioned }` |
 | `conversation.added` | `{ conversationId }` — you were added; go subscribe |
 | `conversation.removed` | `{ conversationId }` — you left or were removed; drop it and unsubscribe |
 | `session.revoked` | `{}` — password/role/active changed; the client reloads to the sign-in screen |
@@ -168,6 +168,26 @@ row is gone, so `/api/pusher/auth` would refuse a fresh subscription to `private
 anything published there is already unreachable. It carries an id and nothing else: whether they were
 removed or left is a system message in a thread they can no longer read, and putting "removed by Alex"
 on this channel would be telling somebody what the group said after they left.
+
+**`unread.changed` goes to EVERY member**, including the sender's own other tabs and anyone who
+muted the conversation. That is a deliberate widening: it used to skip both, which saved Pusher
+messages and silently broke conversation ordering for exactly those people — a muted thread never rose
+to the top, and neither did the sender's second tab. Ordering is not an interruption, so the event is
+delivered to everyone and the *client* decides what to do with it:
+
+| flag | effect |
+|---|---|
+| `ownMessage` | reorder; never toast — nobody needs telling what they just wrote |
+| `muted` | reorder; no toast and no sound, unless `mentioned` overrides it |
+| `mentioned` | toast says "mentioned you", and beats `muted` |
+
+**The mute policy did not change — it moved from the query to the renderer**, which is the only place
+that can tell "don't interrupt me" apart from "don't tell me it happened". The cost is honest: a
+ten-person group is now ten events per message rather than eight or nine, still sent in one
+`publishBatch` call.
+
+The tab that SENT the message gets no event at all — Pusher excludes the acting socket by design — so
+it reorders its own list by calling `bump()` locally. See `lib/chat/ordering.ts`.
 
 `session.revoked` closes a real gap. In the current system a revoked session keeps receiving pushes
 until its stream happens to drop, because the client only re-checks on disconnect. Publishing this

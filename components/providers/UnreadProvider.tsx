@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { userChannel } from "@/lib/realtime/channels";
 import { getPusher } from "@/lib/realtime/client";
@@ -35,20 +35,58 @@ import type { UserEvents } from "@/lib/realtime/events";
  * is a tab that is not in front — a toast nobody is looking at helps nobody.
  */
 
+/**
+ * What has happened in a conversation since the server rendered the list.
+ *
+ * The conversation list merges these over the server's rows to decide order and
+ * what the preview says — see ConversationList. Held here rather than in the list
+ * so it survives navigating between conversations, which remounts the list but not
+ * this provider.
+ */
+export interface ConversationActivity {
+  lastMessageAt: string;
+  preview: string;
+  senderName: string | null;
+  unreadCount: number;
+  /**
+   * A local, monotonically increasing arrival number.
+   *
+   * The tiebreak when two messages share a timestamp — which happens when two
+   * people send at once, and would otherwise leave the order of the top two
+   * conversations up to object key order. A sort has to be total, or the list
+   * flickers between renders.
+   */
+  seq: number;
+}
+
 interface UnreadValue {
   /** Across every conversation. What the nav badge shows. */
   total: number;
   /** Per conversation, for the list. Only holds what has arrived live. */
   byConversation: Record<string, number>;
+  /** Live ordering and preview data, keyed by conversation. */
+  activity: Record<string, ConversationActivity>;
   /** Called when a conversation is opened or read, to clear it locally without
    *  waiting for the server to confirm. */
   clear: (conversationId: string) => void;
+  /**
+   * The sender's OWN tab bumping its conversation to the top.
+   *
+   * Needed because a sender is excluded from its own Pusher fan-out by socket id,
+   * so the event that reorders everybody else's list never reaches the tab that
+   * sent the message. Without this, sending a message moves the conversation to
+   * the top for every person in it except the one who wrote it — which is the one
+   * person guaranteed to be looking.
+   */
+  bump: (input: { conversationId: string; preview: string; at?: string }) => void;
 }
 
 const UnreadContext = createContext<UnreadValue>({
   total: 0,
   byConversation: {},
+  activity: {},
   clear: () => {},
+  bump: () => {},
 });
 
 export function useUnread(): UnreadValue {
@@ -71,6 +109,11 @@ export function UnreadProvider({
 
   const [total, setTotal] = useState(initialTotal);
   const [byConversation, setByConversation] = useState<Record<string, number>>({});
+  const [activity, setActivity] = useState<Record<string, ConversationActivity>>({});
+
+  /** Arrival order, for breaking timestamp ties. A ref, not state: bumping it must
+   *  not itself cause a render. */
+  const nextSeq = useRef(1);
 
   // Read inside the event handler, which is registered once — a ref keeps it
   // current without re-subscribing on every navigation.
@@ -108,6 +151,34 @@ export function UnreadProvider({
       setTotal(data.totalUnread);
       setByConversation((prev) => ({ ...prev, [data.conversationId]: data.unreadCount }));
 
+      // ── Ordering first, and unconditionally ──
+      //
+      // Recorded before any of the "should we interrupt them" checks below,
+      // because reordering is not an interruption. This event now reaches muted
+      // members and the sender's own other tabs precisely so their lists move
+      // too; returning early for them — as this handler used to, by never being
+      // sent — is what left a muted thread sitting stale halfway down the list.
+      setActivity((prev) => ({
+        ...prev,
+        [data.conversationId]: {
+          lastMessageAt: data.lastMessageAt,
+          preview: data.preview,
+          senderName: data.senderName,
+          unreadCount: data.unreadCount,
+          seq: nextSeq.current++,
+        },
+      }));
+
+      // Their own message, echoed to another of their tabs. The list moves; they
+      // are obviously not told about what they just wrote.
+      if (data.ownMessage) return;
+
+      // Muted: they asked not to be interrupted. The conversation still rose to
+      // the top above — mute means "don't interrupt me", not "don't tell me it
+      // happened". A mention overrides it, which is the whole point of being
+      // mentioned in a busy group.
+      if (data.muted && !data.mentioned) return;
+
       const viewing = pathRef.current === `/chat/${data.conversationId}`;
       const hidden = typeof document !== "undefined" && document.visibilityState !== "visible";
 
@@ -119,13 +190,21 @@ export function UnreadProvider({
       // Throttled and muteable inside playNotificationSound.
       playNotificationSound();
 
+      const author =
+        data.senderName && data.conversationTitle !== data.senderName
+          ? `${data.senderName}: `
+          : "";
+
       toast.show({
         key: data.conversationId,
-        title: data.conversationTitle,
+        // A mention says so in the title. In a group somebody is only half
+        // watching, "mentioned you" is the difference between a message they read
+        // now and one they find tomorrow.
+        title: data.mentioned
+          ? `${data.conversationTitle} — mentioned you`
+          : data.conversationTitle,
         // For a group, whose message it is matters as much as what it says.
-        body: data.senderName && data.conversationTitle !== data.senderName
-          ? `${data.senderName}: ${data.preview}`
-          : data.preview,
+        body: `${author}${data.preview}`,
         href: `/chat/${data.conversationId}`,
         count: data.unreadCount,
       });
@@ -153,10 +232,40 @@ export function UnreadProvider({
     document.title = total > 0 ? `(${total}) ${base}` : base;
   }, [total, pathname]);
 
+  /**
+   * The sender's own bump.
+   *
+   * `Date.now()` rather than a server timestamp, because the real one only arrives
+   * with the POST response and the list should move the instant Send is pressed.
+   * The server's value replaces this on the next render — and a few milliseconds
+   * of clock skew cannot reorder anything, since this conversation is going to the
+   * top either way.
+   */
+  const bump = useCallback(
+    ({ conversationId, preview, at }: { conversationId: string; preview: string; at?: string }) => {
+      setActivity((prev) => ({
+        ...prev,
+        [conversationId]: {
+          lastMessageAt: at ?? new Date().toISOString(),
+          preview,
+          // Null: the list shows no "You:" prefix on your own conversation
+          // preview, matching what the server renders.
+          senderName: null,
+          // Sending is reading. Your own message must not light up your own badge.
+          unreadCount: 0,
+          seq: nextSeq.current++,
+        },
+      }));
+    },
+    [],
+  );
+
   const value = useMemo<UnreadValue>(
     () => ({
       total,
       byConversation,
+      activity,
+      bump,
       clear: (conversationId: string) => {
         setByConversation((prev) => {
           const had = prev[conversationId] ?? 0;
@@ -168,9 +277,16 @@ export function UnreadProvider({
           delete next[conversationId];
           return next;
         });
+        // The unread count on the live activity row goes too, or the list keeps
+        // showing a badge on a thread that is open and read.
+        setActivity((prev) => {
+          const current = prev[conversationId];
+          if (!current || current.unreadCount === 0) return prev;
+          return { ...prev, [conversationId]: { ...current, unreadCount: 0 } };
+        });
       },
     }),
-    [total, byConversation],
+    [total, byConversation, activity, bump],
   );
 
   return <UnreadContext.Provider value={value}>{children}</UnreadContext.Provider>;

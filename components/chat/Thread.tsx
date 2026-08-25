@@ -29,7 +29,22 @@ import {
 import { ReplyComposerChip, ReplyQuote } from "./Reply";
 import { LinkPreviewCard, MessageText } from "./MessageText";
 import { useUploads } from "./useUploads";
-import { ACCEPT_ATTRIBUTE, ATTACHMENT_MAX_PER_MESSAGE } from "@/lib/chat/attachments";
+import {
+  ACCEPT_ATTRIBUTE,
+  ATTACHMENT_MAX_PER_MESSAGE,
+  attachmentSummary,
+} from "@/lib/chat/attachments";
+import {
+  adjustMentions,
+  filterMentionCandidates,
+  insertMention,
+  mentionQueryAt,
+  plainText,
+  serializeMentions,
+  type DraftMention,
+} from "@/lib/chat/mentions";
+import { MentionPicker } from "./MentionPicker";
+import { PersonCard } from "./PersonCard";
 import type { AttachmentView } from "@/lib/db/queries/attachments";
 import type { ConversationSummary, MessageRow, ReplyPreview } from "@/lib/db/queries/chat";
 import type { ConversationEvents } from "@/lib/realtime/events";
@@ -104,7 +119,7 @@ export function Thread({
   const router = useRouter();
   const { state: connectionState } = useRealtime();
   const { online, tracking } = usePresence();
-  const { clear: clearUnread } = useUnread();
+  const { clear: clearUnread, bump: bumpConversation } = useUnread();
 
   /**
    * A local copy of the conversation, so a rename or a membership change repaints
@@ -157,6 +172,26 @@ export function Thread({
   const [highlightId, setHighlightId] = useState<number | null>(null);
   const [jumpFailed, setJumpFailed] = useState(false);
 
+  /** The member whose details card is open, from tapping a mention. */
+  const [personCardId, setPersonCardId] = useState<string | null>(null);
+  /** Which candidate the Arrow keys have landed on. Reset whenever the query
+   *  changes, so typing another letter always starts back at the best match. */
+  const [mentionIndex, setMentionIndex] = useState(0);
+  /** Where the caret is, tracked so `mentionQueryAt` knows what is being typed.
+   *  Read from the textarea on every interaction rather than guessed. */
+  const [caret, setCaret] = useState(0);
+  /**
+   * Which spans of the draft are really mentions.
+   *
+   * The draft itself holds PLAIN text — "@Super Admin", never the stored
+   * `@[Super Admin](uuid)` form, because the composer is a textarea and whatever
+   * is in it is what the person watching sees. These ranges are what turn that
+   * plain text back into tokens at send time. See lib/chat/mentions.ts.
+   */
+  const [draftMentions, setDraftMentions] = useState<DraftMention[]>([]);
+
+  const composer = useRef<HTMLTextAreaElement>(null);
+
   const uploads = useUploads(conversationId);
 
   const scroller = useRef<HTMLDivElement>(null);
@@ -171,6 +206,82 @@ export function Thread({
   // showing something that is not what this conversation is.
   const dmPartner = isGroup ? undefined : members.find((m) => m.id !== viewerId);
 
+  // ---------- mentions ----------
+
+  /**
+   * The `@…` currently being typed, or null.
+   *
+   * Only in groups. A DM has exactly one other person in it — mentioning them is
+   * addressing the whole conversation, so the dropdown would be a step that
+   * conveys nothing.
+   */
+  const mentionQuery = useMemo(
+    () => (isGroup ? mentionQueryAt(draft, caret) : null),
+    [isGroup, draft, caret],
+  );
+
+  /**
+   * Who may be mentioned: this conversation's members, minus yourself.
+   *
+   * Mentioning yourself is allowed to render but never notifies (the server drops
+   * it), so offering it in the picker would only invite an action with no effect.
+   *
+   * The list is the *members*, which is what enforces "no non-members" on this
+   * side — and the server re-checks membership before writing a mention row, so a
+   * hand-crafted request gets the same answer.
+   */
+  const mentionCandidates = useMemo(() => {
+    if (!mentionQuery) return [];
+    return filterMentionCandidates(
+      members.filter((m) => m.id !== viewerId),
+      mentionQuery.term,
+    );
+  }, [mentionQuery, members, viewerId]);
+
+  // Back to the top whenever the candidate list changes, so Enter always takes
+  // the best match rather than whatever position a previous search left behind.
+  useEffect(() => {
+    setMentionIndex(0);
+  }, [mentionQuery?.term, mentionQuery?.start]);
+
+  /**
+   * Inserts a mention and puts the caret back after it.
+   *
+   * The caret has to be restored explicitly and in a layout effect's timing —
+   * React re-renders the textarea with the new value and the browser would
+   * otherwise drop the cursor at the end, which is wrong for anybody mentioning
+   * somebody mid-sentence.
+   */
+  const pickMention = useCallback(
+    (member: { id: string; displayName: string }) => {
+      if (!mentionQuery) return;
+      const next = insertMention(draft, draftMentions, mentionQuery, member);
+      setDraft(next.text);
+      setDraftMentions(next.mentions);
+      setCaret(next.caret);
+
+      requestAnimationFrame(() => {
+        const el = composer.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(next.caret, next.caret);
+      });
+    },
+    [draft, draftMentions, mentionQuery],
+  );
+
+  /** Reads the caret out of the textarea. Called from every event that can move
+   *  it — typing, clicking, and arrowing around. */
+  const syncCaret = useCallback(() => {
+    const el = composer.current;
+    if (el) setCaret(el.selectionStart ?? 0);
+  }, []);
+
+  const personCard = personCardId ? members.find((m) => m.id === personCardId) : undefined;
+
+  // The draft is already the plain form — "@Name", no uuid — so it is measured
+  // directly. The server measures the stored body through `plainText`, which
+  // produces exactly this, so the two agree.
   const draftLength = messageLength(draft);
   const overLimit = draftLength > MESSAGE_MAX_LENGTH;
   const showCounter = draftLength >= MESSAGE_COUNTER_THRESHOLD;
@@ -535,9 +646,27 @@ export function Thread({
       // This tab was excluded from the fan-out, so the response is where the
       // real row comes from.
       setConfirmed((prev) => mergeMessages(prev, [data.message!]));
+
+      // ── And the same exclusion is why the list has to be told here ──
+      //
+      // Every other member's conversation list reorders on `unread.changed`. This
+      // tab never receives that event — Pusher drops it for the acting socket, on
+      // purpose — so without this the conversation rises to the top for everybody
+      // except the person who just wrote in it.
+      //
+      // The server's own timestamp, not a local guess, so this agrees exactly with
+      // what every other member sorted on.
+      bumpConversation({
+        conversationId,
+        preview: attachmentSummary(
+          plainText(data.message.body),
+          data.message.attachments,
+        ).slice(0, 140),
+        at: data.message.createdAt,
+      });
       setPending((prev) => prev.filter((p) => p.clientMsgId !== clientMsgId));
     },
-    [conversationId],
+    [conversationId, bumpConversation],
   );
 
   // ---------- reactions ----------
@@ -618,14 +747,18 @@ export function Thread({
   /** Clears the composer first, so a slow send does not leave the text sitting
    *  there looking unsent while the optimistic bubble is already below it. */
   const submitDraft = useCallback(() => {
-    const body = draft;
+    // The plain draft becomes the stored form HERE, at the last moment — the
+    // composer never held a uuid, and this is the only place one is introduced.
+    const body = serializeMentions(draft, draftMentions);
     const ready = uploads.files.flatMap((f) => (f.attachment ? [f.attachment] : []));
 
-    // Nothing to send at all — no text and no files.
-    if (!body.trim() && !ready.length) return;
+    // Both checks are on the DRAFT, not on `body`: the serialized form carries
+    // uuids the sender never typed, so measuring it would reject a message that
+    // looks well under the limit.
+    if (!draft.trim() && !ready.length) return;
     // Checked here and not only on the button: Enter-to-send does not care whether
     // a button is disabled.
-    if (messageLength(body) > MESSAGE_MAX_LENGTH) return;
+    if (messageLength(draft) > MESSAGE_MAX_LENGTH) return;
     // Held back while anything is still going up, so a message never goes with
     // half its files attached. The Send button is disabled for the same reason;
     // this is the Enter key's copy of the rule.
@@ -637,13 +770,14 @@ export function Thread({
     // not leave all three sitting there looking unsent while the optimistic
     // bubble is already below them.
     setDraft("");
+    setDraftMentions([]);
     setReplyingTo(null);
     // Clears the tray WITHOUT deleting anything server-side: those rows belong to
     // the message now, and `clear` is deliberately not `remove`.
     uploads.clear();
 
     void send(body, { attachments: ready, replyTo });
-  }, [draft, send, uploads, replyingTo]);
+  }, [draft, draftMentions, send, uploads, replyingTo]);
 
   // ---------- older pages ----------
 
@@ -867,6 +1001,8 @@ export function Thread({
                 reactions={m.reactions}
                 viewerId={viewerId}
                 onReact={(emoji) => void toggleReaction(m.id, emoji)}
+                mentionMembers={members}
+                onOpenPerson={setPersonCardId}
                 messageId={m.id}
                 highlighted={highlightId === m.id}
                 attachments={m.attachments}
@@ -922,6 +1058,8 @@ export function Thread({
               // until the POST comes back.
               attachments={p.attachments}
               replyTo={p.replyTo}
+              mentionMembers={members}
+              onOpenPerson={setPersonCardId}
               onJump={jumpToMessage}
               onOpenImage={setLightbox}
               onRetry={
@@ -1002,7 +1140,20 @@ export function Thread({
           </p>
         ) : null}
 
-        <div className="flex items-end gap-1 p-3">
+        <div className="relative flex items-end gap-1 p-3">
+          {/* Anchored to the composer row and opening upward — the composer sits
+              at the bottom of the viewport, so a list below it would be
+              off-screen. On a narrow layout it is width-capped to the viewport,
+              which is what keeps it usable on a phone. */}
+          {mentionQuery && mentionCandidates.length ? (
+            <MentionPicker
+              candidates={mentionCandidates}
+              activeIndex={mentionIndex}
+              onPick={pickMention}
+              onHoverIndex={setMentionIndex}
+            />
+          ) : null}
+
           <AttachButton
             accept={ACCEPT_ATTRIBUTE}
             onPick={uploads.pick}
@@ -1024,15 +1175,71 @@ export function Thread({
             </p>
           ) : null}
         <textarea
+          ref={composer}
           value={draft}
           rows={1}
+          // The combobox pairing: focus never leaves this textarea while the
+          // mention list is open, so `aria-activedescendant` is how a screen
+          // reader is told the highlighted option moved.
+          role={mentionQuery && mentionCandidates.length ? "combobox" : undefined}
+          aria-expanded={mentionQuery && mentionCandidates.length ? true : undefined}
+          aria-controls={mentionQuery && mentionCandidates.length ? "mention-listbox" : undefined}
+          aria-activedescendant={
+            mentionQuery && mentionCandidates.length ? `mention-option-${mentionIndex}` : undefined
+          }
+          aria-autocomplete={mentionQuery && mentionCandidates.length ? "list" : undefined}
+          onSelect={syncCaret}
+          onClick={syncCaret}
           placeholder={uploads.files.length ? "Add a message, or just send the files…" : "Write a message…"}
           aria-invalid={overLimit}
           onChange={(e) => {
+            // The ranges move with the text: shifted when the edit is before them,
+            // dropped when it is inside one. Somebody backspacing into a name no
+            // longer means that mention.
+            setDraftMentions((prev) => adjustMentions(prev, draft, e.target.value));
             setDraft(e.target.value);
+            // After the value, so `mentionQueryAt` measures against what was just
+            // typed rather than the previous render's caret.
+            setCaret(e.target.selectionStart ?? e.target.value.length);
             if (e.target.value.trim()) pingTyping();
           }}
           onKeyDown={(e) => {
+            // ── While the mention list is open it owns these keys ──
+            //
+            // Checked BEFORE the Enter-to-send rule, or picking a name from the
+            // list would send the half-typed message instead. Every one of these
+            // preventDefaults matters: Arrow keys would otherwise move the caret
+            // and Enter would insert a newline.
+            const picking = mentionQuery && mentionCandidates.length > 0;
+            if (picking) {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setMentionIndex((i) => (i + 1) % mentionCandidates.length);
+                return;
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setMentionIndex(
+                  (i) => (i - 1 + mentionCandidates.length) % mentionCandidates.length,
+                );
+                return;
+              }
+              if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                pickMention(mentionCandidates[mentionIndex] ?? mentionCandidates[0]!);
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                // Closed by moving the caret out of the query rather than by a
+                // separate "dismissed" flag — one source of truth for whether the
+                // list is open, and typing another character legitimately reopens
+                // it.
+                setCaret(-1);
+                return;
+              }
+            }
+
             // Enter sends; Shift+Enter is a newline. The usual contract, and the
             // one people will assume without being told.
             if (e.key === "Enter" && !e.shiftKey) {
@@ -1040,6 +1247,7 @@ export function Thread({
               submitDraft();
             }
           }}
+          onKeyUp={syncCaret}
           className={`max-h-32 min-h-[42px] w-full resize-y rounded-xl bg-subtle px-3.5 py-2.5 text-sm text-ink-2 placeholder:text-faintest focus:bg-surface focus:outline-none focus:ring-2 ${
             overLimit ? "ring-2 ring-bad focus:ring-bad" : "focus:ring-brand-soft"
           }`}
@@ -1071,6 +1279,16 @@ export function Thread({
       {lightbox ? (
         <ImageLightbox attachment={lightbox} onClose={() => setLightbox(null)} />
       ) : null}
+
+      {personCard ? (
+        <PersonCard
+          member={personCard}
+          online={online.has(personCard.id)}
+          tracking={tracking}
+          isViewer={personCard.id === viewerId}
+          onClose={() => setPersonCardId(null)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1096,6 +1314,8 @@ function Bubble({
   readBy,
   reactions,
   viewerId,
+  mentionMembers,
+  onOpenPerson,
   messageId,
   highlighted,
   attachments,
@@ -1120,6 +1340,10 @@ function Bubble({
   readBy?: string[];
   reactions?: ReactionGroup[];
   viewerId?: string;
+  /** The conversation's members, so a mention resolves to today's display name
+   *  rather than the one baked into the token when it was written. */
+  mentionMembers?: readonly { id: string; displayName: string }[];
+  onOpenPerson?: (userId: string) => void;
   /** Absent on an optimistic bubble — there is no server id yet. It is what the
    *  scroll target is keyed on, so a quote can find this bubble in the DOM. */
   messageId?: number;
@@ -1230,7 +1454,15 @@ function Bubble({
                   escaping is exactly what it was when this was one text child. See
                   its header; this is the one place in the app where one person's
                   typing is rendered to another. */}
-              {body ? <MessageText body={body} mine={mine} /> : null}
+              {body ? (
+                <MessageText
+                  body={body}
+                  mine={mine}
+                  viewerId={viewerId}
+                  members={mentionMembers}
+                  onOpenPerson={onOpenPerson}
+                />
+              ) : null}
               {body ? <LinkPreviewCard body={body} mine={mine} /> : null}
               {files.length ? (
                 <AttachmentGrid

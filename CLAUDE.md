@@ -32,7 +32,7 @@ the best documentation of intended behaviour — but write in `app/` and `lib/`.
 | 7 | ✅ Pusher realtime — board, per-user and per-conversation channels, reconnect catch-up |
 | 8–9 | ✅ Chat: DMs, groups, message reactions, read watermarks, typing, unread badge + toasts |
 | 10 | ✅ Presence, avatars (people and groups) |
-| 11 | ✅ Attachments (images, PDFs, documents), reply threads, clickable links with previews |
+| 11 | ✅ Attachments, reply threads, clickable links with previews, live ordering, @mentions |
 | 12 | 🟡 Notification centre/history and live toasts are done; scheduled digests remain |
 | 13 | ⬜ Cutover and deleting the legacy tree |
 
@@ -71,13 +71,28 @@ reactions and group management came just before them:
   re-checks every hop, a byte cap, a timeout, and HTML-only. The remote `og:image` is never
   given to a browser — it goes through `/api/chat/link-preview/image` so no third-party host
   gets a read receipt for your conversations. Run `npm run verify:link-preview` (51 checks).
+- **Conversation ordering is live, and merged — not refetched.** `lib/chat/ordering.ts` folds the
+  activity collected from `unread.changed` over the server's rows. Two things to know before
+  touching it: `notificationTargets` now returns **every** member tagged `muted`/`isSender` rather
+  than filtering them out, because a muted thread and the sender's own second tab both have to
+  reorder — mute moved to the client, which can tell "don't interrupt me" from "don't tell me". And
+  the sender's *own* tab is excluded from its Pusher fan-out by socket id, so it calls `bump()`
+  directly; without that the conversation rises for everyone except the person who wrote in it.
+- **Mentions store an id, not a name.** The **stored body** carries `@[Display Name](uuid)`, but the **composer never does** — it holds plain `@Name` plus a list of ranges, serialised only at send (`insertMention`/`adjustMentions`/`serializeMentions`), because a textarea shows whatever is in it and nobody should be shown a uuid
+  (`lib/chat/mentions.ts`), so the rendered name follows a rename; the name in the token is only a
+  fallback for somebody who has left. Anything that MEASURES or SUMMARISES a body must use
+  `plainText()` first — the length limit, the list preview and the toast all do, or a uuid nobody
+  typed gets counted and displayed. `chat_message_mentions` exists to answer "which messages mention
+  me" without a LIKE over every body. Non-members are filtered server-side in `sendMessage`; the
+  picker only offering members is courtesy. Run `npm run verify:chat:mentions` (15 checks).
 - **Replies** needed no schema change: `reply_to_id` has been there since 0001. The quote is resolved
   on **read**, deliberately — the opposite of system messages, whose text is baked at write time. Both
   choices are explained in `docs/02-DATA-MODEL.md`.
 
-Verify against a real database with `npm run verify:chat:social` (61 checks) and `npm run
-verify:chat:files` (52 checks, and it hits the real blob store); `npm run verify:chat` covers the DM
-and pagination behaviour neither must have broken.
+Verify against a real database with `npm run verify:chat:social` (61), `npm run verify:chat:files`
+(52, hits the real blob store), `npm run verify:chat:mentions` (15) and `npm run verify:link-preview`
+(51, makes real outbound requests); `npm run verify:chat` (32) covers the DM, pagination and
+notification-target behaviour none of them must have broken.
 
 **Repository health is now measured.** `lib/health/check.ts` probes every repo that has a URL and
 records the verdict *and* the time it was taken. Three triggers: a daily Vercel Cron
@@ -101,7 +116,7 @@ Needs a Neon branch. Copy `.env.example` to `.env.local`, then:
 ```bash
 npm run db:migrate      # apply lib/db/migrations/*.sql
 npm run db:import       # load shared-data/ + config/auth.json into Postgres
-npm test                # 207 tests, node:test via tsx
+npm test                # 284 tests, node:test via tsx
 npm run typecheck
 ```
 

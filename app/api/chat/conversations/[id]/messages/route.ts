@@ -1,5 +1,6 @@
 import { readJson, requireUser, withApi } from "@/lib/auth/require";
 import { attachmentSummary } from "@/lib/chat/attachments";
+import { plainText } from "@/lib/chat/mentions";
 import {
   conversationUnread,
   listMessages,
@@ -98,20 +99,30 @@ export const POST = withApi(async (req: Request, ctx: Ctx) => {
     // One batched call rather than one per recipient: a ten-person group would
     // otherwise multiply every message by ten separate API round trips.
     //
-    // Recipients come from notificationTargets rather than result.notify, because
-    // that query already excludes anyone who muted the conversation — a muted
-    // thread then costs no Pusher message at all, which is the point of honouring
-    // mute on the server rather than in the client.
+    // ── This goes to EVERY member now, muted ones and the sender included ──
+    //
+    // It used to skip both, which saved messages and broke two things: a muted
+    // conversation never rose to the top of its members' lists, and the sender's
+    // *other* tabs never reordered either. Both are ordering, and ordering is not
+    // an interruption — so the event is delivered to everyone and each client
+    // decides what to do with it. See notificationTargets.
     const targets = await notificationTargets(id, user.id);
+    const mentioned = new Set(result.mentionIds);
+
     // Not just the body: an attachment-only message has none, and a toast saying
-    // nothing is a toast that looks broken. The same helper the conversation list
-    // and the reply quote use, so all three describe a message identically.
-    const preview = attachmentSummary(result.message.body, result.message.attachments).slice(0, 140);
+    // nothing is a toast that looks broken. `plainText` first, so a mention shows
+    // as "@Alex" rather than as its raw `@[Alex](uuid)` token. The same helpers the
+    // conversation list and the reply quote use, so all three describe a message
+    // identically.
+    const preview = attachmentSummary(
+      plainText(result.message.body),
+      result.message.attachments,
+    ).slice(0, 140);
 
     if (targets.recipients.length) {
       const items = await Promise.all(
-        targets.recipients.map(async (memberId) => ({
-          channel: userChannel(memberId),
+        targets.recipients.map(async (member) => ({
+          channel: userChannel(member.userId),
           name: "unread.changed",
           data: {
             conversationId: id,
@@ -123,8 +134,15 @@ export const POST = withApi(async (req: Request, ctx: Ctx) => {
                 : (result.message.senderName ?? "Someone"),
             senderName: result.message.senderName,
             preview,
-            unreadCount: await conversationUnread(id, memberId),
-            totalUnread: await totalUnread(memberId),
+            lastMessageAt: result.message.createdAt,
+            muted: member.muted,
+            ownMessage: member.isSender,
+            mentioned: mentioned.has(member.userId),
+            // The sender has already read what they just wrote — sendMessage
+            // advances their own watermark — so this is 0 for them without a
+            // special case.
+            unreadCount: await conversationUnread(id, member.userId),
+            totalUnread: await totalUnread(member.userId),
           },
         })),
       );

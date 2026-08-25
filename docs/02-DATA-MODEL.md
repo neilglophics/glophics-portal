@@ -545,6 +545,47 @@ stops immediately — `attachmentForDownload` refuses anything whose message is 
 `listMessages` serves no attachment metadata for it. The retention sweep eventually removes the blobs,
 on whatever schedule Q8 settles.
 
+### Mentions (0008)
+
+```sql
+CREATE TABLE chat_message_mentions (
+  message_id bigint      NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+  user_id    uuid        NOT NULL REFERENCES auth_users(id)    ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (message_id, user_id)
+);
+
+CREATE INDEX chat_message_mentions_user_idx ON chat_message_mentions (user_id, message_id DESC);
+```
+
+**A mention is stored twice, on purpose, and the two answer different questions.**
+
+In the body it is `@[Display Name](uuid)` — an id, not a name, so the rendered mention follows the
+person through a rename. The name inside the token is a *fallback*, for somebody who has since left
+the group; without it an old message would read "@Former member" where a name used to be.
+
+This table answers the other question: **"which messages mention me?"** Asking that of the body means
+a LIKE against a uuid across every row, which no index helps with. A notification, a future mentions
+tab, and the per-recipient decision about whether a toast says "mentioned you" all ask exactly that,
+per person, on the hot path.
+
+Both are written in the same transaction, so they cannot disagree — and if they ever did, **the body
+is authoritative for what is displayed**, because that is what the sender wrote.
+
+Two consequences worth knowing:
+
+- **Anything that measures or summarises a body must call `plainText()` first.** A uuid is 36
+  characters nobody typed, so the length limit, the conversation-list preview and the notification
+  toast all convert to the "@Name" form. Measuring the raw body rejects messages that look
+  comfortably under the limit.
+- **Non-members are filtered server-side.** `sendMessage` checks every claimed id against
+  `chat_members` and drops the rest. It filters rather than rejects: the usual cause is somebody
+  being removed from the group between composing and sending, and losing the whole message for that
+  would be worse. The token stays in the body and renders as plain text with no link.
+
+Deleting a message removes its mention rows along with its reactions — the body has just been
+emptied, so every token that named somebody is gone with it.
+
 ### Replies
 
 **No schema change.** `chat_messages.reply_to_id` has existed since 0001 and `sendMessage` has always

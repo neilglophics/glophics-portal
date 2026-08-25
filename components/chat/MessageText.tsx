@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/ui/Icon";
 import { linkLabel, previewableLink, segments } from "@/lib/chat/links";
+import { mentionSegments } from "@/lib/chat/mentions";
 import type { LinkPreviewView } from "@/lib/db/queries/link-previews";
 
 /**
@@ -25,15 +26,69 @@ import type { LinkPreviewView } from "@/lib/db/queries/link-previews";
  * https survive, so a `javascript:` or `data:` URL renders as the text somebody
  * typed rather than as a link that runs in our origin.
  */
-export function MessageText({ body, mine }: { body: string; mine: boolean }) {
-  const parts = segments(body);
+
+/** One renderable run: a mention, a link, or plain text. `key` is assigned during
+ *  the two-pass split so React has a stable one without leaning on array index. */
+type RenderPart =
+  | { kind: "mention"; userId: string; name: string; raw: string; key: string }
+  | { kind: "link"; value: string; href: string; key: string }
+  | { kind: "text"; value: string; key: string };
+
+export function MessageText({
+  body,
+  mine,
+  viewerId,
+  members,
+  onOpenPerson,
+}: {
+  body: string;
+  mine: boolean;
+  /** So a mention of you can be highlighted differently — that is the whole point
+   *  of being mentioned. */
+  viewerId?: string;
+  /** The conversation's current members, for resolving a mention's id to whatever
+   *  that person is called TODAY. */
+  members?: readonly { id: string; displayName: string }[];
+  onOpenPerson?: (userId: string) => void;
+}) {
+  /**
+   * Mentions are resolved before links.
+   *
+   * Order matters: a mention token contains parentheses and a uuid, and the URL
+   * matcher would happily chew through the middle of one. Splitting on mentions
+   * first means the link matcher only ever sees the plain text between them.
+   */
+  // Annotated, because `flatMap` over two differently-shaped branches infers a
+  // union of arrays rather than an array of the union.
+  const parts: RenderPart[] = mentionSegments(body).flatMap(
+    // The callback's return type is annotated, not just the result: `flatMap` over
+    // two differently-shaped branches otherwise infers a union of arrays, which is
+    // not assignable to an array of the union.
+    (part, outer): RenderPart[] =>
+      part.kind === "mention"
+        ? [{ ...part, key: `m${outer}` }]
+        : segments(part.value).map((inner, i) => ({ ...inner, key: `t${outer}-${i}` })),
+  );
 
   return (
     <span className="whitespace-pre-wrap break-words">
-      {parts.map((part, index) =>
-        part.kind === "link" ? (
+      {parts.map((part) =>
+        part.kind === "mention" ? (
+          <MentionChip
+            key={part.key}
+            userId={part.userId}
+            // Today's name where we have one, the name baked into the token
+            // otherwise — which is what somebody who has since left the group
+            // renders as. Without the fallback an old message would read
+            // "@Former member" where a name used to be.
+            name={members?.find((m) => m.id === part.userId)?.displayName ?? part.name}
+            mine={mine}
+            isViewer={part.userId === viewerId}
+            onOpen={onOpenPerson}
+          />
+        ) : part.kind === "link" ? (
           <a
-            key={index}
+            key={part.key}
             href={part.href}
             target="_blank"
             // `noopener` so the opened page cannot reach back through
@@ -54,7 +109,7 @@ export function MessageText({ body, mine }: { body: string; mine: boolean }) {
           </a>
         ) : (
           // A plain string child. Escaped by React, same as it always was.
-          part.value
+          <span key={part.key}>{part.value}</span>
         ),
       )}
     </span>
@@ -195,5 +250,58 @@ export function LinkPreviewCard({ body, mine }: { body: string; mine: boolean })
         ) : null}
       </div>
     </a>
+  );
+}
+
+/**
+ * One `@Name` inside a message.
+ *
+ * ── A button, because a mention is a link to a person ──
+ *
+ * Tapping it opens that person's details. Not an `<a href>`: there is no page per
+ * person in this app, and the useful thing in a chat is a card you can glance at
+ * without leaving the thread — so the parent decides what "open" means and this
+ * only reports the id.
+ *
+ * ── A mention OF YOU looks different ──
+ *
+ * That is the entire point of being mentioned: in a group of ten, the message
+ * addressed to you has to be findable by eye while scrolling past forty that are
+ * not. Every other mention is tinted but quiet.
+ *
+ * The name is a text child, escaped by React like everything else here. The chip
+ * renders the CURRENT name resolved from the member list, not the one stored in
+ * the token — which is what makes a mention survive a rename.
+ */
+function MentionChip({
+  userId,
+  name,
+  mine,
+  isViewer,
+  onOpen,
+}: {
+  userId: string;
+  name: string;
+  mine: boolean;
+  isViewer: boolean;
+  onOpen?: (userId: string) => void;
+}) {
+  const tone = mine
+    ? isViewer
+      ? "bg-white/35 text-white font-bold"
+      : "bg-white/20 text-white"
+    : isViewer
+      ? "bg-brand-500 text-white font-bold"
+      : "bg-brand-soft text-brand-fg";
+
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen?.(userId)}
+      title={isViewer ? `${name} — this mentions you` : `See ${name}`}
+      className={`mx-px rounded px-1 py-px transition hover:brightness-110 ${tone}`}
+    >
+      @{name}
+    </button>
   );
 }

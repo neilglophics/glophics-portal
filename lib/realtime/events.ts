@@ -91,10 +91,31 @@ export interface UserEvents {
     conversationTitle: string;
     senderName: string | null;
     preview: string;
-    /** Unread in this conversation. */
+    /** Unread in this conversation. Zero for the sender's own other tabs. */
     unreadCount: number;
     /** Unread across every conversation — what the nav badge shows. */
     totalUnread: number;
+
+    // ── The fields below exist for conversation ORDERING ──
+    //
+    // This event now goes to EVERY member, including the sender and anyone who
+    // muted the conversation, because the list has to reorder for all of them.
+    // It used to go only to non-muted non-senders, which is why a muted thread
+    // and the sender's own second tab both silently failed to move to the top.
+    //
+    // See notificationTargets: the mute policy did not change, it moved to the
+    // client, where "don't interrupt me" can be told apart from "don't tell me".
+
+    /** When the message landed. What the list sorts on. */
+    lastMessageAt: string;
+    /** This recipient muted it: reorder, but no toast and no sound. */
+    muted: boolean;
+    /** This event is the echo of the recipient's OWN message, from another tab.
+     *  Reorder, never toast — nobody needs telling what they just wrote. */
+    ownMessage: boolean;
+    /** They were @mentioned. Worth interrupting for even in a busy group, and the
+     *  toast says so. */
+    mentioned: boolean;
   };
   "conversation.added": { conversationId: string };
   /** Signal only. Jira details are fetched from this app after authorization. */

@@ -31,6 +31,7 @@ import {
   attachmentSummary,
 } from "@/lib/chat/attachments";
 import { claimAttachments, type AttachmentView } from "@/lib/db/queries/attachments";
+import { mentionedIds, plainText } from "@/lib/chat/mentions";
 import {
   canManageGroup,
   canManageRoles,
@@ -662,6 +663,9 @@ export interface SendResult {
   created: boolean;
   /** Everyone who should be told, excluding the sender. */
   notify: AuthUserId[];
+  /** Members actually @mentioned — verified against membership, with the sender
+   *  removed. The route uses this to decide whose notification says so. */
+  mentionIds: AuthUserId[];
 }
 
 
@@ -707,9 +711,12 @@ export async function sendMessage(
     );
   }
 
-  // Counted in graphemes, exactly as the composer counts it, so a message the UI
-  // said was 2000 is never rejected here as 2004 because of a few emoji.
-  const length = messageLength(body);
+  // Counted in graphemes on the PLAIN form — a mention measured as the "@Name" a
+  // person sees, not as the raw `@[Name](uuid)` that is stored. A uuid is 36
+  // characters nobody typed, so measuring the raw body would reject a message that
+  // looks comfortably under the limit, quoting a number the sender cannot account
+  // for. The composer counts the same way.
+  const length = messageLength(plainText(body));
   if (length > MESSAGE_MAX_LENGTH) {
     throw new HttpError(
       400,
@@ -744,6 +751,37 @@ export async function sendMessage(
     `) as unknown[];
     if (!found.length) throw new HttpError(404, "The message you're replying to is gone.");
     replyToId = Number(input.replyToId);
+  }
+
+  /**
+   * Mentions, verified against the conversation's actual membership.
+   *
+   * ── This filters rather than rejects, and that is deliberate ──
+   *
+   * The ids come from a request body, so an unfiltered write would let somebody
+   * hand-craft a message that notifies a person who is not in the group — a way to
+   * reach into a conversation you are not part of, and to make a stranger's badge
+   * light up from outside it. The requirement is explicit: non-members cannot be
+   * mentioned.
+   *
+   * A non-member id is dropped from the *notification* rather than failing the
+   * send, because the common cause is not an attack: somebody was mentioned and
+   * then removed from the group before the message was sent. Refusing would lose a
+   * message that is otherwise fine. The token stays in the body and renders as
+   * plain text with no link, so nothing silently pretends to be a mention.
+   */
+  const claimedMentions = mentionedIds(body);
+  let mentionIds: AuthUserId[] = [];
+
+  if (claimedMentions.length) {
+    const valid = (await sql`
+      SELECT user_id FROM chat_members
+       WHERE conversation_id = ${conversationId}
+         AND user_id = ANY(${claimedMentions}::uuid[])
+    `) as { user_id: string }[];
+    // The sender mentioning themselves is allowed to render, but must not
+    // notify — nobody needs a badge for their own message.
+    mentionIds = valid.map((r) => r.user_id).filter((id) => id !== viewerId);
   }
 
   // Self-describing rows: 'attachment' when there is nothing but files, so the
@@ -816,6 +854,18 @@ export async function sendMessage(
       attachmentIds,
     });
 
+    // In the same transaction as the message, so the body and this table cannot
+    // disagree about who was mentioned. `ON CONFLICT DO NOTHING` because the
+    // primary key already de-duplicates mentioning somebody twice in one message
+    // — the writer does not have to be careful.
+    for (const mentionedId of mentionIds) {
+      await client.query(
+        `INSERT INTO chat_message_mentions (message_id, user_id) VALUES ($1, $2)
+         ON CONFLICT (message_id, user_id) DO NOTHING`,
+        [row.id, mentionedId],
+      );
+    }
+
     await client.query(
       "UPDATE chat_conversations SET last_message_at = $2 WHERE id = $1",
       [conversationId, row.created_at],
@@ -844,6 +894,7 @@ export async function sendMessage(
   return {
     created: outcome.created,
     notify: everyone.filter((id) => id !== viewerId),
+    mentionIds,
     message: {
       id: Number(outcome.row.id),
       conversationId,
@@ -911,8 +962,8 @@ export async function replyPreviewFor(parentId: number): Promise<ReplyPreview | 
  * row, so the content is unreachable through the API even though the row is
  * still there.
  *
- * The reactions get no such treatment. They are deleted outright, in the same
- * transaction, because:
+ * The reactions and the mention rows get no such treatment. They are deleted
+ * outright, in the same transaction, because:
  *
  *   - "😂 3" sitting under "Message deleted" is a count of laughs at something
  *     nobody can read, which is worse than nothing.
@@ -957,6 +1008,12 @@ export async function deleteMessage(
       [messageId],
     );
     await client.query("DELETE FROM chat_message_reactions WHERE message_id = $1", [messageId]);
+    // Mentions go for the same reason reactions do, and the reason is sharper
+    // here: the body has just been emptied, so every token that named somebody is
+    // gone with it. Leaving these rows would keep a withdrawn message answering
+    // "which messages mention me?" — a notification pointing at text nobody can
+    // read.
+    await client.query("DELETE FROM chat_message_mentions WHERE message_id = $1", [messageId]);
   });
 
   // ── Attachments are NOT deleted here, and the difference from reactions is
@@ -1148,33 +1205,63 @@ export async function conversationUnread(
 }
 
 /**
- * The bare facts a notification needs about a conversation, and who is muted.
+ * Everybody who should be told a conversation just moved, and how loudly.
  *
- * Muted members are excluded here rather than filtered later, so a muted
- * conversation costs no Pusher message at all — quota is the reason mute exists
- * to be honoured on the server side.
+ * ── This used to exclude muted members and the sender. It no longer can ──
+ *
+ * The old version filtered both out in SQL, so a muted conversation cost no Pusher
+ * message at all — quota was the reason, and it was a real saving. It also meant
+ * two things silently did not work:
+ *
+ *   - a **muted** conversation never rose to the top of the list when it received
+ *     a message, because its members were told nothing. Mute is supposed to mean
+ *     "don't interrupt me", not "hide that this happened";
+ *   - the **sender's other tabs** never reordered either, for the same reason.
+ *
+ * So everybody is returned now, tagged. The client decides: `muted` suppresses the
+ * toast and the sound but not the reordering, and `isSender` means unread stays at
+ * zero. **The mute policy is unchanged — it moved from the query to the
+ * renderer**, which is where it can distinguish "don't interrupt" from "don't
+ * tell".
+ *
+ * The cost is honest: a message now fans out to every member rather than to
+ * non-muted non-senders. For a ten-person group that is ten events instead of
+ * eight or nine. `publishBatch` still sends them in one call.
  */
 export async function notificationTargets(
   conversationId: string,
   senderId: AuthUserId,
-): Promise<{ kind: "dm" | "group"; title: string | null; recipients: AuthUserId[] }> {
+): Promise<{
+  kind: "dm" | "group";
+  title: string | null;
+  /** EVERY member, including the sender and anyone who muted it. */
+  recipients: { userId: AuthUserId; muted: boolean; isSender: boolean }[];
+}> {
   const rows = (await sql`
     SELECT c.kind, c.title,
            COALESCE(
-             array_agg(m.user_id) FILTER (WHERE m.user_id <> ${senderId} AND m.muted = false),
-             '{}'
-           ) AS recipients
+             json_agg(json_build_object('userId', m.user_id, 'muted', m.muted)),
+             '[]'::json
+           ) AS members
       FROM chat_conversations c
       JOIN chat_members m ON m.conversation_id = c.id
      WHERE c.id = ${conversationId}
      GROUP BY c.kind, c.title
-  `) as { kind: "dm" | "group"; title: string | null; recipients: string[] }[];
+  `) as {
+    kind: "dm" | "group";
+    title: string | null;
+    members: { userId: string; muted: boolean }[];
+  }[];
 
   const row = rows[0];
   return {
     kind: row?.kind ?? "dm",
     title: row?.title ?? null,
-    recipients: row?.recipients ?? [],
+    recipients: (row?.members ?? []).map((m) => ({
+      userId: m.userId,
+      muted: m.muted,
+      isSender: m.userId === senderId,
+    })),
   };
 }
 

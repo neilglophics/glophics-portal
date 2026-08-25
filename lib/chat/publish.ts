@@ -83,14 +83,15 @@ export async function publishGroupChange(input: GroupChangePublish): Promise<voi
   const newest = systemMessages[systemMessages.length - 1];
   if (!newest) return;
 
-  // Muted members are excluded by this query rather than filtered afterwards, so
-  // a muted group costs no Pusher message at all.
+  // Every member, muted ones and the actor included — a system message moves the
+  // conversation up the list for all of them, and ordering is not an
+  // interruption. Each client decides whether to toast; see notificationTargets.
   const targets = await notificationTargets(conversationId, actorId);
   if (!targets.recipients.length) return;
 
   const items = await Promise.all(
-    targets.recipients.map(async (memberId) => ({
-      channel: userChannel(memberId),
+    targets.recipients.map(async (member) => ({
+      channel: userChannel(member.userId),
       name: "unread.changed",
       data: {
         conversationId,
@@ -100,8 +101,15 @@ export async function publishGroupChange(input: GroupChangePublish): Promise<voi
         // like a bug.
         senderName: null,
         preview: newest.body.slice(0, 140),
-        unreadCount: await conversationUnread(conversationId, memberId),
-        totalUnread: await totalUnread(memberId),
+        lastMessageAt: newest.createdAt,
+        muted: member.muted,
+        ownMessage: member.isSender,
+        // A system message mentions nobody. "Alex added Jamie" is about Jamie
+        // without being addressed to them, and treating it as a mention would
+        // make every membership change interrupt somebody.
+        mentioned: false,
+        unreadCount: await conversationUnread(conversationId, member.userId),
+        totalUnread: await totalUnread(member.userId),
       },
     })),
   );
