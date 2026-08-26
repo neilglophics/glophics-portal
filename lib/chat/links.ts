@@ -176,6 +176,35 @@ export function previewableLink(body: string): string | null {
   return extractLinks(body)[0] ?? null;
 }
 
+/** Returns a safe YouTube embed URL, or null for every other URL shape. */
+export function youtubeEmbedUrl(raw: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== "https:") return null;
+
+  const hostname = parsed.hostname.toLowerCase().replace(/^www\./, "");
+  let videoId: string | null = null;
+
+  if (hostname === "youtu.be") {
+    videoId = parsed.pathname.split("/").filter(Boolean)[0] ?? null;
+  } else if (hostname === "youtube.com" || hostname === "m.youtube.com") {
+    if (parsed.pathname === "/watch") {
+      videoId = parsed.searchParams.get("v");
+    } else {
+      const match = parsed.pathname.match(/^\/(?:shorts|embed)\/([^/]+)$/);
+      videoId = match?.[1] ?? null;
+    }
+  }
+
+  if (!videoId || !/^[A-Za-z0-9_-]{11}$/.test(videoId)) return null;
+  return `https://www.youtube-nocookie.com/embed/${videoId}`;
+}
+
 /**
  * How a long URL is shown in a bubble.
  *
