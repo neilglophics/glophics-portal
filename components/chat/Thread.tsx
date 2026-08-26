@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
@@ -18,6 +18,7 @@ import {
 } from "@/lib/chat/limits";
 import { applyReactionToggle, mergeReactionGroup, type ReactionGroup } from "@/lib/chat/reactions";
 import { formatDateTime } from "@/lib/shared/format";
+import { readReceipts, seenByLabel } from "@/lib/chat/receipts";
 import { HoverAction, ReactionPicker, ReactionPills } from "./Reactions";
 import { GroupDialog } from "./GroupDialog";
 import {
@@ -156,6 +157,28 @@ export function Thread({
    */
   const [readUpTo, setReadUpTo] = useState<Record<string, number>>(initialReadUpTo);
   const [missed, setMissed] = useState(0);
+  /**
+   * A state mirror of the `atBottom` ref.
+   *
+   * The ref stays, because the scroll-follow effect and the incoming-message
+   * handler read it synchronously mid-event and cannot wait for a render. But a
+   * ref changing re-runs nothing, and two things have to REACT to the scroll
+   * position: the read watermark below, and the jump-to-latest button.
+   *
+   * That was a real bug, and it needed two messages arriving close together:
+   *
+   *   1. message A lands; the read effect schedules its 600 ms timer
+   *   2. the smooth scroll to A begins, and part-way through `onScroll` measures a
+   *      distance over the threshold and sets the ref to false
+   *   3. message B lands, `newestId` changes, the effect re-runs — its cleanup
+   *      cancels A's pending timer, and the fresh run reads the ref as false and
+   *      schedules NOTHING
+   *   4. the scroll settles, the ref goes back to true, and nothing re-runs
+   *
+   * The conversation was then never reported read, so its badge stayed while it
+   * sat open on screen. In state, step 4 re-runs the effect and the read lands.
+   */
+  const [atBottomView, setAtBottomView] = useState(true);
 
   /** The message being replied to, or null. Server-produced, so the quote above
    *  the composer is the same quote the bubble will show. */
@@ -292,6 +315,18 @@ export function Thread({
     0,
   );
 
+  /**
+   * Each member's avatar placed on the newest message they have read.
+   *
+   * Recomputed only when the thread or somebody's watermark moves — it walks every
+   * member over the loaded page, which is cheap but not free, and `read.changed`
+   * events arrive often in an active group.
+   */
+  const receipts = useMemo(
+    () => readReceipts(confirmed, readUpTo, viewerId),
+    [confirmed, readUpTo, viewerId],
+  );
+
   const newestId = confirmed.length ? confirmed[confirmed.length - 1]!.id : 0;
   const oldestId = confirmed.length ? confirmed[0]!.id : 0;
 
@@ -333,6 +368,10 @@ export function Thread({
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
     atBottom.current = distance < STICK_THRESHOLD_PX;
     if (atBottom.current) setMissed(0);
+    // Only on a real change: this runs on every scroll frame, and setting state to
+    // the value it already holds would re-render the whole thread throughout a
+    // smooth scroll.
+    setAtBottomView((prev) => (prev === atBottom.current ? prev : atBottom.current));
   }, []);
 
   /**
@@ -346,9 +385,27 @@ export function Thread({
 
   // ---------- read watermark ----------
 
+  /**
+   * Forget what was reported when the conversation changes.
+   *
+   * `readReported` is a high-water mark of message ids, and **ids are global** —
+   * one bigserial across every conversation. Switching from a busy thread
+   * (newest id 5000) to a quiet one (newest id 300) therefore left the mark above
+   * anything the new thread contains, so `newestId <= readReported.current` was
+   * true forever and it was **never marked read**. The badge simply stayed.
+   *
+   * A layout effect, so the reset lands before the effect below runs for the new
+   * conversation rather than one render later.
+   */
+  useLayoutEffect(() => {
+    readReported.current = 0;
+  }, [conversationId]);
+
   useEffect(() => {
     if (!newestId || newestId <= readReported.current) return;
-    if (!atBottom.current) return;
+    // The STATE, not the ref — settling back at the bottom after a scroll has to
+    // re-run this, or the read is never reported. See atBottomView.
+    if (!atBottomView) return;
     if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
 
     const timer = setTimeout(() => {
@@ -360,14 +417,23 @@ export function Thread({
         method: "POST",
         headers: { ...realtimeHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({ lastReadMessageId: newestId }),
-      }).catch(() => {
-        // Reset so a later attempt retries rather than believing it reported.
-        readReported.current = 0;
-      });
+      })
+        .then((res) => {
+          // The watermark is now persisted, so ask the server for the numbers
+          // again. Without this the conversation list and the nav badge keep
+          // whatever they were last rendered with — which, if a refresh happened
+          // to land between the message arriving and this read, is a count that
+          // has already been read.
+          if (res.ok) router.refresh();
+        })
+        .catch(() => {
+          // Reset so a later attempt retries rather than believing it reported.
+          readReported.current = 0;
+        });
     }, 600);
 
     return () => clearTimeout(timer);
-  }, [conversationId, newestId, clearUnread]);
+  }, [conversationId, newestId, atBottomView, clearUnread, router]);
 
   // ---------- live events ----------
 
@@ -618,7 +684,9 @@ export function Thread({
           : [...prev, { clientMsgId, body, failed: false, attachments, replyTo }],
       );
       setSending(true);
+      // Sending puts you back at the bottom: you are looking at your own message.
       atBottom.current = true;
+      setAtBottomView(true);
 
       const res = await fetch(`/api/chat/conversations/${conversationId}/messages`, {
         method: "POST",
@@ -864,6 +932,7 @@ export function Thread({
         // Scrolling away from the bottom means incoming messages should stop
         // yanking the viewport down; the "N new" affordance takes over.
         atBottom.current = false;
+        setAtBottomView(false);
         setHighlightId(jumpTarget);
       }
       setJumpTarget(null);
@@ -982,15 +1051,16 @@ export function Thread({
             ) : (
               <Bubble
                 key={m.id}
-                // Only on the newest message you sent: a tick under every line is
-                // noise, and the last one answers the actual question.
-                readBy={
-                  m.senderId === viewerId && m.id === lastMineId
-                    ? members
-                        .filter((x) => x.id !== viewerId && (readUpTo[x.id] ?? 0) >= m.id)
-                        .map((x) => x.displayName)
-                    : undefined
-                }
+                // Messenger-style: each person's face sits on the last message
+                // THEY read, wherever that is in the thread — not a tick under
+                // your own newest one. See lib/chat/receipts.ts.
+                seenBy={(receipts.get(m.id) ?? []).flatMap((id) => {
+                  const member = members.find((x) => x.id === id);
+                  return member ? [member] : [];
+                })}
+                // The single tick still means something the faces cannot: your
+                // newest message has been sent and nobody has caught up to it yet.
+                showSent={m.senderId === viewerId && m.id === lastMineId && !receipts.has(m.id)}
                 mine={m.senderId === viewerId}
                 author={memberName(m.senderId)}
                 authorId={m.senderId}
@@ -1089,17 +1159,33 @@ export function Thread({
         </p>
       ) : null}
 
-      {missed > 0 ? (
+      {/* ── Jump to the latest message ──
+          One control with two faces. Back-reading a long thread and then wanting
+          the bottom again used to mean scrolling all the way by hand — the pill
+          only existed while unread messages had arrived, which is not the same
+          thing as being scrolled up.
+          So it shows whenever you are away from the bottom, and says how many you
+          have missed only when that is actually true. */}
+      {!atBottomView ? (
         <button
           type="button"
           onClick={() => {
             setMissed(0);
             atBottom.current = true;
+            setAtBottomView(true);
             scrollToBottom(true);
           }}
-          className="mx-auto -mt-2 mb-1 flex items-center gap-1.5 rounded-full bg-accent px-3 py-1.5 text-[11px] font-semibold text-on-accent shadow-lg"
+          title={missed > 0 ? `${missed} new — jump to the latest` : "Jump to the latest message"}
+          aria-label={missed > 0 ? `${missed} new messages, jump to the latest` : "Jump to the latest message"}
+          className={`mx-auto -mt-2 mb-1 flex items-center gap-1.5 rounded-full shadow-lg transition ${
+            missed > 0
+              ? "bg-accent px-3 py-1.5 text-[11px] font-semibold text-on-accent"
+              : // No unread: a quiet circle rather than a labelled pill, so it does
+                // not read as a notification when there is nothing to notify.
+                "bg-surface p-1.5 text-muted ring-1 ring-line-2 hover:text-brand-fg hover:ring-brand-soft"
+          }`}
         >
-          {missed} new message{missed === 1 ? "" : "s"}
+          {missed > 0 ? `${missed} new message${missed === 1 ? "" : "s"}` : null}
           <Icon name="chevron" className="h-3 w-3 rotate-90" />
         </button>
       ) : null}
@@ -1311,7 +1397,8 @@ function Bubble({
   at,
   state,
   deleted,
-  readBy,
+  seenBy,
+  showSent,
   reactions,
   viewerId,
   mentionMembers,
@@ -1335,9 +1422,12 @@ function Bubble({
   at: string | null;
   state?: "sending" | "failed";
   deleted?: boolean;
-  /** Names of the other members who have read this. Undefined on messages that
-   *  carry no receipt, which is all of them except your latest. */
-  readBy?: string[];
+  /** Members whose read watermark lands on THIS message — their face goes here.
+   *  Usually empty; a message is only somebody's high-water mark once. */
+  seenBy?: { id: string; displayName: string; avatarUrl: string | null }[];
+  /** Your newest message, which nobody has caught up to yet. The one thing a row
+   *  of faces cannot say, because there are no faces to show. */
+  showSent?: boolean;
   reactions?: ReactionGroup[];
   viewerId?: string;
   /** The conversation's members, so a mention resolves to today's display name
@@ -1529,8 +1619,37 @@ function Bubble({
       <div
         className={`mt-0.5 flex items-center gap-1.5 ${mine ? "justify-end pr-1" : "pl-9"}`}
       >
-        <Status state={state} at={at} readBy={readBy} onRetry={onRetry} />
+        <Status state={state} at={at} showSent={showSent} onRetry={onRetry} />
       </div>
+
+      {/* ── The faces, on their own line and always at the right edge ──
+          Right-aligned whoever sent the message, because this is a property of
+          the CONVERSATION rather than of the bubble above it: a single column
+          down the edge of the thread reads as a waterline, which is the whole
+          point. Messenger does the same. */}
+      {seenBy?.length ? (
+        <div
+          className="mt-0.5 flex justify-end gap-0.5 self-end"
+          title={seenByLabel(seenBy.map((m) => m.displayName))}
+          aria-label={seenByLabel(seenBy.map((m) => m.displayName))}
+        >
+          {seenBy.slice(0, 6).map((member) => (
+            <Avatar
+              key={member.id}
+              person={{ id: member.id, name: member.displayName, avatarUrl: member.avatarUrl }}
+              // Deliberately tiny. These sit under every message somebody has
+              // caught up to, so at any normal avatar size they would compete
+              // with the conversation.
+              size="h-3.5 w-3.5"
+            />
+          ))}
+          {seenBy.length > 6 ? (
+            <span className="ml-0.5 text-[9px] font-semibold text-faintest">
+              +{seenBy.length - 6}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1555,12 +1674,13 @@ function Bubble({
 function Status({
   state,
   at,
-  readBy,
+  showSent,
   onRetry,
 }: {
   state?: "sending" | "failed";
   at: string | null;
-  readBy?: string[];
+  /** Your newest message, not yet caught up to by anybody. */
+  showSent?: boolean;
   onRetry?: () => void;
 }) {
   if (state === "failed") {
@@ -1591,20 +1711,13 @@ function Status({
   return (
     <>
       <span className="text-[10px] text-faintest">{formatDateTime(at)}</span>
-      {/* Only on your own newest message — a tick under every line is noise, and
-          the last one answers the actual question. */}
-      {readBy ? (
-        <span
-          className={readBy.length ? "text-brand-fg" : "text-faintest"}
-          title={readBy.length ? `Read by ${readBy.join(", ")}` : "Sent — not read yet"}
-          aria-label={readBy.length ? `Read by ${readBy.join(", ")}` : "Sent, not read yet"}
-        >
-          {/* One tick for delivered, two for read. The second is pulled left over
-              the first, which is the shape everybody already reads as "seen". */}
-          <span className="inline-flex items-center">
-            <Icon name="check" className="h-3 w-3" />
-            {readBy.length ? <Icon name="check" className="-ml-1.5 h-3 w-3" /> : null}
-          </span>
+      {/* A single tick, and ONLY while nobody has caught up.
+          "Read" is no longer a tick at all — it is the row of faces below, which
+          says who as well as whether. Two ticks and a column of avatars would be
+          the same fact told twice. */}
+      {showSent ? (
+        <span className="text-faintest" title="Sent — not read yet" aria-label="Sent, not read yet">
+          <Icon name="check" className="h-3 w-3" />
         </span>
       ) : null}
     </>
