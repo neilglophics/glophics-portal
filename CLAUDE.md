@@ -93,6 +93,11 @@ reactions and group management came just before them:
   background, minimised, behind other windows — and **not** when the site is closed. Notifying a
   closed site needs a Service Worker plus Web Push/VAPID and a stored per-device subscription; the
   toggle says "Only while a tab is open" so the setting is not read as more than it is.
+- **Read receipts are Messenger-style faces, not ticks.** `lib/chat/receipts.ts` turns the
+  one-number-per-member watermark (ADR-006) into a position: each person's avatar appears **once**, on
+  the newest loaded message at or below their watermark. A watermark above the page lands on the
+  newest message shown; one below the page shows nothing rather than guessing. The single ✓ now means
+  only "sent, nobody has caught up".
 - **Replies** needed no schema change: `reply_to_id` has been there since 0001. The quote is resolved
   on **read**, deliberately — the opposite of system messages, whose text is baked at write time. Both
   choices are explained in `docs/02-DATA-MODEL.md`.

@@ -18,6 +18,7 @@ import {
 } from "@/lib/chat/limits";
 import { applyReactionToggle, mergeReactionGroup, type ReactionGroup } from "@/lib/chat/reactions";
 import { formatDateTime } from "@/lib/shared/format";
+import { readReceipts, seenByLabel } from "@/lib/chat/receipts";
 import { HoverAction, ReactionPicker, ReactionPills } from "./Reactions";
 import { GroupDialog } from "./GroupDialog";
 import {
@@ -290,6 +291,18 @@ export function Thread({
   const lastMineId = confirmed.reduce(
     (best, m) => (m.senderId === viewerId && m.id > best ? m.id : best),
     0,
+  );
+
+  /**
+   * Each member's avatar placed on the newest message they have read.
+   *
+   * Recomputed only when the thread or somebody's watermark moves — it walks every
+   * member over the loaded page, which is cheap but not free, and `read.changed`
+   * events arrive often in an active group.
+   */
+  const receipts = useMemo(
+    () => readReceipts(confirmed, readUpTo, viewerId),
+    [confirmed, readUpTo, viewerId],
   );
 
   const newestId = confirmed.length ? confirmed[confirmed.length - 1]!.id : 0;
@@ -1007,15 +1020,16 @@ export function Thread({
             ) : (
               <Bubble
                 key={m.id}
-                // Only on the newest message you sent: a tick under every line is
-                // noise, and the last one answers the actual question.
-                readBy={
-                  m.senderId === viewerId && m.id === lastMineId
-                    ? members
-                        .filter((x) => x.id !== viewerId && (readUpTo[x.id] ?? 0) >= m.id)
-                        .map((x) => x.displayName)
-                    : undefined
-                }
+                // Messenger-style: each person's face sits on the last message
+                // THEY read, wherever that is in the thread — not a tick under
+                // your own newest one. See lib/chat/receipts.ts.
+                seenBy={(receipts.get(m.id) ?? []).flatMap((id) => {
+                  const member = members.find((x) => x.id === id);
+                  return member ? [member] : [];
+                })}
+                // The single tick still means something the faces cannot: your
+                // newest message has been sent and nobody has caught up to it yet.
+                showSent={m.senderId === viewerId && m.id === lastMineId && !receipts.has(m.id)}
                 mine={m.senderId === viewerId}
                 author={memberName(m.senderId)}
                 authorId={m.senderId}
@@ -1336,7 +1350,8 @@ function Bubble({
   at,
   state,
   deleted,
-  readBy,
+  seenBy,
+  showSent,
   reactions,
   viewerId,
   mentionMembers,
@@ -1360,9 +1375,12 @@ function Bubble({
   at: string | null;
   state?: "sending" | "failed";
   deleted?: boolean;
-  /** Names of the other members who have read this. Undefined on messages that
-   *  carry no receipt, which is all of them except your latest. */
-  readBy?: string[];
+  /** Members whose read watermark lands on THIS message — their face goes here.
+   *  Usually empty; a message is only somebody's high-water mark once. */
+  seenBy?: { id: string; displayName: string; avatarUrl: string | null }[];
+  /** Your newest message, which nobody has caught up to yet. The one thing a row
+   *  of faces cannot say, because there are no faces to show. */
+  showSent?: boolean;
   reactions?: ReactionGroup[];
   viewerId?: string;
   /** The conversation's members, so a mention resolves to today's display name
@@ -1554,8 +1572,37 @@ function Bubble({
       <div
         className={`mt-0.5 flex items-center gap-1.5 ${mine ? "justify-end pr-1" : "pl-9"}`}
       >
-        <Status state={state} at={at} readBy={readBy} onRetry={onRetry} />
+        <Status state={state} at={at} showSent={showSent} onRetry={onRetry} />
       </div>
+
+      {/* ── The faces, on their own line and always at the right edge ──
+          Right-aligned whoever sent the message, because this is a property of
+          the CONVERSATION rather than of the bubble above it: a single column
+          down the edge of the thread reads as a waterline, which is the whole
+          point. Messenger does the same. */}
+      {seenBy?.length ? (
+        <div
+          className="mt-0.5 flex justify-end gap-0.5 self-end"
+          title={seenByLabel(seenBy.map((m) => m.displayName))}
+          aria-label={seenByLabel(seenBy.map((m) => m.displayName))}
+        >
+          {seenBy.slice(0, 6).map((member) => (
+            <Avatar
+              key={member.id}
+              person={{ id: member.id, name: member.displayName, avatarUrl: member.avatarUrl }}
+              // Deliberately tiny. These sit under every message somebody has
+              // caught up to, so at any normal avatar size they would compete
+              // with the conversation.
+              size="h-3.5 w-3.5"
+            />
+          ))}
+          {seenBy.length > 6 ? (
+            <span className="ml-0.5 text-[9px] font-semibold text-faintest">
+              +{seenBy.length - 6}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1580,12 +1627,13 @@ function Bubble({
 function Status({
   state,
   at,
-  readBy,
+  showSent,
   onRetry,
 }: {
   state?: "sending" | "failed";
   at: string | null;
-  readBy?: string[];
+  /** Your newest message, not yet caught up to by anybody. */
+  showSent?: boolean;
   onRetry?: () => void;
 }) {
   if (state === "failed") {
@@ -1616,20 +1664,13 @@ function Status({
   return (
     <>
       <span className="text-[10px] text-faintest">{formatDateTime(at)}</span>
-      {/* Only on your own newest message — a tick under every line is noise, and
-          the last one answers the actual question. */}
-      {readBy ? (
-        <span
-          className={readBy.length ? "text-brand-fg" : "text-faintest"}
-          title={readBy.length ? `Read by ${readBy.join(", ")}` : "Sent — not read yet"}
-          aria-label={readBy.length ? `Read by ${readBy.join(", ")}` : "Sent, not read yet"}
-        >
-          {/* One tick for delivered, two for read. The second is pulled left over
-              the first, which is the shape everybody already reads as "seen". */}
-          <span className="inline-flex items-center">
-            <Icon name="check" className="h-3 w-3" />
-            {readBy.length ? <Icon name="check" className="-ml-1.5 h-3 w-3" /> : null}
-          </span>
+      {/* A single tick, and ONLY while nobody has caught up.
+          "Read" is no longer a tick at all — it is the row of faces below, which
+          says who as well as whether. Two ticks and a column of avatars would be
+          the same fact told twice. */}
+      {showSent ? (
+        <span className="text-faintest" title="Sent — not read yet" aria-label="Sent, not read yet">
+          <Icon name="check" className="h-3 w-3" />
         </span>
       ) : null}
     </>
