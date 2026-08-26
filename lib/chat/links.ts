@@ -187,18 +187,34 @@ export function youtubeEmbedUrl(raw: string): string | null {
 
   if (parsed.protocol !== "https:") return null;
 
-  const hostname = parsed.hostname.toLowerCase().replace(/^www\./, "");
+  const hostname = parsed.hostname.toLowerCase();
+  const cleanHost = hostname.replace(/^www\./, "");
+  const allowed = new Set([
+    "youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtu.be",
+    "youtube-nocookie.com",
+    "www.youtube-nocookie.com",
+  ]);
+
+  if (!allowed.has(cleanHost)) return null;
+
   let videoId: string | null = null;
 
-  if (hostname === "youtu.be") {
+  if (cleanHost === "youtu.be") {
     videoId = parsed.pathname.split("/").filter(Boolean)[0] ?? null;
-  } else if (hostname === "youtube.com" || hostname === "m.youtube.com") {
+  } else if (cleanHost === "youtube.com" || cleanHost === "m.youtube.com" || cleanHost === "music.youtube.com") {
     if (parsed.pathname === "/watch") {
+      if (parsed.searchParams.get("list") || parsed.searchParams.get("index") || parsed.searchParams.get("start")) return null;
       videoId = parsed.searchParams.get("v");
     } else {
-      const match = parsed.pathname.match(/^\/(?:shorts|embed)\/([^/]+)$/);
+      const match = parsed.pathname.match(/^\/(?:shorts|embed|live)\/([^/]+)$/);
       videoId = match?.[1] ?? null;
     }
+  } else if (cleanHost === "youtube-nocookie.com" || cleanHost === "www.youtube-nocookie.com") {
+    const match = parsed.pathname.match(/^\/embed\/([^/]+)$/);
+    videoId = match?.[1] ?? null;
   }
 
   if (!videoId || !/^[A-Za-z0-9_-]{11}$/.test(videoId)) return null;
