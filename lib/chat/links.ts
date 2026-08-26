@@ -176,6 +176,51 @@ export function previewableLink(body: string): string | null {
   return extractLinks(body)[0] ?? null;
 }
 
+/** Returns a safe YouTube embed URL, or null for every other URL shape. */
+export function youtubeEmbedUrl(raw: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== "https:") return null;
+
+  const hostname = parsed.hostname.toLowerCase();
+  const cleanHost = hostname.replace(/^www\./, "");
+  const allowed = new Set([
+    "youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtu.be",
+    "youtube-nocookie.com",
+    "www.youtube-nocookie.com",
+  ]);
+
+  if (!allowed.has(cleanHost)) return null;
+
+  let videoId: string | null = null;
+
+  if (cleanHost === "youtu.be") {
+    videoId = parsed.pathname.split("/").filter(Boolean)[0] ?? null;
+  } else if (cleanHost === "youtube.com" || cleanHost === "m.youtube.com" || cleanHost === "music.youtube.com") {
+    if (parsed.pathname === "/watch") {
+      if (parsed.searchParams.get("list") || parsed.searchParams.get("index") || parsed.searchParams.get("start")) return null;
+      videoId = parsed.searchParams.get("v");
+    } else {
+      const match = parsed.pathname.match(/^\/(?:shorts|embed|live)\/([^/]+)$/);
+      videoId = match?.[1] ?? null;
+    }
+  } else if (cleanHost === "youtube-nocookie.com" || cleanHost === "www.youtube-nocookie.com") {
+    const match = parsed.pathname.match(/^\/embed\/([^/]+)$/);
+    videoId = match?.[1] ?? null;
+  }
+
+  if (!videoId || !/^[A-Za-z0-9_-]{11}$/.test(videoId)) return null;
+  return `https://www.youtube-nocookie.com/embed/${videoId}`;
+}
+
 /**
  * How a long URL is shown in a bubble.
  *

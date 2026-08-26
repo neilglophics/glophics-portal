@@ -6,6 +6,7 @@ import {
   previewableLink,
   safeHref,
   segments,
+  youtubeEmbedUrl,
 } from "../lib/chat/links.ts";
 
 /**
@@ -177,6 +178,34 @@ describe("extractLinks and previewableLink", () => {
   it("is null when there is nothing to preview", () => {
     assert.equal(previewableLink("no links"), null);
     assert.equal(previewableLink("javascript:alert(1)"), null);
+  });
+});
+
+describe("youtubeEmbedUrl", () => {
+  it("supports watch, short, shorts, live, and embed URLs", () => {
+    const id = "dQw4w9WgXcQ";
+    for (const url of [
+      `https://www.youtube.com/watch?v=${id}`,
+      `https://youtu.be/${id}`,
+      `https://m.youtube.com/shorts/${id}`,
+      `https://music.youtube.com/live/${id}`,
+      `https://youtube.com/embed/${id}`,
+    ]) {
+      assert.equal(youtubeEmbedUrl(url), `https://www.youtube-nocookie.com/embed/${id}`);
+    }
+  });
+
+  it("rejects lookalike hosts, insecure URLs, and invalid IDs", () => {
+    for (const url of [
+      "https://evil-youtube.com/watch?v=dQw4w9WgXcQ",
+      "https://youtube.com.evil.test/watch?v=dQw4w9WgXcQ",
+      "http://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      "https://youtu.be/not-a-video!",
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ%22%20onload%3Dalert(1)",
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PL1234567890",
+    ]) {
+      assert.equal(youtubeEmbedUrl(url), null, url);
+    }
   });
 });
 

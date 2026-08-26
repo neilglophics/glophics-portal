@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Icon } from "@/components/ui/Icon";
-import { linkLabel, previewableLink, segments } from "@/lib/chat/links";
+import { linkLabel, previewableLink, segments, youtubeEmbedUrl } from "@/lib/chat/links";
 import { mentionSegments } from "@/lib/chat/mentions";
 import type { LinkPreviewView } from "@/lib/db/queries/link-previews";
 
@@ -167,6 +167,7 @@ function loadPreview(url: string): Promise<LinkPreviewView | null> {
  */
 export function LinkPreviewCard({ body, mine }: { body: string; mine: boolean }) {
   const url = previewableLink(body);
+  const embedUrl = url ? youtubeEmbedUrl(url) : null;
   const [preview, setPreview] = useState<LinkPreviewView | null>(null);
 
   useEffect(() => {
@@ -184,7 +185,7 @@ export function LinkPreviewCard({ body, mine }: { body: string; mine: boolean })
     };
   }, [url]);
 
-  if (!url || !preview) return null;
+  if (!url) return null;
 
   const host = (() => {
     try {
@@ -195,16 +196,30 @@ export function LinkPreviewCard({ body, mine }: { body: string; mine: boolean })
   })();
 
   return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noopener noreferrer nofollow ugc"
-      className={`mt-1.5 block overflow-hidden rounded-xl transition ${
-        mine
-          ? "bg-white/15 hover:bg-white/25"
-          : "bg-surface ring-1 ring-line-2 hover:ring-brand-soft"
-      }`}
-    >
+    <>
+      {embedUrl ? (
+        <div className="mt-1.5 aspect-video overflow-hidden rounded-xl bg-black">
+          <iframe
+            src={embedUrl}
+            title="YouTube video"
+            loading="lazy"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowFullScreen
+            className="h-full w-full border-0"
+          />
+        </div>
+      ) : null}
+      {!preview ? null : (
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer nofollow ugc"
+          className={`mt-1.5 block overflow-hidden rounded-xl transition ${
+            mine
+              ? "bg-white/15 hover:bg-white/25"
+              : "bg-surface ring-1 ring-line-2 hover:ring-brand-soft"
+          }`}
+        >
       {preview.hasImage ? (
         // Through our own proxy, never the remote URL — see the route's comment. A
         // fixed height with object-cover so a card is the same shape whatever
@@ -248,8 +263,10 @@ export function LinkPreviewCard({ body, mine }: { body: string; mine: boolean })
             {preview.description}
           </p>
         ) : null}
-      </div>
-    </a>
+          </div>
+        </a>
+      )}
+    </>
   );
 }
 
