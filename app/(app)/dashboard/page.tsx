@@ -7,7 +7,7 @@ import { ClaimRepoLinks, TicketLink } from "@/components/ui/JiraLinks";
 import { Empty, Page, StatTile } from "@/components/ui/Layout";
 import { RepoStrip } from "@/components/ui/RepoStrip";
 import { Table, Td, Th, Tr } from "@/components/ui/Table";
-import { currentUserOrNull } from "@/lib/auth/require";
+import { can, currentUserOrNull } from "@/lib/auth/require";
 import { getBoard, getJiraIssues } from "@/lib/db/queries/board";
 import { avatarVersions } from "@/lib/db/queries/avatars";
 import { describeJiraConfig, issueUrl } from "@/lib/jira/client";
@@ -385,9 +385,15 @@ export default async function DashboardPage() {
                 ) : null}
               </div>
             </div>
-            <Link href="/tickets" className="text-xs font-semibold text-brand-fg hover:underline">
-              See all
-            </Link>
+            {/* Courtesy, same as the nav entry: /tickets refuses without
+                `all-tickets` anyway, and a link that 403s is worse than no
+                link. The table above it stays — a preview of recent Jira
+                activity is not the same thing as the whole backlog. */}
+            {can(user, "all-tickets") ? (
+              <Link href="/tickets" className="text-xs font-semibold text-brand-fg hover:underline">
+                See all
+              </Link>
+            ) : null}
           </div>
 
           <JiraConflictNotice conflicts={branch_conflicts} jira_base_url={jira_base_url} />

@@ -120,8 +120,55 @@ cache any more. Three things to know before touching it:
   page disagree, so the SQL reimplements `claimIsMine`. Only the *matching* is duplicated —
   `identityValues()` still runs in JS and its strings are passed down as a parameter.
 
-Run `npm run verify:tickets` (103 checks): it walks every page against the unpaged result, and checks
-the SQL filter against `claimIsMine` ticket by ticket for every account that can sign in.
+- **`/my-tickets` also filters by status, and the chips are counted in SQL.** `?status=` goes down
+  next to LIMIT for the same reason `mine` does. The per-status counts come from one `GROUP BY` that
+  also produces the pager's totals, so a chip reading 13 cannot sit above a pager reading 12 — and the
+  chips are deliberately *not* narrowed by the filter, or picking a second status would be impossible.
+  `statusKey()` is the one place a status is normalised; the SQL spells the same thing as
+  `lower(COALESCE(NULLIF(btrim(status), ''), 'Unknown'))`.
+
+- **`/tickets` is gated; `/my-tickets` is not.** Active tickets needs the `all-tickets` capability —
+  `superadmin` and `admin` (`docs/05-DECISIONS.md` **ADR-016**). It is the team's backlog, which is a
+  lead's view; a member gets My tickets, the board and the environments. `requireUser("all-tickets")`
+  runs before any query on that page, the nav entry is gated on the same capability, and reusing
+  `configure` — held by exactly those two roles today — was rejected for ADR-012's reason.
+
+- **The two pages differ in one argument, and it matters.** `/tickets` passes
+  `hideStatuses: settings.jira.ignoredStatuses`; `/my-tickets` passes nothing and shows every status.
+  That list used to be a `status NOT IN (…)` clause in the sync's JQL — so those tickets were never
+  fetched, and My tickets was structurally unable to answer "everything assigned to me". It is now a
+  property of one read (`docs/05-DECISIONS.md` **ADR-014**), and the Settings label says *Hidden from
+  Active tickets* rather than *Never fetched*.
+
+Run `npm run verify:tickets` (~170 checks, the count follows the data): it walks every page against
+the unpaged result, checks the SQL filter against `claimIsMine` ticket by ticket for every account
+that can sign in, checks every status chip against the rows it claims to count, and checks that hiding
+a status removes exactly the rows at it and drops exactly its chip.
+
+**The sync has two shapes of pass, and no status filter.** Every status now reaches the cache, and
+what pays for it is that most passes ask for far less of Jira than they used to
+(`docs/05-DECISIONS.md` **ADR-015**). `planPass()` in `lib/jira/pass.ts` — pure, unit-tested in
+`tests/jira-pass.test.ts` — picks between them:
+
+- **delta**, the once-a-minute poll from an open tab: `updated >= -Nm` since the last successful pass
+  plus a five-minute overlap, **reconciled per key**. It upserts what it saw, drops newly-claimed keys
+  from `jira_issues` (this is what keeps the two tables disjoint), and clears `jira_skipped` for
+  anything it saw that is no longer skipped. What it did not see is left alone.
+- **full**, from the daily cron and both Refresh buttons: `updated >= -30d` and the truncate-and-
+  rebuild every pass used to do. It is the **only** pass that can notice a ticket deleted in Jira, so
+  a deletion can linger for up to a day.
+
+The window is relative (`-Nm`) so Jira evaluates it against its own clock — there is no timezone to
+get wrong. Editing `applySync()`'s transaction means editing two write paths now; the delta one fails
+*stale* rather than *wrong*, which is harder to spot.
+
+**A Jira sync that returns nothing is refused, not applied.** `/rest/api/3/search/jql` answers **200
+with an empty page** when credentials are rejected, not 401 — so an expired token used to read as
+"Jira has no tickets", truncate the whole cache, and report success. `assertJiraAnswered()` in
+`lib/jira/sync.ts` refuses a pass that returned none of the held keys it asked for by name (or, on a
+**full** pass only, nothing at all over a non-empty cache — on a delta pass an empty reply is the
+normal case), probes `/myself` to say which it was, and leaves the board standing with the reason in
+`last_error`. See `docs/05-DECISIONS.md` **ADR-013**.
 
 **The team roster is the board asked by person, and it is superadmin-only.** `/team` answers "what is
 Jerome on, and is anybody free" — the question no environment- or ticket-shaped page can. Four things
@@ -168,7 +215,7 @@ Needs a Neon branch. Copy `.env.example` to `.env.local`, then:
 ```bash
 npm run db:migrate      # apply lib/db/migrations/*.sql
 npm run db:import       # load shared-data/ + config/auth.json into Postgres
-npm test                # 284 tests, node:test via tsx
+npm test                # 319 tests, node:test via tsx
 npm run typecheck
 ```
 

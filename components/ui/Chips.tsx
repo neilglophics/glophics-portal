@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ENV_STATE, HEALTH, jiraChip, roleChip } from "@/lib/shared/tokens";
 import { roleLabel } from "@/lib/shared/roles";
 import type { EnvStatus, RepoHealth } from "@/lib/types";
@@ -97,4 +98,48 @@ export function Muted({ children }: { children: React.ReactNode }) {
 /** The em-dash placeholder used wherever a cell has nothing to show. */
 export function Dash() {
   return <span className="text-sm text-faintest">—</span>;
+}
+
+/**
+ * The same control as FilterChip, but as a LINK — for a filter that lives in the
+ * URL rather than in component state.
+ *
+ * That is the shape every server-rendered filter in this app wants: a narrowed
+ * view is shareable, survives a reload, and the back button undoes it, all
+ * without the page becoming a client component. app/(app)/health/page.tsx
+ * reasons this through at length and grew its own copy first; this is that pill
+ * generalised, taking a ready-made href so it knows nothing about routes.
+ */
+export function FilterLink({
+  href,
+  label,
+  count,
+  active,
+  dot,
+}: {
+  href: string;
+  label: string;
+  /** Omitted where there is nothing to count — an "All" chip on a list that
+   *  already says its own total, for instance. */
+  count?: number;
+  active: boolean;
+  /** A colour dot, for filters whose values have a colour of their own. */
+  dot?: string;
+}) {
+  return (
+    <Link
+      href={href}
+      aria-current={active ? "true" : undefined}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 py-1.5 text-[11px] font-semibold transition ${
+        active ? "bg-accent text-on-accent" : "bg-surface text-muted ring-1 ring-line-2 hover:text-ink"
+      }`}
+    >
+      {dot ? <span className={`h-1.5 w-1.5 rounded-full ${dot}`} /> : null}
+      {/* The count rides in the label rather than in a pill of its own: a pill
+          would need a background that works on `bg-accent` as well as on
+          `bg-surface`, and every colour that does is a literal one. */}
+      {label}
+      {count === undefined ? "" : ` ${count}`}
+    </Link>
+  );
 }

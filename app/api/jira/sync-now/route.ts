@@ -18,7 +18,10 @@ export const maxDuration = 60;
 export const POST = withApi(async () => {
   await requireUser("view");
 
-  const result = await runJiraSync(true);
+  // FULL, not incremental. Somebody pressing a button is asking "is this list
+  // everything?", and only a rebuild can answer that — it is also the pass that
+  // drops tickets deleted in Jira. It costs what every pass used to cost.
+  const result = await runJiraSync(true, "full");
 
   if (result.ok) {
     await notifyJiraSync({

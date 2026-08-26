@@ -15,7 +15,10 @@ export type Capability =
   | "manage-users"
   | "chat"
   /** Read the whole team's workload — /team. Superadmin only; see ADR-012. */
-  | "oversee";
+  | "oversee"
+  /** Read every ticket on the board, not just your own — /tickets. Admin and
+   *  above; see ADR-016. `view` still gets My tickets and the environments. */
+  | "all-tickets";
 export type RoleId = "superadmin" | "admin" | "member" | "viewer";
 
 // ---------- derived status ----------

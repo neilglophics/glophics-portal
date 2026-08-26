@@ -15,6 +15,7 @@
  *   manage-users  create sign-in credentials and hand out roles
  *   chat          send messages  (new — see docs/06-OPEN-QUESTIONS.md Q2)
  *   oversee       read the whole team's workload  (see docs/05-DECISIONS.md ADR-012)
+ *   all-tickets   read every ticket on the board  (see docs/05-DECISIONS.md ADR-016)
  *
  * Ordered most-privileged first; the pickers render them in this order.
  */
@@ -34,18 +35,22 @@ export const AUTH_ROLES: readonly Role[] = [
     label: "Super admin",
     description:
       "Full access, plus creating sign-in credentials, handing out roles, and seeing the whole team's workload.",
-    capabilities: ["view", "claim", "configure", "manage-users", "chat", "oversee"],
+    capabilities: ["view", "claim", "configure", "manage-users", "chat", "oversee", "all-tickets"],
   },
   {
     id: "admin",
     label: "Admin",
-    description: "Everything except managing who can sign in.",
-    capabilities: ["view", "claim", "configure", "chat"],
+    description:
+      "Everything except managing who can sign in. Sees every ticket on the board, not just their own.",
+    capabilities: ["view", "claim", "configure", "chat", "all-tickets"],
   },
   {
+    // No `all-tickets` (ADR-016): a member reads the board, the environments and
+    // their OWN queue. Active tickets is the whole team's backlog, which is a
+    // lead's view of the work rather than a participant's.
     id: "member",
     label: "Member",
-    description: "Can claim and free environments, write notes, and chat.",
+    description: "Can claim and free environments, write notes, and chat. Sees their own tickets.",
     capabilities: ["view", "claim", "chat"],
   },
   {

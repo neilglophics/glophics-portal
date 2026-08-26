@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Icon } from "@/components/ui/Icon";
 import { useToast } from "@/components/ui/Toaster";
-import { realtimeHeaders } from "@/lib/realtime/client";
+import { requestJiraSync } from "@/lib/jira/sync-now-client";
 import { agoText } from "@/lib/shared/format";
 
 /**
@@ -15,58 +15,11 @@ import { agoText } from "@/lib/shared/format";
  * is stale is the moment you want to act on it, and until now that meant
  * navigating to Settings to find **Sync now**.
  *
- * ── Why every signed-in person may press it ──
- *
- * POST /api/jira/sync-now asks only for `view`, and deliberately: pulling
- * sooner shows nothing a viewer could not already have seen a minute later. The
- * legacy app reasoned the same way. So there is no capability check here — the
- * server is still the boundary (invariant 3), it just draws it at `view`.
- *
- * ── Why it forces ──
- *
- * The route runs `runJiraSync(true)`. A person pressing a button wants an
- * answer, not the server's opinion about whether one is due — that is what the
- * cron and the dashboard's JiraAutoSync are for, and both of those pass false so
- * several open tabs coalesce into one call. Cron cannot go below a minute, so
- * this button is the only route to sub-minute freshness.
- *
- * `realtimeHeaders()` carries this tab's socket id, so the sync event it causes
- * comes back to everyone *else* — this tab already knows, and refreshes itself.
+ * The request itself, and the wording of every outcome it can have, live in
+ * lib/jira/sync-now-client.ts — including why a forced sync is the right thing
+ * for a button and why `view` is enough to press one. My tickets has a second
+ * button onto the same call, and the two must say the same things.
  */
-
-type Reason = "disabled" | "auto-sync-off" | "not-configured" | "throttled" | "error";
-
-interface SyncResponse {
-  ok?: boolean;
-  reason?: Reason;
-  error?: string;
-  issueCount?: number;
-  claimed?: number;
-  released?: number;
-  skippedCount?: number;
-}
-
-/** Why a sync did nothing, said in terms of what to do about it. `error`
- *  carries Jira's own message, so it falls through to the response. */
-const REASONS: Record<Exclude<Reason, "error">, string> = {
-  disabled: "Jira is switched off. Turn it on under Settings › Jira.",
-  "not-configured": "Jira credentials are not set on this deployment.",
-  // Neither can happen on a forced sync. Said plainly anyway rather than left to
-  // fall through as a silent success, which would read as "nothing changed".
-  "auto-sync-off": "Scheduled sync is off, and this request did not force one.",
-  throttled: "Synced a moment ago — showing that result.",
-};
-
-function outcomeText(data: SyncResponse): string {
-  const parts = [`${data.issueCount ?? 0} ticket${data.issueCount === 1 ? "" : "s"} read`];
-  if (data.claimed) parts.push(`${data.claimed} claimed`);
-  if (data.released) parts.push(`${data.released} released`);
-  if (data.skippedCount) parts.push(`${data.skippedCount} not tracked`);
-  // Worth saying out loud: a sync that changed nothing is the normal case, and
-  // silence about it reads as the button not having worked.
-  if (parts.length === 1) parts.push("nothing changed");
-  return parts.join(" · ");
-}
 
 export function SyncButton({
   jiraEnabled,
@@ -91,29 +44,14 @@ export function SyncButton({
     if (busy || !jiraEnabled) return;
     setBusy(true);
 
-    const response = await fetch("/api/jira/sync-now", {
-      method: "POST",
-      headers: realtimeHeaders(),
-    }).catch(() => null);
-    const data = (await response?.json().catch(() => null)) as SyncResponse | null;
+    const outcome = await requestJiraSync();
 
     setBusy(false);
 
     // One key for all of them, so a run of impatient presses replaces its own
     // toast instead of stacking four.
-    if (!response || !data?.ok) {
-      toast.show({
-        key: "jira:sync-now",
-        title: "Jira sync didn't run",
-        body:
-          data?.error ??
-          (data?.reason && data.reason !== "error" ? REASONS[data.reason] : null) ??
-          "Couldn't reach the server.",
-      });
-      return;
-    }
-
-    toast.show({ key: "jira:sync-now", title: "Jira synced", body: outcomeText(data) });
+    toast.show({ key: "jira:sync-now", title: outcome.title, body: outcome.body });
+    if (!outcome.ok) return;
 
     // The board renders from Postgres and the sync wrote to Postgres, so a
     // refresh is how this tab sees it. Other tabs get the realtime event.

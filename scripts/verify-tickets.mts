@@ -19,6 +19,19 @@
  *      is checked ticket by ticket, for every account that can sign in — and for
  *      an empty identity set, which must match nothing rather than everything.
  *
+ *   3. THE STATUS CHIPS. The counts behind them come from a GROUP BY, and the
+ *      rows they claim to count come from a WHERE — two different expressions
+ *      that have to file every row the same way, and both have to agree with
+ *      statusKey() in JS. A chip reading 13 above a pager reading 12 is the
+ *      failure this catches, and it is checked for the whole board and again
+ *      for each signed-in person's own list.
+ *
+ *   4. THE HIDE LIST. `ignoredStatuses` used to be a `status NOT IN (…)` clause
+ *      in the sync's JQL; it is now a `hideStatuses` argument to this query, and
+ *      Active tickets is the only reader that passes it (ADR-014). So it is
+ *      checked the same way: the rows it removes must be exactly the rows at
+ *      those statuses, and no chip may offer a cut it would then refuse.
+ *
  * Read-only: it takes no locks and writes nothing.
  */
 
@@ -28,8 +41,9 @@ loadEnv();
 requireEnv("DATABASE_URL");
 
 const { getBoard, getJiraIssues } = await import("@/lib/db/queries/board");
-const { getTicketPage } = await import("@/lib/db/queries/tickets");
+const { getTicketPage, statusKey } = await import("@/lib/db/queries/tickets");
 const { listAuthUsers } = await import("@/lib/db/queries/auth");
+const { getSettings } = await import("@/lib/db/queries/board");
 const { claimIsMine, identityValues } = await import("@/lib/shared/mine");
 const { TICKETS_PER_PAGE } = await import("@/lib/shared/pagination");
 const { boardRows, claimRows } = await import("@/lib/shared/view-model");
@@ -86,13 +100,15 @@ const sortKeys = (rows: { claim: { endTime?: string | null } }[]): string[] =>
 /** Walk every page of a query and return the keys in the order they appeared. */
 async function walk(
   mine: string[] | null,
+  status: string | null = null,
+  hideStatuses: string[] | null = null,
 ): Promise<{ keys: string[]; rows: TicketRow[]; totals: string }> {
-  const first = await getTicketPage({ page: 1, mine });
+  const first = await getTicketPage({ page: 1, mine, status, hideStatuses });
   const keys: string[] = [];
   const all: TicketRow[] = [];
 
   for (let p = 1; p <= first.position.pageCount; p += 1) {
-    const page = p === 1 ? first : await getTicketPage({ page: p, mine });
+    const page = p === 1 ? first : await getTicketPage({ page: p, mine, status, hideStatuses });
 
     check(
       `page ${p} reports itself as page ${p}`,
@@ -274,6 +290,225 @@ async function walk(
     );
     console.log(`  ${label}`);
   }
+}
+
+// ----------------------------------------------------------- the status chips
+
+{
+  console.log("\n── The status chips against the rows they count ──");
+
+  const all = [
+    ...claimRows(environments, accounts, claims, directory),
+    ...boardRows(issues, environments, accounts, directory),
+  ];
+  const first = await getTicketPage({ page: 1 });
+
+  const chipTotal = first.statuses.reduce((n, entry) => n + entry.total, 0);
+  check(
+    "the chips add up to the whole list",
+    chipTotal === first.position.total,
+    `${chipTotal} across ${first.statuses.length} chip(s) vs ${first.position.total} rows`,
+  );
+
+  // Every row is filed under exactly one chip, and statusKey() is what files
+  // it. This is the JS side of the GROUP BY expression.
+  const js = new Map<string, number>();
+  for (const row of all) js.set(statusKey(row.claim.status), (js.get(statusKey(row.claim.status)) ?? 0) + 1);
+
+  check(
+    "SQL and statusKey() bucket the board identically",
+    first.statuses.length === js.size && first.statuses.every((e) => js.get(e.key) === e.total),
+    `SQL ${first.statuses.map((e) => `${e.key}=${e.total}`).join(", ")}` +
+      `\n      JS  ${[...js].map(([k, n]) => `${k}=${n}`).join(", ")}`,
+  );
+
+  const chipKeys = first.statuses.map((e) => e.key).join("|");
+
+  for (const entry of first.statuses) {
+    // The GROUP BY says how many; the WHERE says which. They are different
+    // expressions over the same column, so both are checked against the rows.
+    const expected = keysOf(all.filter((row) => statusKey(row.claim.status) === entry.key));
+    const filtered = await getTicketPage({ page: 1, status: entry.key });
+    const { keys } = await walk(null, entry.key);
+
+    check(
+      `${entry.status}: the chip count is the pager's total`,
+      filtered.position.total === entry.total,
+      `chip ${entry.total} vs pager ${filtered.position.total}`,
+    );
+    check(
+      `${entry.status}: every page of the filter is exactly the rows at it`,
+      [...keys].sort().join("|") === [...expected].sort().join("|"),
+      `SQL ${keys.length} vs JS ${expected.length}`,
+    );
+    check(
+      `${entry.status}: holding + issues splits the same way the blocks do`,
+      entry.holding === filtered.holdingTotal && entry.issues === filtered.issueTotal,
+      `chip ${entry.holding}/${entry.issues} vs page ${filtered.holdingTotal}/${filtered.issueTotal}`,
+    );
+    // The chip row must NOT narrow under its own filter, or every other chip
+    // would read zero and picking a second status would be impossible.
+    check(
+      `${entry.status}: the chips still list every status`,
+      filtered.statuses.map((e) => e.key).join("|") === chipKeys,
+      `${filtered.statuses.length} chip(s) under the filter vs ${first.statuses.length}`,
+    );
+  }
+
+  // A status straight off a URL: any casing, and possibly one nobody is at.
+  if (first.statuses.length) {
+    const one = first.statuses[0]!;
+    const shouted = await getTicketPage({ page: 1, status: one.status.toUpperCase() });
+    check(
+      "the filter is case-insensitive, as Jira's own casing requires",
+      shouted.position.total === one.total,
+      `${shouted.position.total} vs ${one.total}`,
+    );
+  }
+
+  const bogus = await getTicketPage({ page: 1, status: "no status anybody is at" });
+  check(
+    "a status nobody is at is an empty page, not an error",
+    bogus.position.total === 0 && bogus.claims.length === 0 && bogus.issues.length === 0,
+    `${bogus.position.total} rows`,
+  );
+  check(
+    "and it still offers the chips to get back out of it",
+    bogus.statuses.map((e) => e.key).join("|") === chipKeys,
+  );
+
+  console.log(`  ${first.statuses.length} status(es): ${first.statuses.map((e) => `${e.status} ${e.total}`).join(", ")}`);
+}
+
+// -------------------------------------------- both filters at once, per person
+
+{
+  console.log("\n── `mine` and `status` together ──");
+
+  const users = await listAuthUsers();
+
+  for (const user of users) {
+    const values = identityValues(user, directory);
+    const mine = [...values];
+    const theirs = [
+      ...claimRows(environments, accounts, claims, directory),
+      ...boardRows(issues, environments, accounts, directory),
+    ].filter((row) => claimIsMine(row.claim, values, directory));
+
+    const page = await getTicketPage({ page: 1, mine });
+
+    // Their chips are counted over THEIR list, not the board's.
+    const js = new Map<string, number>();
+    for (const row of theirs) js.set(statusKey(row.claim.status), (js.get(statusKey(row.claim.status)) ?? 0) + 1);
+
+    check(
+      `${user.username}: the chips bucket only their own tickets`,
+      page.statuses.length === js.size && page.statuses.every((e) => js.get(e.key) === e.total),
+      `SQL ${page.statuses.map((e) => `${e.key}=${e.total}`).join(", ") || "—"}` +
+        `\n      JS  ${[...js].map(([k, n]) => `${k}=${n}`).join(", ") || "—"}`,
+    );
+
+    for (const entry of page.statuses) {
+      const expected = keysOf(theirs.filter((row) => statusKey(row.claim.status) === entry.key));
+      const { keys } = await walk(mine, entry.key);
+      check(
+        `${user.username} · ${entry.status}: both filters narrow together`,
+        [...keys].sort().join("|") === [...expected].sort().join("|"),
+        `SQL ${keys.length} vs JS ${expected.length}`,
+      );
+    }
+
+    console.log(
+      `  ${user.username}: ${page.statuses.map((e) => `${e.status} ${e.total}`).join(", ") || "nothing assigned"}`,
+    );
+  }
+}
+
+// --------------------------------------------------------------- the hide list
+
+{
+  console.log("\n── `hideStatuses`, the rule that used to live in the JQL ──");
+
+  const all = [
+    ...claimRows(environments, accounts, claims, directory),
+    ...boardRows(issues, environments, accounts, directory),
+  ];
+  const first = await getTicketPage({ page: 1 });
+
+  // Nothing to hide must hide nothing. Both spellings of "nothing" reach this
+  // query — Settings can hold an empty list, and My tickets passes null.
+  for (const [label, hideStatuses] of [["null", null], ["an empty list", []]] as const) {
+    const page = await getTicketPage({ page: 1, hideStatuses });
+    check(
+      `${label} hides nothing`,
+      page.position.total === first.position.total,
+      `${page.position.total} vs ${first.position.total}`,
+    );
+  }
+
+  for (const entry of first.statuses) {
+    const hidden = await getTicketPage({ page: 1, hideStatuses: [entry.key] });
+    const expected = keysOf(all.filter((row) => statusKey(row.claim.status) !== entry.key));
+
+    check(
+      `hiding ${entry.status} removes exactly its ${entry.total} row(s)`,
+      hidden.position.total === first.position.total - entry.total,
+      `${hidden.position.total} vs ${first.position.total} - ${entry.total}`,
+    );
+    check(
+      `hiding ${entry.status} drops its chip`,
+      !hidden.statuses.some((e) => e.key === entry.key),
+      `chips: ${hidden.statuses.map((e) => e.key).join(", ")}`,
+    );
+    check(
+      `hiding ${entry.status}: the chips still add up to the pager`,
+      hidden.statuses.reduce((n, e) => n + e.total, 0) === hidden.position.total,
+    );
+
+    const { keys } = await walk(null, null, [entry.key]);
+    check(
+      `hiding ${entry.status}: every page is exactly the rows NOT at it`,
+      [...keys].sort().join("|") === [...expected].sort().join("|"),
+      `SQL ${keys.length} vs JS ${expected.length}`,
+    );
+  }
+
+  // The real list, in the casing Settings stores it in — the case that actually
+  // ships. `statusKey()` inside getTicketPage() is what makes it match.
+  const settings = await getSettings();
+  const configured = settings.jira.ignoredStatuses.filter(Boolean);
+  const shipped = await getTicketPage({ page: 1, hideStatuses: configured });
+  const survivors = all.filter(
+    (row) => !configured.map(statusKey).includes(statusKey(row.claim.status)),
+  );
+
+  check(
+    "the configured list matches Jira's own casing",
+    shipped.position.total === survivors.length,
+    `${shipped.position.total} vs ${survivors.length}`,
+  );
+  const { keys: shippedKeys } = await walk(null, null, configured);
+  check(
+    "Active tickets shows exactly what is not at a hidden status",
+    [...shippedKeys].sort().join("|") === [...keysOf(survivors)].sort().join("|"),
+  );
+
+  // Hiding everything is a legitimate, if silly, configuration: it must empty
+  // the board rather than fall through to showing all of it.
+  const nothingLeft = await getTicketPage({
+    page: 1,
+    hideStatuses: first.statuses.map((e) => e.key),
+  });
+  check(
+    "hiding every status leaves an empty board, not a full one",
+    nothingLeft.position.total === 0 && nothingLeft.statuses.length === 0,
+    `${nothingLeft.position.total} rows, ${nothingLeft.statuses.length} chip(s)`,
+  );
+
+  console.log(
+    `  Settings hides ${configured.join(", ") || "nothing"} — ` +
+      `${first.position.total} row(s) on the board, ${shipped.position.total} on Active tickets`,
+  );
 }
 
 // ----------------------------------------------------------------- the report

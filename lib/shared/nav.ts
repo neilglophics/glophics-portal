@@ -33,7 +33,9 @@ export interface NavCounts {
 
 export const NAV: readonly NavItem[] = [
   { group: "overview", href: "/dashboard", label: "Dashboard", icon: "grid" },
-  { group: "overview", href: "/tickets", label: "Active tickets", icon: "list", badge: "claims" },
+  // Admin and above (ADR-016). The badge goes with it: a count of a list you
+  // cannot open is a question with no way to answer it.
+  { group: "overview", href: "/tickets", label: "Active tickets", icon: "list", badge: "claims", requires: "all-tickets" },
   { group: "overview", href: "/my-tickets", label: "My tickets", icon: "users", badge: "myTickets" },
   // Superadmin only. No badge: the shell renders on every page, and a count
   // here would mean the roster aggregate runs for every request of every

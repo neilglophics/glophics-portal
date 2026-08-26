@@ -297,3 +297,164 @@ and not messages.
 "superadmin" is now two separable things and somebody could grant one without the other — that is a
 feature, but it does mean the capability list is the thing to read, not the role name. There is no
 audit log of who looked; if that is ever wanted it is a new decision, not an extension of this one.
+
+---
+
+## ADR-013 — A Jira pass that returns nothing is not believed
+
+**Status:** Accepted
+
+**Context.** `applySync()` rebuilds the derived cache from scratch every pass: `TRUNCATE jira_issues`,
+then re-insert whatever the search returned. That is deliberate (ADR-010 — the cache is not a source of
+truth) and it is fine as long as the reply is an *answer*.
+
+It is not always an answer. `/rest/api/3/search/jql` responds **200 with an empty page** when the
+credentials are rejected, rather than 401. So an expired API token is indistinguishable, at the call
+site, from "Jira has no tickets": the sync truncated the cache, wrote `last_sync_at = now()` and
+`last_error = NULL`, and every ticket list in the app went empty with nothing anywhere saying why. The
+header pill still read "Synced 1m ago". This happened; it is not a hypothetical.
+
+Claims survived only by accident — a ticket has to be *seen* at a releasing status to be released, and
+nothing was seen — so the board kept its 11 held environments while losing all 140 cached issues.
+
+**Decision.** Before `applySync()` runs, `assertJiraAnswered()` rejects a pass that cannot be an
+answer, and the sync fails with a recorded `last_error` instead of writing:
+
+- not one of the **held keys** came back, when held keys were asked for by name; or
+- **nothing at all** came back, over a cache that had rows.
+
+Held keys are the load-bearing half. Rule 2 of the sync is that they are re-fetched **by name** every
+pass whatever their status, so asking for eleven and being handed none is a failure to answer rather
+than news about those eleven tickets. One deleted ticket does not trip it; all of them vanishing at
+once does, and refusing to act is the safe direction either way.
+
+When it trips, `/myself` is probed once — only in this branch, so the normal path costs what it always
+did — so the recorded error can say *"Jira rejected the credentials"* rather than *"Jira returned
+nothing"*.
+
+**Why not simply "never truncate to empty".** Because an empty board is a legitimate state (a small
+team, an aggressive ignored-status list), and a rule that refuses it would eventually be wrong and
+unexplainable. The held-key test asks a question that has one correct answer.
+
+**Consequences.** A genuine mass deletion in Jira now needs a human: the sync will refuse until at
+least one held ticket is visible again, or until the claims holding those keys are released by hand.
+That is the trade — a stuck board that says why, over an empty one that says nothing. The cost is one
+extra request on the failing path.
+
+---
+
+## ADR-014 — `ignoredStatuses` hides rows; it no longer narrows the search
+
+**Status:** Accepted
+
+**Context.** The sync's JQL carried `status NOT IN ("OPEN", "TO REVIEW", "ON HOLD", "CANCELLED",
+"DONE", "CLOSED")`. The setting was labelled *Never fetched*, and it meant it: a ticket at one of
+those statuses was not filtered out of a page, it never entered the database.
+
+That is fine for Active tickets, whose entire claim is "what is being worked on". It is fatal for My
+tickets, whose claim is "everything assigned to you". A person's own closed, cancelled and
+not-yet-started work was not hidden from that page — it had never been fetched, so no filter, chip or
+button on the page could have brought it back. One page's editorial opinion was being enforced at the
+data layer, where every other page inherited it.
+
+**Decision.** The list means **"hidden from Active tickets"**. Its enforcement moves from the JQL to
+`hideStatuses` on `getTicketPage()` (`lib/db/queries/tickets.ts`), which `/tickets` passes and
+`/my-tickets` deliberately does not. The Settings label changes from *Never fetched* to *Hidden from
+Active tickets*, and says in as many words that the tickets are still fetched and still on My tickets.
+
+**Why not a second list.** A new "hidden" setting beside the old "ignored" one would have left two
+lists that mean almost the same thing, and the first person to edit the wrong one would get a page
+that disagrees with itself for a reason nothing on screen explains. There is one list; what changed is
+where it is applied.
+
+**Consequences.** The sync carries strictly more of Jira than it did, which is paid for by
+[ADR-015](#adr-015--sync-passes-are-incremental-with-a-daily-full-rebuild). The rule is now a property
+of a read, so it is checked like every other one: `npm run verify:tickets` asserts that hiding a status
+removes exactly the rows at it and drops exactly its chip.
+
+The remaining bound on "everything assigned to me" is the search window — a ticket Jira has not touched
+in 30 days is not in the cache — and My tickets says so under its chips rather than letting an absence
+speak for itself.
+
+---
+
+## ADR-015 — Sync passes are incremental, with a daily full rebuild
+
+**Status:** Accepted
+
+**Context.** Every pass re-read `updated >= -30d` and rebuilt the derived tables from the result:
+`TRUNCATE jira_issues`, then re-insert. With `pollIntervalMinutes = 1` and a browser tab open, that is
+several hundred issues fetched, parsed and written every sixty seconds to discover that two of them
+moved.
+
+It was affordable only because the search was also cut down to a handful of statuses — and
+[ADR-014](#adr-014--ignoredstatuses-hides-rows-it-no-longer-narrows-the-search) removes that cut. Left
+alone, the ordinary pass would have got heavier at exactly the moment it needed to get lighter.
+
+**Decision.** Two shapes of pass, chosen by `planPass()` in `lib/jira/pass.ts`:
+
+- **delta** — `updated >= -Nm`, where N is the gap since the last successful pass plus a five-minute
+  overlap. It **reconciles per key**: upsert what it saw, drop from `jira_issues` anything that has
+  just become a claim, drop from `jira_skipped` anything it saw that is no longer skipped. Tickets it
+  did not see are left exactly as they were. This is the once-a-minute poll.
+- **full** — `updated >= -30d`, and the truncate-and-rebuild that every pass used to do. The daily
+  cron and both Refresh buttons ask for one, as does a first sync or one following a gap wider than
+  the window itself.
+
+The window is **relative** (`-Nm`), not an absolute timestamp, so Jira evaluates it against its own
+clock and there is no timezone or format to get wrong. The five-minute overlap covers clock skew and
+the seconds a pass itself takes, and closes the only hole a delta pass can have: an update landing
+between one pass reading and the next one starting.
+
+**Why a full pass still exists.** A delta pass can only add to and update what is cached. A ticket
+**deleted** in Jira appears in no search, so nothing tells an incremental pass to forget it; only a
+rebuild drops it. The daily cron bounds that staleness at 24 hours, and the Refresh button ends it on
+demand.
+
+**Consequences.** The ordinary pass falls from ~500 issues to however many changed in a minute — often
+none but the held keys, which are asked for by name in every window. Against that, a deleted ticket can
+linger for a day, and `applySync()` is now two write paths instead of one, which is the thing most
+likely to rot: the delta path is where a mistake shows up as *stale* rather than as *wrong*, and stale
+is harder to notice.
+
+`planPass()` and `buildJql()` were split into `lib/jira/pass.ts` — pure, no database, no network —
+precisely so this arithmetic is unit-testable without a live Jira. `tests/jira-pass.test.ts` covers
+the rounding, both fallbacks and the parenthesisation of the window.
+
+---
+
+## ADR-016 — `all-tickets`: Active tickets is admin and above
+
+**Status:** Accepted
+
+**Context.** `/tickets` is the whole team's backlog — every claim holding a repository, then every
+other issue the last sync saw. It answers "what is the team working on", which is a lead's question.
+A member's question is "what am I working on", and `/my-tickets` answers that one.
+
+Until now the page was open to anyone with `view`, i.e. everybody.
+
+**Decision.** A new capability, `all-tickets`, granted to `superadmin` and `admin`. Checked by
+`requireUser("all-tickets")` at the top of the page's Server Component — before any query runs — and
+by `requires: "all-tickets"` on the nav entry, which takes the `claims` badge with it.
+
+**Why not reuse `configure`.** It is held by exactly `superadmin` and `admin` today, so it would have
+been a zero-line change and produced exactly the right behaviour. It is the same shortcut
+[ADR-012](#adr-012--oversee-a-sixth-capability-for-the-team-task-viewer) rejected, for the same
+reason: `configure` means *can change settings and credentials*. Reading the team's backlog is a
+different power that happens to belong to the same people right now, and conflating them means the day
+`member` is given `configure` — a plausible, small decision — this page silently widens with it and
+nobody reviewing that change would see it coming.
+
+**Why not `oversee`.** That is narrower on purpose and stays narrower: an admin may read the backlog,
+but only a superadmin sees it broken down per person on `/team`. Two oversight capabilities, one tier
+apart, is the shape that lets either move without dragging the other.
+
+**Consequences.** A member or viewer following an old `/tickets` link gets a 403 from `requireUser()`,
+rendered by Next's default error page — the same behaviour `/team` has had since ADR-012, and the same
+place a nicer 403 page would have to be added for both. The dashboard's *See all* link is hidden for
+them; the "Latest Jira updates" table above it stays, because a preview of recent Jira activity is not
+the same thing as the whole backlog and nobody has asked for that to be private.
+
+Nothing about what a member can *do* changed — they keep `view` and `claim`, so the board, the
+environments and their own queue are untouched. Widening to `member` later is one array entry in
+`AUTH_ROLES`, which is the point.

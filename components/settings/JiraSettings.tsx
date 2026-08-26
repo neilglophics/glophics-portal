@@ -92,6 +92,7 @@ export function JiraSettings({
     } as Partial<JiraSettingsShape>);
   }
 
+  /** Toggles a status in the hide list — read by Active tickets, not by the sync. */
   function toggleIgnored(status: string) {
     const inList = jira.ignoredStatuses.some((s) => s.toLowerCase() === status.toLowerCase());
     save({
@@ -277,7 +278,7 @@ export function JiraSettings({
           </div>
 
           <div>
-            <p className="text-[11px] font-semibold text-muted">Never fetched</p>
+            <p className="text-[11px] font-semibold text-muted">Hidden from Active tickets</p>
             <div className="mt-2 flex flex-wrap gap-1.5">
               {JIRA_STATUS_VOCABULARY.map((status) => (
                 <button
@@ -296,10 +297,14 @@ export function JiraSettings({
               ))}
             </div>
             <p className="mt-2 text-[11px] leading-relaxed text-faint">
-              A ticket parked at one of these is not waiting on an environment, so it is cut in the
-              query rather than fetched and filed away. The exception is a ticket already holding
-              repositories — its key is always asked for by name, because reaching one of these is
-              often exactly how a claim ends.
+              A ticket parked at one of these is not being worked on, so it is left off{" "}
+              <strong>Active tickets</strong> — which asks what is in progress, not what exists.
+            </p>
+            <p className="mt-2 text-[11px] leading-relaxed text-faint">
+              It is still <em>fetched</em>, and still on <strong>My tickets</strong>. This list used
+              to be cut out of the Jira query itself, which meant a person could not see their own
+              closed or not-yet-started work anywhere in the app. Hiding a row and never reading it
+              are different things, and only the first of them belongs to a preference.
             </p>
           </div>
         </div>

@@ -168,6 +168,24 @@ describe("roleCan", () => {
     assert.equal(roleCan("member", "chat"), true);
   });
 
+  it("keeps Active tickets to admin and above, per ADR-016", () => {
+    // /tickets is the whole team's backlog. Everyone still gets `view`, which
+    // is My tickets and the environments — losing this list is not losing the
+    // board.
+    assert.equal(roleCan("superadmin", "all-tickets"), true);
+    assert.equal(roleCan("admin", "all-tickets"), true);
+    assert.equal(roleCan("member", "all-tickets"), false);
+    assert.equal(roleCan("viewer", "all-tickets"), false);
+
+  });
+
+  it("keeps the team roster narrower than Active tickets", () => {
+    // Two oversight capabilities, deliberately not the same one: an admin reads
+    // the backlog, only a superadmin reads it broken down per person.
+    assert.equal(roleCan("admin", "all-tickets"), true);
+    assert.equal(roleCan("admin", "oversee"), false);
+  });
+
   it("fails closed on an unknown or absent role", () => {
     // A typo in a stored role must grant nothing rather than default to
     // something permissive.

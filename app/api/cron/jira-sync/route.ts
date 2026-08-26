@@ -21,7 +21,9 @@ export const GET = withApi(async (req: Request) => {
 
   // force: true — the schedule *is* the throttle now, so honouring
   // pollIntervalMinutes here as well would just skip runs.
-  const result = await runJiraSync(true);
+  // The daily FULL rebuild. Every other pass is incremental and therefore
+  // cannot notice a ticket deleted in Jira — this is the one that drops it.
+  const result = await runJiraSync(true, "full");
 
   if (result.ok) {
     await notifyJiraSync({

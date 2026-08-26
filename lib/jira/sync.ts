@@ -19,10 +19,37 @@
  *      the sync would stop seeing held tickets, and an environment would stay
  *      held forever with no way for Jira to say otherwise.
  *
+ *      That rule is also what makes a broken pass detectable: if not one of the
+ *      keys we asked for by name came back, the search did not answer, and
+ *      assertJiraAnswered() refuses to let applySync() TRUNCATE the cache on
+ *      the strength of it. Read that function before touching this file — a
+ *      rejected API token comes back as 200-with-no-issues, not as 401.
+ *
  * The search window (`updated >= -30d`) is a practical bound, not a guarantee: a
  * claim still open but untouched in Jira for 30+ days will not be re-confirmed,
  * but it will not be silently dropped either — it stays claimed until the ticket
  * is updated again or somebody forces it free.
+ *
+ * ── Two shapes of pass, and no status filter ──
+ *
+ * Every status now reaches the cache. `ignoredStatuses` used to be cut out of
+ * the SEARCH, which meant a person's own OPEN or DONE tickets were not hidden
+ * from My tickets so much as never fetched; the list is now applied at read
+ * time by lib/db/queries/tickets.ts and means "hidden from Active tickets".
+ * ADR-014 records that, and ./pass.ts says it again where the clause used to be.
+ *
+ * Carrying more of Jira is paid for by asking for less of it each pass:
+ *
+ *   - a FULL pass reads `updated >= -30d` and REBUILDS the derived tables. The
+ *     daily cron and the Refresh buttons ask for one. It is the only pass that
+ *     can notice a ticket deleted in Jira, because a deleted ticket is in no
+ *     search result and only a rebuild drops it.
+ *   - a DELTA pass reads `updated >= -Nm` — the gap since the last successful
+ *     pass, plus an overlap — and RECONCILES per key. That is the once-a-minute
+ *     poll, and on a quiet minute it reads nothing but the held keys.
+ *
+ * planPass() in ./pass.ts picks between them and explains the edges; the
+ * transaction at the bottom of applySync() is where the difference lands.
  */
 
 import { sql, withTransaction } from "@/lib/db/client";
@@ -36,8 +63,10 @@ import {
   normalizeBaseUrl,
   issueUrl,
   pickFieldValue,
+  testConnection,
   type JiraConfig,
 } from "./client";
+import { buildJql, planPass, type SyncMode } from "./pass";
 import {
   findServerForTicket,
   matchRepositoriesToKeys,
@@ -62,16 +91,13 @@ import { jiraNotificationChanges, type JiraNotificationTicket } from "./notifica
 import { publishBatch, userChannel } from "@/lib/realtime/server";
 import type { Account, Claim, DirectoryUser, Environment, JiraIssue, Settings } from "@/lib/types";
 
-const SYNC_WINDOW = "updated >= -30d";
+export type { SyncMode };
+
 const PAGE_SIZE = 100;
 /** Bounds one sync at 500 issues so a large backlog cannot stall the pass — and,
- *  on Vercel, cannot run past the function timeout. */
+ *  on Vercel, cannot run past the function timeout. A delta pass reads a handful
+ *  and never comes near it; this bounds the full rebuild. */
 const MAX_PAGES = 5;
-
-/** A JQL string literal. Status names carry spaces and brackets, so they are
- *  always quoted; a stray quote or backslash is escaped rather than left to
- *  break the query. */
-const jqlText = (value: string) => `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 
 /** Issue keys go in unquoted, and only if they look like keys — the list is
  *  built from stored claims, and anything that is not a real key would only be a
@@ -92,16 +118,6 @@ interface TicketFields {
    *  lookup is needed for these two. */
   updated: string | null;
   created: string | null;
-}
-
-function buildJql(settings: Settings, heldKeys: string[]): string {
-  const ignored = settings.jira.ignoredStatuses.filter(Boolean);
-  const window = ignored.length
-    ? `(${SYNC_WINDOW} AND status NOT IN (${ignored.map(jqlText).join(", ")}))`
-    : SYNC_WINDOW;
-
-  const where = heldKeys.length ? `${window} OR key IN (${heldKeys.join(", ")})` : window;
-  return `${where} ORDER BY updated DESC`;
 }
 
 /**
@@ -181,6 +197,9 @@ export interface SyncResult {
   ok: boolean;
   reason?: "disabled" | "auto-sync-off" | "not-configured" | "throttled" | "error";
   error?: string;
+  /** Which kind of pass ran — so a caller can say "checked for changes"
+   *  rather than implying it re-read everything. */
+  mode?: SyncMode;
   issueCount?: number;
   claimed?: number;
   released?: number;
@@ -282,22 +301,85 @@ async function notifyJiraChanges(
   }
 }
 
-export async function runJiraSync(force: boolean): Promise<SyncResult> {
+/**
+ * Refuse to act on a pass that answered with silence.
+ *
+ * Rule 2 at the top of this file: held keys are asked for BY NAME every pass,
+ * whatever their status. So a search that comes back without a single one of
+ * them has not told us those tickets are gone — it has failed to answer. And
+ * applySync() TRUNCATEs the whole derived cache on the strength of the reply,
+ * so believing that silence empties the board.
+ *
+ * This is not hypothetical, and it is the reason this function exists.
+ * `/rest/api/3/search/jql` answers **200 with an empty page** when the
+ * credentials are rejected, rather than 401 — so an expired API token reads
+ * exactly like "Jira has no tickets". The sync then reports success, wipes
+ * every cached issue, writes NULL to last_error, and My tickets goes blank with
+ * nothing anywhere saying why. The board is left standing instead, and the
+ * reason is recorded where the header pill and Settings › Jira can show it.
+ *
+ * The /myself probe is asked for only in this branch, so the normal path still
+ * costs exactly the requests it did before. It is what turns "Jira returned
+ * nothing" into a sentence somebody can act on.
+ */
+async function assertJiraAnswered(
+  tickets: readonly TicketFields[],
+  heldKeys: readonly string[],
+  cached: readonly JiraIssue[],
+  mode: SyncMode,
+): Promise<void> {
+  const seen = new Set(tickets.map((t) => t.key));
+
+  // Asked for by name and not one came back — the strong signal, and the only
+  // one available on a board whose cache is already empty. A single deleted
+  // ticket does not trip it; every held ticket vanishing at once does. It holds
+  // on a delta pass too, because `OR key IN (…)` is in every window.
+  const heldAllMissing = heldKeys.length > 0 && !heldKeys.some((key) => seen.has(key));
+  // Nothing at all came back, over a cache that had rows a moment ago. Only a
+  // FULL pass can say that: on a delta pass an empty reply is the normal case —
+  // it means nothing changed in the last few minutes — and treating it as a
+  // failure would fail almost every pass on a quiet afternoon.
+  const emptiedFromFull = mode === "full" && tickets.length === 0 && cached.length > 0;
+
+  if (!heldAllMissing && !emptiedFromFull) return;
+
+  const probe = await testConnection();
+  const left = "The board was left as it was.";
+
+  throw new Error(
+    probe.ok
+      ? `Jira accepted the credentials but returned nothing for ${heldKeys.length} ticket(s) ` +
+        `asked for by key, and ${cached.length} cached issue(s) would have been dropped. ${left}`
+      : `Jira rejected the credentials, answering an empty search rather than an error — ` +
+        `${probe.error} ${left}`,
+  );
+}
+
+
+export async function runJiraSync(
+  force: boolean,
+  requested: SyncMode | "auto" = "auto",
+): Promise<SyncResult> {
   const settings = await getSettings();
   if (!settings.jira.enabled) return { ok: false, reason: "disabled" };
   if (!force && !settings.jira.autoSync) return { ok: false, reason: "auto-sync-off" };
 
+  // Read unconditionally now, not only when throttling: planPass() needs it to
+  // decide how far back to look, which is the question every pass asks.
+  const rows = (await sql`
+    SELECT last_sync_at FROM jira_sync_state WHERE id = 1
+  `) as { last_sync_at: string | null }[];
+  const lastSyncAt = rows[0]?.last_sync_at ?? null;
+
   if (!force) {
-    const rows = (await sql`
-      SELECT last_sync_at FROM jira_sync_state WHERE id = 1
-    `) as { last_sync_at: string | null }[];
-    const lastSyncAt = rows[0]?.last_sync_at;
     const intervalMs = Math.max(1, settings.jira.pollIntervalMinutes) * 60_000;
 
     if (lastSyncAt && Date.now() - new Date(lastSyncAt).getTime() < intervalMs) {
       return { ok: false, reason: "throttled" };
     }
   }
+
+  const { mode, window } = planPass(requested, lastSyncAt);
 
   const config = loadJiraConfig();
   if (!config) return { ok: false, reason: "not-configured" };
@@ -324,10 +406,19 @@ export async function runJiraSync(force: boolean): Promise<SyncResult> {
       for (const id of fieldMap[name] ?? []) fieldIds.add(id);
     }
 
-    const raw = await fetchIssues(config, fieldIds, buildJql(settings, heldKeys));
+    const raw = await fetchIssues(config, fieldIds, buildJql(window, heldKeys));
     const tickets = raw.map((issue) => extractFields(issue, fieldMap));
 
-    const outcome = await applySync(tickets, { settings, accounts, environments, directory, heldKeys });
+    await assertJiraAnswered(tickets, heldKeys, jira_issues, mode);
+
+    const outcome = await applySync(tickets, {
+      settings,
+      accounts,
+      environments,
+      directory,
+      heldKeys,
+      mode,
+    });
 
     await sql`
       INSERT INTO jira_sync_state (id, last_sync_at, last_error) VALUES (1, now(), NULL)
@@ -341,7 +432,7 @@ export async function runJiraSync(force: boolean): Promise<SyncResult> {
       config.baseUrl,
     );
 
-    return { ok: true, issueCount: tickets.length, ...outcome };
+    return { ok: true, mode, issueCount: tickets.length, ...outcome };
   } catch (err) {
     const message = (err as Error).message || "Jira sync failed.";
     await sql`
@@ -358,6 +449,9 @@ interface SyncContext {
   environments: Environment[];
   directory: DirectoryUser[];
   heldKeys: string[];
+  /** `full` rebuilds the derived tables; `delta` reconciles only the tickets
+   *  this pass actually saw. See planPass() and the transaction below. */
+  mode: SyncMode;
 }
 
 /**
@@ -368,7 +462,7 @@ async function applySync(
   tickets: TicketFields[],
   ctx: SyncContext,
 ): Promise<{ claimed: number; released: number; skippedCount: number }> {
-  const { settings, accounts, environments, directory } = ctx;
+  const { settings, accounts, environments, directory, mode } = ctx;
   const held = new Set(ctx.heldKeys);
 
   interface Skipped {
@@ -439,10 +533,11 @@ async function applySync(
   };
 
   for (const t of tickets) {
-    // Pulled by key, or newly at a status nobody wants listed. Either way it is
-    // not carried — that is what "never fetched" means.
-    const ignored = statusIn(settings.jira.ignoredStatuses, t.status);
-
+    // No status is dropped here any more. `ignoredStatuses` used to mean "never
+    // carried", and a ticket at one of those never reached the cache at all —
+    // which is why My tickets could not show somebody their own closed or
+    // not-yet-started work. The list now hides rows from Active tickets, at read
+    // time, in lib/db/queries/tickets.ts. See ADR-014.
     if (held.has(t.key)) {
       if (!statusFrees(settings.jira, t.status)) {
         // Sticky: repos/serverId/userIds do not move mid-claim — only the
@@ -458,14 +553,13 @@ async function applySync(
         });
         continue;
       }
-      // Released: it stops holding repositories. It stays in the tables at its
-      // new status unless that status is one we do not carry.
+      // Released: it stops holding repositories, and stays in the tables at its
+      // new status — including a terminal one, which is the point of carrying
+      // every status now.
       toRelease.push(t.key);
-      if (!ignored) record(t);
+      record(t);
       continue;
     }
-
-    if (ignored) continue;
 
     // A ticket that is finished or cancelled takes no environment, even if
     // somebody has ticked its status as occupying — without this it would claim
@@ -594,10 +688,45 @@ async function applySync(
       }
     }
 
-    // The derived cache is rebuilt from scratch every pass, exactly as the
-    // legacy in-memory version was. It is not a source of truth (ADR-010).
-    await client.query("TRUNCATE jira_issues");
-    await client.query("TRUNCATE jira_skipped");
+    /*
+     * ── Rebuild, or reconcile ──
+     *
+     * A FULL pass read the whole window, so whatever it did not see is not in
+     * the window: truncating and re-filling is both correct and the simplest
+     * thing that can be. That is how every pass used to work, and ADR-010 —
+     * the derived cache is not a source of truth — is what licenses it.
+     *
+     * A DELTA pass read only what changed. Truncating there would delete the
+     * entire board on the strength of six minutes of Jira activity, so it
+     * writes per key instead, and touches exactly the tickets it saw:
+     *
+     *   - upsert every ticket it carried (`DO UPDATE`, not `DO NOTHING` — the
+     *     whole point of seeing it again is that something moved);
+     *   - drop from `jira_issues` anything that has just become a claim, which
+     *     is what keeps the two tables DISJOINT — the property the ticket
+     *     tables' pagination arithmetic rests on (lib/db/queries/tickets.ts);
+     *   - drop from `jira_skipped` any ticket it saw that is no longer skipped,
+     *     because "not tracked" is a statement about the ticket's current
+     *     fields and a stale one is worse than none.
+     *
+     * Tickets it did not see are left exactly as they were, which is the whole
+     * bet: their fields did not change, so neither should their rows.
+     */
+    if (mode === "full") {
+      await client.query("TRUNCATE jira_issues");
+      await client.query("TRUNCATE jira_skipped");
+    } else {
+      const claimedKeys = toClaim.map((claim) => claim.key);
+      if (claimedKeys.length) {
+        await client.query("DELETE FROM jira_issues WHERE key = ANY($1::text[])", [claimedKeys]);
+      }
+
+      const skippedKeys = new Set(skipped.map((row) => row.key));
+      const noLongerSkipped = tickets.map((t) => t.key).filter((key) => !skippedKeys.has(key));
+      if (noLongerSkipped.length) {
+        await client.query("DELETE FROM jira_skipped WHERE key = ANY($1::text[])", [noLongerSkipped]);
+      }
+    }
 
     for (const row of onBoard) {
       await client.query(
@@ -605,7 +734,14 @@ async function applySync(
                                   start_time, end_time, repos, user_ids, raw_assignees,
                                   jira_created_at, jira_updated_at, synced_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10::text[], $11::text[], $12, $13, now())
-         ON CONFLICT (key) DO NOTHING`,
+         ON CONFLICT (key) DO UPDATE
+           SET server_id = EXCLUDED.server_id, account_name = EXCLUDED.account_name,
+               branch = EXCLUDED.branch, status = EXCLUDED.status, summary = EXCLUDED.summary,
+               start_time = EXCLUDED.start_time, end_time = EXCLUDED.end_time,
+               repos = EXCLUDED.repos, user_ids = EXCLUDED.user_ids,
+               raw_assignees = EXCLUDED.raw_assignees,
+               jira_created_at = EXCLUDED.jira_created_at,
+               jira_updated_at = EXCLUDED.jira_updated_at, synced_at = now()`,
         [
           row.key,
           row.serverId,
@@ -628,7 +764,10 @@ async function applySync(
       await client.query(
         `INSERT INTO jira_skipped (key, reason, status, account_name, branch, synced_at)
          VALUES ($1, $2, $3, $4, $5, now())
-         ON CONFLICT (key) DO NOTHING`,
+         ON CONFLICT (key) DO UPDATE
+           SET reason = EXCLUDED.reason, status = EXCLUDED.status,
+               account_name = EXCLUDED.account_name, branch = EXCLUDED.branch,
+               synced_at = now()`,
         [row.key, row.reason, row.status, row.accountName, row.branch],
       );
     }
