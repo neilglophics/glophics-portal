@@ -66,6 +66,7 @@ import {
   testConnection,
   type JiraConfig,
 } from "./client";
+import { bookingIsContradictory, bookingWindow } from "./booking";
 import { buildJql, planPass, type SyncMode } from "./pass";
 import {
   findServerForTicket,
@@ -186,12 +187,6 @@ function extractFields(
     created: f.created ?? null,
   };
 }
-
-/** Jira gives dates, not instants. The legacy app pinned them to 09:00 and
- *  18:00 local, which is what "a day's booking" meant on this board. */
-const startInstant = (date: string | null) =>
-  date ? new Date(`${date}T09:00`).toISOString() : null;
-const endInstant = (date: string | null) => (date ? new Date(`${date}T18:00`).toISOString() : null);
 
 export interface SyncResult {
   ok: boolean;
@@ -521,9 +516,11 @@ async function applySync(
       status: t.status,
       summary: t.summary,
       // Dates as Jira has them. Nothing is being held, so unlike a claim there
-      // is no "it started now" to fall back on.
-      startTime: startInstant(t.startDate),
-      endTime: endInstant(t.dueDate),
+      // is no "it started now" to fall back on — hence no fallback argument.
+      // bookingWindow() still applies, because a due date before the start date
+      // is nonsense on this row too: it would sort to the very top of "frees
+      // soonest", which is the most prominent place on the board.
+      ...bookingWindow(t.startDate, t.dueDate),
       repos,
       userIds: matchUserIdsByLabels(t.ticketAssignees, directory).matched,
       rawAssignees: t.ticketAssignees,
@@ -594,6 +591,17 @@ async function applySync(
       continue;
     }
 
+    // Not a skip: the ticket is tracked and does hold its repositories. This is
+    // the only place the mistyped date is nameable, and without it a claim that
+    // quietly lost its end time is indistinguishable from one that never had
+    // one. The fix is in Jira, so the message says which ticket.
+    if (bookingIsContradictory(t.startDate, t.dueDate)) {
+      console.warn(
+        `[jira] ${t.key}: due date ${t.dueDate} is not after start date ${t.startDate} — ` +
+          "claiming with no end time. Fix the dates in Jira to restore \"frees in\".",
+      );
+    }
+
     const repoCheck = matchRepositoriesToKeys(
       t.repository,
       match.server.repos.map((r) => r.repoName),
@@ -618,9 +626,12 @@ async function applySync(
       status: t.status,
       summary: t.summary,
       // A claim with no start date started now — it is holding something as of
-      // this pass, which is not the same as having no time at all.
-      startTime: startInstant(t.startDate) ?? new Date().toISOString(),
-      endTime: endInstant(t.dueDate),
+      // this pass, which is not the same as having no time at all. When that
+      // invented start collides with a real due date, bookingWindow() drops
+      // OURS rather than Jira's; when Jira's own two dates contradict, it drops
+      // the end. Either way the row satisfies `claims_time_order`, which one
+      // mistyped ticket used to be able to fail the entire transaction on.
+      ...bookingWindow(t.startDate, t.dueDate, new Date().toISOString()),
       repos: repoCheck.matched,
       userIds: matchUserIdsByLabels(t.ticketAssignees, directory).matched,
       rawAssignees: t.ticketAssignees,
