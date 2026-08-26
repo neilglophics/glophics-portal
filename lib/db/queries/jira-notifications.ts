@@ -1,3 +1,4 @@
+import { chunks, valuesList } from "@/lib/db/batch";
 import { sql, withTransaction } from "@/lib/db/client";
 
 const NOTIFICATION_FETCH_LIMIT = 5;
@@ -75,19 +76,18 @@ export async function createJiraNotifications(
 ): Promise<string[]> {
   if (!notifications.length) return [];
 
+  // Batched, for the reason lib/db/batch.ts gives: this runs straight after the
+  // sync's own transaction, on the same request, and a pass that changed two
+  // hundred tickets used to mean two hundred more sequential round trips on top
+  // of an already tight budget. No ON CONFLICT here, so no de-duplication is
+  // needed — two alerts about the same ticket for the same person are two
+  // separate events and both belong in the history.
   await withTransaction(async (client) => {
-    for (const notification of notifications) {
+    for (const chunk of chunks(notifications)) {
       await client.query(
         `INSERT INTO jira_notifications (auth_user_id, kind, ticket_id, title, body, href)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-          notification.authUserId,
-          notification.kind,
-          notification.ticketId,
-          notification.title,
-          notification.body,
-          notification.href,
-        ],
+         VALUES ${valuesList(chunk.length, ["", "", "", "", "", ""])}`,
+        chunk.flatMap((n) => [n.authUserId, n.kind, n.ticketId, n.title, n.body, n.href]),
       );
     }
   });

@@ -506,3 +506,57 @@ count in the sync result is the next step.
 whole board its sync. `bookingWindow()` is pure and property-tested over every combination of present,
 absent and contradictory dates (`tests/jira-booking.test.ts`), because the interesting inputs only
 arrive by way of somebody's typo.
+
+---
+
+## ADR-018 — The sync writes in batches, because round trips were the whole cost
+
+**Status:** Accepted
+
+**Context.** `POST /api/jira/sync-now` started returning a **timeout** in production.
+
+`applySync()` wrote one row per query — ~290 INSERTs into `jira_issues`, plus one per claim and one per
+repo and per assignee, each an `await` inside the transaction — and `createJiraNotifications()` did the
+same for every alert it raised. That is ~300 sequential round trips on a full pass. Measured against
+the live database:
+
+| | before |
+|---|---|
+| Jira fetch (289 issues, 3 pages) | **1.5 s** |
+| the transaction | **~20 s** |
+| full pass, end to end | **21.6 s** |
+
+The rows are tiny; the latency is everything. It had been survivable while the sync carried ~140
+tickets, and [ADR-014](#adr-014--ignoredstatuses-hides-rows-it-no-longer-narrows-the-search) roughly
+doubled that by carrying every status — which is what pushed a 60-second Vercel function over the
+edge. The daily cron would have hit it too, silently.
+
+**Decision.** One multi-row statement per table, chunked at 200 rows, with the shared helpers in
+`lib/db/batch.ts`. ~300 queries became about ten:
+
+| | after |
+|---|---|
+| full pass | **3.0 s** (1.5 s of it still the Jira fetch) |
+| delta pass | 1.3 s |
+
+Only the PLACEHOLDER list is built by concatenation — `($1, $2::text[], now())` — and every value is
+still bound as a parameter. Columns with a `DEFAULT now()` (`synced_at`, `claimed_at`) are left out of
+the column list rather than repeated in every row tuple.
+
+**The one semantic change, and it needed care.** `ON CONFLICT … DO UPDATE` is a hard ERROR when the
+same key appears twice in ONE statement, where a row-at-a-time loop would simply have applied the
+second write. A paged search *can* return a duplicate — an issue updated mid-scan can appear on two
+pages of a `nextPageToken` cursor — so every upserted list goes through `lastByKey()` first, keeping
+the last occurrence, which is exactly what writing them in order used to leave behind. The three
+child tables are `DO NOTHING` and need no such treatment.
+
+**Consequences.** Headroom, rather than a fix that only just fits: a full pass at the `MAX_PAGES` cap
+of 500 issues is three chunks, not five hundred queries. The cost is that the SQL is now generated
+rather than literal, so a column added to one of these tables must be added to the column list, the
+`casts` array and the value tuple together — three places instead of two, and a mismatch is a runtime
+error rather than a compile one.
+
+Verified against the live database: array columns (`repos`, `user_ids`, `raw_assignees`) round-trip
+intact, `jira_issues` and `claims` stay disjoint, no claim violates `claims_time_order`, and no child
+row is orphaned. The notification batch was proved with a deliberate rollback — 250 rows over two
+statements, table count unchanged — rather than by writing real alerts to real people.

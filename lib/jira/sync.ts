@@ -52,6 +52,7 @@
  * transaction at the bottom of applySync() is where the difference lands.
  */
 
+import { INSERT_CHUNK, chunks, lastByKey, valuesList } from "@/lib/db/batch";
 import { sql, withTransaction } from "@/lib/db/client";
 import {
   AUTOFILL_FIELD_NAMES,
@@ -641,13 +642,20 @@ async function applySync(
   }
 
   await withTransaction(async (client) => {
-    for (const { key, status, summary, jiraCreatedAt, jiraUpdatedAt } of toRefresh) {
+    if (toRefresh.length) {
+      // Sticky: repos/serverId/userIds do not move mid-claim — only the
+      // display-facing fields refresh. One UPDATE … FROM (VALUES …) rather than
+      // one statement per held ticket.
+      const rows = lastByKey(toRefresh, (row) => row.key);
       await client.query(
-        `UPDATE claims
-            SET status = $2, summary = $3, jira_created_at = $4, jira_updated_at = $5,
+        `UPDATE claims c
+            SET status = v.status, summary = v.summary,
+                jira_created_at = v.jira_created_at, jira_updated_at = v.jira_updated_at,
                 last_synced_at = now()
-          WHERE id = $1`,
-        [key, status, summary, jiraCreatedAt, jiraUpdatedAt],
+           FROM (VALUES ${valuesList(rows.length, ["", "", "", "::timestamptz", "::timestamptz"])})
+             AS v(id, status, summary, jira_created_at, jira_updated_at)
+          WHERE c.id = v.id`,
+        rows.flatMap((r) => [r.key, r.status, r.summary, r.jiraCreatedAt, r.jiraUpdatedAt]),
       );
     }
 
@@ -655,17 +663,26 @@ async function applySync(
       await client.query("DELETE FROM claims WHERE id = ANY($1::text[])", [toRelease]);
     }
 
-    for (const claim of toClaim) {
+    const claiming = lastByKey(toClaim, (claim) => claim.key);
+
+    for (const chunk of chunks(claiming, INSERT_CHUNK)) {
+      // claimed_at has DEFAULT now() and DO UPDATE deliberately leaves it
+      // alone, so a claim keeps the moment it was FIRST claimed across syncs.
       await client.query(
         `INSERT INTO claims (id, source, server_id, account_name, branch, status, summary,
                              start_time, end_time, jira_created_at, jira_updated_at,
-                             claimed_at, last_synced_at)
-         VALUES ($1, 'jira', $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), now())
+                             last_synced_at)
+         VALUES ${valuesList(
+           chunk.length,
+           ["", "", "", "", "", "", "", "::timestamptz", "::timestamptz", "::timestamptz", "::timestamptz"],
+           ["now()"],
+         )}
          ON CONFLICT (id) DO UPDATE
            SET status = EXCLUDED.status, summary = EXCLUDED.summary,
                jira_updated_at = EXCLUDED.jira_updated_at, last_synced_at = now()`,
-        [
+        chunk.flatMap((claim) => [
           claim.key,
+          "jira",
           claim.serverId,
           claim.accountName,
           claim.branch,
@@ -675,26 +692,23 @@ async function applySync(
           claim.endTime,
           claim.jiraCreatedAt,
           claim.jiraUpdatedAt,
-        ],
+        ]),
       );
+    }
 
-      for (const repo of claim.repos) {
+    // The three child tables, flattened across every claim rather than nested
+    // inside the loop above. All three are DO NOTHING, so in-statement
+    // duplicates are fine and no de-duplication is needed.
+    for (const [table, columns, rows] of [
+      ["claim_repos", "(claim_id, repo_name)", claiming.flatMap((c) => c.repos.map((r) => [c.key, r]))],
+      ["claim_assignees", "(claim_id, directory_user_id)", claiming.flatMap((c) => c.userIds.map((u) => [c.key, u]))],
+      ["claim_raw_assignees", "(claim_id, label)", claiming.flatMap((c) => c.rawAssignees.map((l) => [c.key, l]))],
+    ] as const) {
+      for (const chunk of chunks(rows, INSERT_CHUNK)) {
         await client.query(
-          "INSERT INTO claim_repos (claim_id, repo_name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-          [claim.key, repo],
-        );
-      }
-      for (const userId of claim.userIds) {
-        await client.query(
-          `INSERT INTO claim_assignees (claim_id, directory_user_id) VALUES ($1, $2)
+          `INSERT INTO ${table} ${columns} VALUES ${valuesList(chunk.length, ["", ""])}
            ON CONFLICT DO NOTHING`,
-          [claim.key, userId],
-        );
-      }
-      for (const label of claim.rawAssignees) {
-        await client.query(
-          "INSERT INTO claim_raw_assignees (claim_id, label) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-          [claim.key, label],
+          chunk.flat(),
         );
       }
     }
@@ -727,7 +741,7 @@ async function applySync(
       await client.query("TRUNCATE jira_issues");
       await client.query("TRUNCATE jira_skipped");
     } else {
-      const claimedKeys = toClaim.map((claim) => claim.key);
+      const claimedKeys = claiming.map((claim) => claim.key);
       if (claimedKeys.length) {
         await client.query("DELETE FROM jira_issues WHERE key = ANY($1::text[])", [claimedKeys]);
       }
@@ -739,12 +753,19 @@ async function applySync(
       }
     }
 
-    for (const row of onBoard) {
+    // synced_at has DEFAULT now(), so it is left out of the column list rather
+    // than repeated as a literal in every one of ~290 row tuples.
+    for (const chunk of chunks(lastByKey(onBoard, (row) => row.key), INSERT_CHUNK)) {
       await client.query(
         `INSERT INTO jira_issues (key, server_id, account_name, branch, status, summary,
                                   start_time, end_time, repos, user_ids, raw_assignees,
-                                  jira_created_at, jira_updated_at, synced_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10::text[], $11::text[], $12, $13, now())
+                                  jira_created_at, jira_updated_at)
+         VALUES ${valuesList(chunk.length, [
+           "", "", "", "", "", "",
+           "::timestamptz", "::timestamptz",
+           "::text[]", "::text[]", "::text[]",
+           "::timestamptz", "::timestamptz",
+         ])}
          ON CONFLICT (key) DO UPDATE
            SET server_id = EXCLUDED.server_id, account_name = EXCLUDED.account_name,
                branch = EXCLUDED.branch, status = EXCLUDED.status, summary = EXCLUDED.summary,
@@ -753,7 +774,7 @@ async function applySync(
                raw_assignees = EXCLUDED.raw_assignees,
                jira_created_at = EXCLUDED.jira_created_at,
                jira_updated_at = EXCLUDED.jira_updated_at, synced_at = now()`,
-        [
+        chunk.flatMap((row) => [
           row.key,
           row.serverId,
           row.accountName,
@@ -767,19 +788,19 @@ async function applySync(
           row.rawAssignees,
           row.jiraCreatedAt,
           row.jiraUpdatedAt,
-        ],
+        ]),
       );
     }
 
-    for (const row of skipped) {
+    for (const chunk of chunks(lastByKey(skipped, (row) => row.key), INSERT_CHUNK)) {
       await client.query(
-        `INSERT INTO jira_skipped (key, reason, status, account_name, branch, synced_at)
-         VALUES ($1, $2, $3, $4, $5, now())
+        `INSERT INTO jira_skipped (key, reason, status, account_name, branch)
+         VALUES ${valuesList(chunk.length, ["", "", "", "", ""])}
          ON CONFLICT (key) DO UPDATE
            SET reason = EXCLUDED.reason, status = EXCLUDED.status,
                account_name = EXCLUDED.account_name, branch = EXCLUDED.branch,
                synced_at = now()`,
-        [row.key, row.reason, row.status, row.accountName, row.branch],
+        chunk.flatMap((row) => [row.key, row.reason, row.status, row.accountName, row.branch]),
       );
     }
   });

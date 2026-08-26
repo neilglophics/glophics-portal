@@ -167,6 +167,15 @@ The window is relative (`-Nm`) so Jira evaluates it against its own clock — th
 get wrong. Editing `applySync()`'s transaction means editing two write paths now; the delta one fails
 *stale* rather than *wrong*, which is harder to spot.
 
+**The sync writes in batches — never add a row-at-a-time loop to it.** Round trips are the entire
+cost of a pass: writing one row per query took a full pass to 21.6s (against 1.5s for the Jira fetch)
+and timed out `POST /api/jira/sync-now` on Vercel's 60s budget. `lib/db/batch.ts` holds the helpers;
+one multi-row statement per table took it to 3.0s. Two things to know before editing those writes:
+`lastByKey()` is not optional in front of an `ON CONFLICT … DO UPDATE` — the same key twice in one
+statement is a hard error, and a paged Jira search can return one — and a new column has to be added
+to the column list, the `casts` array and the value tuple together. See `docs/05-DECISIONS.md`
+**ADR-018**.
+
 **One mistyped date must not stop the board.** `claims_time_order` requires `end_time > start_time`,
 and `applySync()` writes in one transaction — so a ticket whose due date precedes its start date used
 to roll back the entire pass with nothing but a constraint name to show for it. `bookingWindow()` in
