@@ -458,3 +458,51 @@ the same thing as the whole backlog and nobody has asked for that to be private.
 Nothing about what a member can *do* changed — they keep `view` and `claim`, so the board, the
 environments and their own queue are untouched. Widening to `member` later is one array entry in
 `AUTH_ROLES`, which is the point.
+
+---
+
+## ADR-017 — Contradictory Jira dates lose the end time, not the sync
+
+**Status:** Accepted
+
+**Context.** `claims_time_order` requires `end_time > start_time` unless one is null. `applySync()`
+writes every ticket in ONE transaction, so a single ticket whose due date precedes its start date
+rolled the whole pass back:
+
+```
+new row for relation "claims" violates check constraint "claims_time_order"
+```
+
+GLOP-1533 — start `2026-08-26`, due `2026-08-18` — did exactly that, and the board stopped updating
+with nothing to show for it but a constraint name in a 500. One person mistyping a date in Jira could
+stop the board for everybody. This predates the incremental sync; *In Progress* was never an ignored
+status, so the ticket always reached this insert.
+
+**Decision.** `bookingWindow()` in `lib/jira/booking.ts` derives both instants and guarantees a row the
+constraint accepts. Two cases, distinguished by **whose value is wrong**, and the rule is the same
+both times — never let a value we invented destroy one Jira actually gave us:
+
+1. **Jira's own two dates disagree.** The start stands, the **end** goes. The ticket is at an
+   occupying status so it *is* held; what we no longer know is when it frees. `end_time IS NULL`
+   already means precisely that, and sorts last under `NULLS LAST`.
+2. **Only the invented start collides.** A claim with no start date "started now", which conflicts
+   with any due date in the past — an ordinary overdue ticket. Here **our** value is the wrong one, so
+   the fallback gives way and Jira's due date survives.
+
+Nothing is swapped, inferred or nudged: guessing which date the author meant would be the fuzzy
+matching invariant 6 forbids.
+
+**Why not skip the ticket to Not tracked.** Because it is not untracked — it matched an environment
+and it does hold those repositories. Filing it there would leave a box that somebody is working on
+reading *free*, which is the exact failure the board exists to prevent.
+
+**Why a `console.warn` and not something on screen.** The claim is correct and complete apart from one
+missing date, and the fix is in Jira, not here. A row on Not tracked would misreport it; a new UI
+surface for a mistyped date is more machinery than the case earns. The warning names the ticket and
+both dates, which is what somebody needs to go and fix it. If these turn out to be common, surfacing a
+count in the sync result is the next step.
+
+**Consequences.** A mistyped date now costs that one ticket its "frees in" instead of costing the
+whole board its sync. `bookingWindow()` is pure and property-tested over every combination of present,
+absent and contradictory dates (`tests/jira-booking.test.ts`), because the interesting inputs only
+arrive by way of somebody's typo.

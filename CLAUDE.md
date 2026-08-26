@@ -167,6 +167,14 @@ The window is relative (`-Nm`) so Jira evaluates it against its own clock — th
 get wrong. Editing `applySync()`'s transaction means editing two write paths now; the delta one fails
 *stale* rather than *wrong*, which is harder to spot.
 
+**One mistyped date must not stop the board.** `claims_time_order` requires `end_time > start_time`,
+and `applySync()` writes in one transaction — so a ticket whose due date precedes its start date used
+to roll back the entire pass with nothing but a constraint name to show for it. `bookingWindow()` in
+`lib/jira/booking.ts` (pure, property-tested) always returns a row the constraint accepts: when Jira's
+own dates contradict it drops the **end**, and when only the invented "started now" fallback collides
+it drops **ours** and keeps Jira's due date. The offending ticket is named in a `console.warn`, because
+the fix is in Jira. See `docs/05-DECISIONS.md` **ADR-017**.
+
 **A Jira sync that returns nothing is refused, not applied.** `/rest/api/3/search/jql` answers **200
 with an empty page** when credentials are rejected, not 401 — so an expired token used to read as
 "Jira has no tickets", truncate the whole cache, and report success. `assertJiraAnswered()` in
@@ -220,7 +228,7 @@ Needs a Neon branch. Copy `.env.example` to `.env.local`, then:
 ```bash
 npm run db:migrate      # apply lib/db/migrations/*.sql
 npm run db:import       # load shared-data/ + config/auth.json into Postgres
-npm test                # 319 tests, node:test via tsx
+npm test                # 341 tests, node:test via tsx
 npm run typecheck
 ```
 
