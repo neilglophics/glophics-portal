@@ -116,6 +116,13 @@ export function UnreadProvider({
    *  not itself cause a render. */
   const nextSeq = useRef(1);
 
+  /** The current per-conversation counts, readable from a callback that must not
+   *  depend on them. `clear` has to stay identity-stable — it sits in Thread's
+   *  read effect's dependency array, and an identity that changed on every
+   *  incoming message would re-arm that timer forever. */
+  const byConversationRef = useRef(byConversation);
+  byConversationRef.current = byConversation;
+
   // Read inside the event handler, which is registered once — a ref keeps it
   // current without re-subscribing on every navigation.
   const pathRef = useRef(pathname);
@@ -312,15 +319,23 @@ export function UnreadProvider({
    * would never get around to reporting itself read.
    */
   const clear = useCallback((conversationId: string) => {
+    // ── The subtraction happens OUTSIDE the other updater ──
+    //
+    // `setTotal` used to be called from inside the `setByConversation` callback.
+    // State updaters must be pure, and `reactStrictMode` invokes them twice — so
+    // the nav badge lost the count twice for one read and drifted below the truth.
+    // Same mistake as the one that uploaded every file twice; it is subtle
+    // precisely because the visible symptom is a number that is merely wrong
+    // rather than an obvious crash.
+    //
+    // Only what we already know about is subtracted. When the count came from the
+    // server rather than a live event there is nothing here to subtract, and the
+    // refresh Thread triggers after the read POST is what corrects the total.
     setByConversation((prev) => {
       if (prev[conversationId] === 0) return prev;
-      const had = prev[conversationId] ?? 0;
-      // Only what we know about is subtracted. When the count came from the
-      // server rather than from a live event there is nothing to subtract here,
-      // and the refresh Thread triggers is what corrects the total.
-      if (had) setTotal((t) => Math.max(0, t - had));
       return { ...prev, [conversationId]: 0 };
     });
+    setTotal((t) => Math.max(0, t - (byConversationRef.current[conversationId] ?? 0)));
 
     setActivity((prev) => {
       const current = prev[conversationId];

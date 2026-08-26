@@ -157,6 +157,28 @@ export function Thread({
    */
   const [readUpTo, setReadUpTo] = useState<Record<string, number>>(initialReadUpTo);
   const [missed, setMissed] = useState(0);
+  /**
+   * A state mirror of the `atBottom` ref.
+   *
+   * The ref stays, because the scroll-follow effect and the incoming-message
+   * handler read it synchronously mid-event and cannot wait for a render. But a
+   * ref changing re-runs nothing, and two things have to REACT to the scroll
+   * position: the read watermark below, and the jump-to-latest button.
+   *
+   * That was a real bug, and it needed two messages arriving close together:
+   *
+   *   1. message A lands; the read effect schedules its 600 ms timer
+   *   2. the smooth scroll to A begins, and part-way through `onScroll` measures a
+   *      distance over the threshold and sets the ref to false
+   *   3. message B lands, `newestId` changes, the effect re-runs — its cleanup
+   *      cancels A's pending timer, and the fresh run reads the ref as false and
+   *      schedules NOTHING
+   *   4. the scroll settles, the ref goes back to true, and nothing re-runs
+   *
+   * The conversation was then never reported read, so its badge stayed while it
+   * sat open on screen. In state, step 4 re-runs the effect and the read lands.
+   */
+  const [atBottomView, setAtBottomView] = useState(true);
 
   /** The message being replied to, or null. Server-produced, so the quote above
    *  the composer is the same quote the bubble will show. */
@@ -346,6 +368,10 @@ export function Thread({
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
     atBottom.current = distance < STICK_THRESHOLD_PX;
     if (atBottom.current) setMissed(0);
+    // Only on a real change: this runs on every scroll frame, and setting state to
+    // the value it already holds would re-render the whole thread throughout a
+    // smooth scroll.
+    setAtBottomView((prev) => (prev === atBottom.current ? prev : atBottom.current));
   }, []);
 
   /**
@@ -377,7 +403,9 @@ export function Thread({
 
   useEffect(() => {
     if (!newestId || newestId <= readReported.current) return;
-    if (!atBottom.current) return;
+    // The STATE, not the ref — settling back at the bottom after a scroll has to
+    // re-run this, or the read is never reported. See atBottomView.
+    if (!atBottomView) return;
     if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
 
     const timer = setTimeout(() => {
@@ -405,7 +433,7 @@ export function Thread({
     }, 600);
 
     return () => clearTimeout(timer);
-  }, [conversationId, newestId, clearUnread, router]);
+  }, [conversationId, newestId, atBottomView, clearUnread, router]);
 
   // ---------- live events ----------
 
@@ -656,7 +684,9 @@ export function Thread({
           : [...prev, { clientMsgId, body, failed: false, attachments, replyTo }],
       );
       setSending(true);
+      // Sending puts you back at the bottom: you are looking at your own message.
       atBottom.current = true;
+      setAtBottomView(true);
 
       const res = await fetch(`/api/chat/conversations/${conversationId}/messages`, {
         method: "POST",
@@ -902,6 +932,7 @@ export function Thread({
         // Scrolling away from the bottom means incoming messages should stop
         // yanking the viewport down; the "N new" affordance takes over.
         atBottom.current = false;
+        setAtBottomView(false);
         setHighlightId(jumpTarget);
       }
       setJumpTarget(null);
@@ -1128,17 +1159,33 @@ export function Thread({
         </p>
       ) : null}
 
-      {missed > 0 ? (
+      {/* ── Jump to the latest message ──
+          One control with two faces. Back-reading a long thread and then wanting
+          the bottom again used to mean scrolling all the way by hand — the pill
+          only existed while unread messages had arrived, which is not the same
+          thing as being scrolled up.
+          So it shows whenever you are away from the bottom, and says how many you
+          have missed only when that is actually true. */}
+      {!atBottomView ? (
         <button
           type="button"
           onClick={() => {
             setMissed(0);
             atBottom.current = true;
+            setAtBottomView(true);
             scrollToBottom(true);
           }}
-          className="mx-auto -mt-2 mb-1 flex items-center gap-1.5 rounded-full bg-accent px-3 py-1.5 text-[11px] font-semibold text-on-accent shadow-lg"
+          title={missed > 0 ? `${missed} new — jump to the latest` : "Jump to the latest message"}
+          aria-label={missed > 0 ? `${missed} new messages, jump to the latest` : "Jump to the latest message"}
+          className={`mx-auto -mt-2 mb-1 flex items-center gap-1.5 rounded-full shadow-lg transition ${
+            missed > 0
+              ? "bg-accent px-3 py-1.5 text-[11px] font-semibold text-on-accent"
+              : // No unread: a quiet circle rather than a labelled pill, so it does
+                // not read as a notification when there is nothing to notify.
+                "bg-surface p-1.5 text-muted ring-1 ring-line-2 hover:text-brand-fg hover:ring-brand-soft"
+          }`}
         >
-          {missed} new message{missed === 1 ? "" : "s"}
+          {missed > 0 ? `${missed} new message${missed === 1 ? "" : "s"}` : null}
           <Icon name="chevron" className="h-3 w-3 rotate-90" />
         </button>
       ) : null}
