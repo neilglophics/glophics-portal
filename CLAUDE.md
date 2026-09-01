@@ -57,6 +57,12 @@ reactions and group management came just before them:
   it), which means it exists before its message does. `claimAttachments` attaches it inside the send
   transaction, and the retention cron sweeps whatever was abandoned. All four of that function's
   `WHERE` conditions are load-bearing — read the comment before editing it.
+- **GIFs skip the optimiser, and must keep doing so.** It returns a STATIC WebP for an animated GIF
+  (verified against the live service), and refuses anything over 4 MB — so GIFs were being flattened
+  to their first frame, renamed `.webp`, or failing outright. `isStoredVerbatim()` in
+  `lib/chat/attachments.ts` is the switch. Two consequences: nothing decodes the bytes any more, so
+  the route checks the magic number itself (`looksLikeGif`) and reads dimensions from the header
+  (`gifDimensions`); and since nothing shrinks them, GIFs have their own 12 MB cap.
 - **Attachment bytes are never served from the store.** It is a *private* Blob store: a blob URL
   answers 403 unauthenticated, so downloads go through `/api/chat/attachments/[id]`, which re-checks
   membership on every read. `blob_url` must never reach a client. This is the answer to Q6, and it

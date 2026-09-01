@@ -17,6 +17,40 @@
  *  stopped checking rather than as the limit itself. */
 export const ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 
+/**
+ * GIFs get their own, lower ceiling: 12 MB.
+ *
+ * Every other image is re-encoded on the way in, so a 20 MB phone photo is stored
+ * as a few hundred KB and the 25 MB limit only ever bounds the *upload*. A GIF is
+ * stored **exactly as sent** (see `isStoredVerbatim`), so for GIFs that number
+ * would bound the storage and the download too — and a 25 MB GIF is a thing that
+ * exists and that nobody should be made to load inline in a chat thread.
+ */
+export const GIF_MAX_BYTES = 12 * 1024 * 1024;
+
+/**
+ * Types that must reach storage byte-for-byte, never re-encoded.
+ *
+ * Right now that means GIF, and the reason is animation. The optimiser produces a
+ * **static** WebP from an animated GIF — verified against the live service: a
+ * two-frame GIF came back as a single-frame `VP8 ` file with no `ANIM` chunk. So
+ * every GIF anybody sent was silently flattened to its first frame and renamed
+ * `.webp`, which is a worse outcome than not supporting GIFs at all: it looks like
+ * it worked.
+ *
+ * The optimiser also refuses anything over 4 MB, and GIFs routinely exceed that —
+ * so a large one failed outright with "that image couldn't be processed".
+ *
+ * The cost of skipping it is real and worth naming: no metadata stripping and no
+ * size reduction. Neither matters much here — GIFs do not carry EXIF GPS the way
+ * phone photos do, and `GIF_MAX_BYTES` bounds the size instead. What DOES matter is
+ * that nothing else validates the bytes any more, so the route checks the magic
+ * number itself; see `looksLikeGif`.
+ */
+export function isStoredVerbatim(mime: string): boolean {
+  return mime === "image/gif";
+}
+
 /** How many files one message may carry. A bound on the fan-out of a single send
  *  more than on storage: each one is a row, an upload and a proxy route to serve. */
 export const ATTACHMENT_MAX_PER_MESSAGE = 10;
@@ -125,6 +159,15 @@ export function validateAttachment(file: {
 }): { ok: true } | { ok: false; error: string } {
   if (!file.size) {
     return { ok: false, error: `“${file.name}” is empty.` };
+  }
+  // Checked before the general limit, so a 20 MB GIF is told the number that
+  // actually applies to it rather than being waved through here and refused by
+  // the route with a different one.
+  if (isStoredVerbatim(file.type) && file.size > GIF_MAX_BYTES) {
+    return {
+      ok: false,
+      error: `“${file.name}” is ${formatBytes(file.size)}. GIFs are kept exactly as sent so they keep animating, so the limit for them is ${formatBytes(GIF_MAX_BYTES)}.`,
+    };
   }
   if (file.size > ATTACHMENT_MAX_BYTES) {
     return {
@@ -257,4 +300,81 @@ export function attachmentSummary(
 
   const allImages = attachments.every((a) => attachmentKind(a.mime) === "image");
   return `${attachments.length} ${allImages ? "photos" : "files"}`;
+}
+
+// ---------- GIF, which is stored exactly as sent ----------
+
+/**
+ * Is this really a GIF?
+ *
+ * ── This check exists because the optimiser is no longer in the way ──
+ *
+ * For every other image type, libvips decodes the file on the way through, so a
+ * successful optimisation *is* proof the bytes were a real image. GIFs skip that
+ * (see `isStoredVerbatim`), which means nothing else would notice a file claiming
+ * `image/gif` and containing something else entirely — and those bytes are then
+ * served back with `Content-Type: image/gif`.
+ *
+ * The magic number is the minimum honest replacement. It is not a full parse and
+ * does not pretend to be: combined with `nosniff` and a content type the browser
+ * is told explicitly, it is enough to stop a mislabelled file being interpreted as
+ * something dangerous.
+ */
+export function looksLikeGif(bytes: Uint8Array): boolean {
+  if (bytes.length < 6) return false;
+  // "GIF87a" or "GIF89a".
+  const header = String.fromCharCode(...bytes.subarray(0, 6));
+  return header === "GIF87a" || header === "GIF89a";
+}
+
+/**
+ * A GIF's dimensions, read from its header.
+ *
+ * The optimiser used to report these, and the bubble needs them: `width`/`height`
+ * are what let it reserve the right box so the thread does not reflow as images
+ * land. Without them a GIF would render at whatever size it liked and shove the
+ * conversation around on load.
+ *
+ * The logical screen descriptor sits at bytes 6–9, little-endian uint16 each —
+ * fixed offsets, no parsing required, and true for both GIF87a and GIF89a.
+ *
+ * Null rather than a guess when the bytes are not a GIF: a wrong size is worse
+ * than no size, because the browser can work out the real one and an incorrect
+ * attribute would stretch the image.
+ */
+export function gifDimensions(bytes: Uint8Array): { width: number; height: number } | null {
+  if (!looksLikeGif(bytes) || bytes.length < 10) return null;
+
+  const width = bytes[6]! | (bytes[7]! << 8);
+  const height = bytes[8]! | (bytes[9]! << 8);
+
+  // A zero dimension is a malformed header, and the database CHECK on the avatar
+  // tables refuses those anyway. Treated as unknown.
+  if (!width || !height) return null;
+  return { width, height };
+}
+
+/**
+ * Does this GIF actually animate?
+ *
+ * Only used to explain things — the storage decision does not depend on it, since
+ * a still GIF costs nothing extra to keep verbatim and branching on the answer
+ * would mean two code paths for one type.
+ *
+ * Looks for a second Graphic Control Extension (`21 F9`), which is what a
+ * multi-frame GIF has and a single-frame one does not. The NETSCAPE2.0 looping
+ * block is the other common marker, but it is optional — plenty of animated GIFs
+ * omit it — so counting frames is the more reliable signal.
+ */
+export function isAnimatedGif(bytes: Uint8Array): boolean {
+  if (!looksLikeGif(bytes)) return false;
+
+  let frames = 0;
+  for (let i = 0; i < bytes.length - 1; i += 1) {
+    if (bytes[i] === 0x21 && bytes[i + 1] === 0xf9) {
+      frames += 1;
+      if (frames > 1) return true;
+    }
+  }
+  return false;
 }
