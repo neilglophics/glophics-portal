@@ -4,7 +4,11 @@ import { stageAttachment, stagedAttachments } from "@/lib/db/queries/attachments
 import { isBlobConfigured, putAttachment } from "@/lib/blob/store";
 import {
   ATTACHMENT_MAX_BYTES,
+  GIF_MAX_BYTES,
   attachmentKind,
+  gifDimensions,
+  isStoredVerbatim,
+  looksLikeGif,
   safeFilename,
   validateAttachment,
 } from "@/lib/chat/attachments";
@@ -99,7 +103,12 @@ export const POST = withApi(async (req: Request, ctx: Ctx) => {
   if (!verdict.ok) {
     // 413 for "too big" so a client can distinguish it from "wrong sort of file"
     // and say something useful without parsing prose.
-    throw new HttpError(file.size > ATTACHMENT_MAX_BYTES ? 413 : 415, verdict.error);
+    // A GIF has a lower ceiling of its own, and exceeding it is still a size
+    // refusal rather than a type one.
+    const tooBig =
+      file.size > ATTACHMENT_MAX_BYTES ||
+      (isStoredVerbatim(file.type) && file.size > GIF_MAX_BYTES);
+    throw new HttpError(tooBig ? 413 : 415, verdict.error);
   }
 
   const mime = file.type;
@@ -109,7 +118,32 @@ export const POST = withApi(async (req: Request, ctx: Ctx) => {
   let storedMime = mime;
   let storedName = filename;
 
-  if (attachmentKind(mime) === "image") {
+  if (isStoredVerbatim(mime)) {
+    // -- GIFs skip the optimiser entirely --
+    //
+    // It returns a STATIC WebP for an animated GIF (verified against the live
+    // service: a two-frame GIF came back single-frame, no ANIM chunk), so every
+    // GIF sent was flattened to its first frame and renamed ".webp". It also
+    // refuses anything over 4 MB, which most real GIFs exceed, so the larger ones
+    // failed outright. Keeping the bytes fixes both.
+    //
+    // The consequence worth naming: nothing decodes the file any more, and for
+    // every other image type that decode doubled as proof the bytes really were an
+    // image. The magic number is the replacement -- see looksLikeGif.
+    body = Buffer.from(await file.arrayBuffer());
+
+    if (!looksLikeGif(body)) {
+      throw new HttpError(415, "That file says it is a GIF but does not look like one.");
+    }
+
+    // Read from the header rather than from a decoder, so the bubble can still
+    // reserve the right box and the thread does not reflow when the image lands.
+    const size = gifDimensions(body);
+    width = size?.width ?? null;
+    height = size?.height ?? null;
+    // storedMime and storedName are left alone: the stored bytes really are the
+    // GIF that was sent, so both should still say so.
+  } else if (attachmentKind(mime) === "image") {
     const outcome = await optimize(file, filename, ATTACHMENT_OPTIONS);
     if (!outcome.ok) {
       // 502: the failure is upstream, not in the request. Saying so honestly means

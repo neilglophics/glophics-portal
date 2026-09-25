@@ -43,6 +43,7 @@ const {
 const { deleteAttachment, isBlobConfigured, putAttachment, readAttachment } = await import(
   "../lib/blob/store"
 );
+const { isAnimatedGif, looksLikeGif } = await import("../lib/chat/attachments");
 
 const users: string[] = [];
 const conversations: string[] = [];
@@ -328,6 +329,37 @@ try {
     "a deleted message serves no attachment metadata",
     afterMsgDelete.messages.find((m) => m.id === deletedFileMsg.message.id)!.attachments.length === 0,
   );
+
+  console.log("\nanimated GIFs survive intact");
+
+  // A hand-built two-frame 1x1 animated GIF: the smallest thing that genuinely
+  // animates. The optimiser turns this into a single-frame WebP, which is why the
+  // upload route skips it for GIFs — this asserts the bytes come back untouched.
+  const animated = Buffer.from([
+    0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00,
+    0xff, 0x00, 0x00, 0x00, 0x00, 0xff,
+    0x21, 0xff, 0x0b, 0x4e, 0x45, 0x54, 0x53, 0x43, 0x41, 0x50, 0x45, 0x32, 0x2e, 0x30,
+    0x03, 0x01, 0x00, 0x00, 0x00,
+    0x21, 0xf9, 0x04, 0x00, 0x32, 0x00, 0x00, 0x00,
+    0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00,
+    0x21, 0xf9, 0x04, 0x00, 0x32, 0x00, 0x00, 0x00,
+    0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x4c, 0x01, 0x00,
+    0x3b,
+  ]);
+
+  check("the fixture really is an animated gif", looksLikeGif(animated) && isAnimatedGif(animated));
+
+  const gif = await stage(dm.id, alice, "party.gif", "image/gif", animated);
+  check("a gif keeps its own mime type", gif.mime === "image/gif", gif.mime);
+  check("and its own filename", gif.filename.endsWith(".gif"), gif.filename);
+
+  const gifMeta = await attachmentForDownload(gif.id, alice);
+  const gifBytes = Buffer.from(
+    await new Response((await readAttachment(gifMeta!.blobPathname))!.stream).arrayBuffer(),
+  );
+  check("the stored bytes are byte-for-byte the original", gifBytes.equals(animated));
+  check("so it is STILL animated after the round trip", isAnimatedGif(gifBytes));
+  check("and is served as image/gif", gifMeta!.mime === "image/gif", gifMeta!.mime);
 
   // ================= discarding and sweeping =================
   console.log("\nhousekeeping");
