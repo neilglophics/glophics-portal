@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AvatarStack } from "@/components/ui/Avatar";
+import { PeopleCell } from "@/components/ui/Avatar";
 import { JiraAutoSync } from "@/components/dashboard/JiraAutoSync";
 import { Chip, Dash, JiraChip } from "@/components/ui/Chips";
 import { Icon } from "@/components/ui/Icon";
@@ -7,16 +7,17 @@ import { ClaimRepoLinks, TicketLink } from "@/components/ui/JiraLinks";
 import { Empty, Page, StatTile } from "@/components/ui/Layout";
 import { RepoStrip } from "@/components/ui/RepoStrip";
 import { Table, Td, Th, Tr } from "@/components/ui/Table";
+import { BookingBar, TicketCell, TicketTitle } from "@/components/ui/TicketCell";
 import { can, currentUserOrNull } from "@/lib/auth/require";
 import { getBoard, getJiraIssues } from "@/lib/db/queries/board";
 import { avatarVersions } from "@/lib/db/queries/avatars";
 import { describeJiraConfig, issueUrl } from "@/lib/jira/client";
 import { boardSummary } from "@/lib/shared/occupancy";
 import { jiraActivity } from "@/lib/shared/activity";
-import { agoText } from "@/lib/shared/format";
+import { formatDateTime } from "@/lib/shared/format";
 import { jiraBranchConflicts, type JiraBranchConflict } from "@/lib/shared/jira-conflicts";
 import { ENV_STATE, TONE, shortRepo } from "@/lib/shared/tokens";
-import type { Claim, Environment } from "@/lib/types";
+import type { Claim, DirectoryUser, Environment } from "@/lib/types";
 import {
   boardRows,
   claimRows,
@@ -25,7 +26,7 @@ import {
   leftText,
   minutesLeft,
   nullsLast,
-  progress,
+  peopleOf,
   type EnvRow,
   type TicketRow,
 } from "@/lib/shared/view-model";
@@ -94,75 +95,147 @@ function JiraConflictNotice({
   );
 }
 
-function Bar({ pct, className }: { pct: number; className: string }) {
-  return (
-    <div className="h-1.5 w-full overflow-hidden rounded-full bg-subtle-2">
-      <div className={`h-full rounded-full ${className}`} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
-    </div>
-  );
-}
+/** How many held tickets a card lists before summarising the rest. Three is
+ *  what fits beside two other cards without one card towering over the row. */
+const CARD_TICKETS = 3;
 
-function HeldCard({ row, jira_base_url }: { row: EnvRow; jira_base_url: string | null }) {
+/**
+ * An environment that is not free, as a card that answers the questions people
+ * open the dashboard with: which tickets are on it, what they ARE (the title,
+ * not just the key), who has them, what state they are in, and when it frees.
+ *
+ * It used to show the environment and a comma-separated line of bare keys, so
+ * every card was a click into Jira before it told you anything.
+ */
+function HeldCard({
+  row,
+  jira_base_url,
+  directory,
+  avatars,
+}: {
+  row: EnvRow;
+  jira_base_url: string | null;
+  directory: DirectoryUser[];
+  avatars: Map<string, string>;
+}) {
   const token = ENV_STATE[row.state];
   const tone = TONE[token.tone];
   const minutes = row.soonest ? minutesLeft(row.soonest) : null;
+  const tickets = [...row.claims].sort(
+    (a, b) => nullsLast(minutesLeft(a)) - nullsLast(minutesLeft(b)) || a.id.localeCompare(b.id),
+  );
+  const shown = tickets.slice(0, CARD_TICKETS);
+  const more = tickets.length - shown.length;
+  const href = `/environments/${encodeURIComponent(row.id)}`;
 
   return (
-    <article className="overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line">
-      <div className={`flex h-24 flex-col justify-between p-3 ${tone.soft}`}>
-        <div className="flex items-start justify-between">
+    <article className="flex flex-col overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line transition hover:shadow-md">
+      <div className={`p-4 ${tone.soft}`}>
+        <div className="flex items-center justify-between gap-2">
           <span
-            className={`rounded-full bg-surface/70 px-2.5 py-1 text-[10px] font-bold backdrop-blur ${tone.fg}`}
+            className={`inline-flex items-center gap-1.5 rounded-full bg-surface/70 px-2.5 py-1 text-[10px] font-bold backdrop-blur ${tone.fg}`}
           >
+            <span className={`h-1.5 w-1.5 rounded-full ${token.dot}`} />
             {token.label}
           </span>
+          <span className="truncate rounded-md bg-surface/70 px-2 py-0.5 text-[10px] font-bold tracking-wide text-muted">
+            {row.accountName.toUpperCase()}
+          </span>
         </div>
-        <RepoStrip env={row.env} claims={row.claims} />
+        <Link href={href} className="mt-2.5 block truncate text-[15px] font-bold hover:underline">
+          {row.name}
+        </Link>
+        <div className="mt-2.5 flex items-center justify-between gap-2">
+          <RepoStrip env={row.env} claims={row.claims} />
+          <span className="whitespace-nowrap text-[11px] font-semibold text-body">
+            {row.freeRepos.length} of {row.repos.length} free
+          </span>
+        </div>
       </div>
 
-      <div className="p-4">
-        <span className="inline-block rounded-md bg-subtle-2 px-2 py-0.5 text-[10px] font-bold tracking-wide text-muted">
-          {row.accountName.toUpperCase()}
-        </span>
-        <h3 className="mt-2.5 text-sm font-bold">{row.name}</h3>
-
-        <div className="mt-3">
-          <Bar pct={row.soonest ? progress(row.soonest) : 0} className={token.bar} />
-        </div>
-        <p className={`mt-1.5 text-[11px] ${isUrgent(minutes) ? "font-medium text-warn" : "text-faint"}`}>
-          {!row.soonest
-            ? "No end time set"
-            : minutes !== null && minutes <= 0
-              ? "Booking expired"
-              : `Frees in ${leftText(minutes)}`}
-        </p>
-
-        <div className="mt-3.5 flex items-center gap-2.5 border-t border-line-soft pt-3.5">
-          {row.claims.length ? (
-            <>
-              <AvatarStack people={row.people} />
-              {/* No external icon here: several keys share one truncated line,
-                  and an icon each would eat the width the keys need. */}
-              <p className="ml-1 flex min-w-0 items-center gap-1 truncate text-[11px] text-faint">
-                {row.ticketIds.map((ticket_id, index) => (
-                  <span key={ticket_id} className="whitespace-nowrap">
+      <div className="flex-1 divide-y divide-line-soft px-4">
+        {shown.length ? (
+          shown.map((claim) => {
+            const people = peopleOf([claim], directory, avatars);
+            const left = minutesLeft(claim);
+            return (
+              <div key={claim.id} className="py-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex min-w-0 items-center gap-1.5">
                     <TicketLink
-                      ticketKey={ticket_id}
-                      source={row.claims.find((claim) => claim.id === ticket_id)?.source}
+                      ticketKey={claim.id}
+                      source={claim.source}
                       jiraBaseUrl={jira_base_url}
-                      icon={false}
-                      className="text-[11px] font-semibold text-faint hover:text-brand-fg"
+                      className="text-xs font-bold text-brand-fg"
+                      iconClassName="h-2.5 w-2.5 opacity-60"
                     />
-                    {index < row.ticketIds.length - 1 ? "," : ""}
+                    <JiraChip status={claim.status} />
                   </span>
-                ))}
-              </p>
-            </>
-          ) : (
-            <p className="text-[11px] text-faint">
-              {row.offline.length ? "Offline — no active claim" : "No active claim"}
-            </p>
-          )}
+                  <span className="flex shrink-0 gap-1">
+                    {claim.repos.map((repo) => (
+                      <span
+                        key={repo}
+                        title={repo}
+                        className="rounded bg-subtle-2 px-1.5 py-0.5 text-[9px] font-bold text-muted"
+                      >
+                        {shortRepo(repo)}
+                      </span>
+                    ))}
+                  </span>
+                </div>
+                <div className="mt-1.5">
+                  <TicketTitle claim={claim} lines={2} />
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <PeopleCell people={people} max={2} />
+                  </div>
+                  <span
+                    className={`shrink-0 whitespace-nowrap text-[11px] font-semibold ${
+                      left !== null && left <= 0 ? "text-bad" : isUrgent(left) ? "text-warn" : "text-muted"
+                    }`}
+                  >
+                    {left === null ? "No end time" : left <= 0 ? "Overdue" : leftText(left)}
+                  </span>
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <p className="py-4 text-[12px] text-faint">
+            {row.offline.length
+              ? `${row.offline.map(shortRepo).join(", ")} offline — nothing is booked on it`
+              : "No active claim"}
+          </p>
+        )}
+      </div>
+
+      <div className="border-t border-line-soft bg-subtle/60 px-4 py-3">
+        {row.soonest ? (
+          <>
+            <div className="flex items-center justify-between gap-2 text-[11px]">
+              <span className={isUrgent(minutes) ? "font-semibold text-warn" : "text-muted"}>
+                {minutes !== null && minutes <= 0
+                  ? "Booking overdue"
+                  : `First repo frees in ${leftText(minutes)}`}
+              </span>
+              <span className="whitespace-nowrap text-faint">{formatDateTime(row.soonest.endTime)}</span>
+            </div>
+            <BookingBar claim={row.soonest} minutes={minutes} className="mt-1.5 w-full" />
+          </>
+        ) : (
+          <p className="text-[11px] text-faint">{row.claims.length ? "No end time set" : "Nothing booked"}</p>
+        )}
+        <div className="mt-2.5 flex items-center justify-between text-[11px]">
+          <span className="text-faint">
+            {more > 0
+              ? `+${more} more ticket${more === 1 ? "" : "s"}`
+              : `${tickets.length} ticket${tickets.length === 1 ? "" : "s"}`}
+          </span>
+          <Link href={href} className="inline-flex items-center gap-1 font-semibold text-brand-fg hover:underline">
+            Open environment
+            <Icon name="chevron" className="h-3 w-3" />
+          </Link>
         </div>
       </div>
     </article>
@@ -186,44 +259,41 @@ function JiraUpdateRow({
 }) {
   return (
     <Tr className="group">
-      <Td className="w-[23%] align-top">
-        <span className="inline-flex items-center gap-1.5">
-          <TicketLink
-            ticketKey={row.claim.id}
-            source={row.claim.source}
-            jiraBaseUrl={jira_base_url}
-            className="text-[13px] font-bold text-brand-fg"
-          />
-          {activity ? <Chip className={activity.chipClassName}>{activity.badge}</Chip> : null}
-        </span>
-        {row.claim.jiraUpdatedAt ? (
-          <p className="mt-1 whitespace-nowrap text-[10px] font-medium text-faint">
-            Updated {agoText(row.claim.jiraUpdatedAt)} ago
-          </p>
-        ) : null}
+      <Td className="w-[40%] align-top">
+        <TicketCell
+          claim={row.claim}
+          jiraBaseUrl={jira_base_url}
+          showUpdated
+          badge={activity ? <Chip className={activity.chipClassName}>{activity.badge}</Chip> : null}
+        />
         {activity ? (
-          <p className="mt-1.5 max-w-[22rem] whitespace-normal break-words border-l-2 border-line-2 pl-2 text-[11px] leading-4 text-muted">
+          <p className="mt-1.5 max-w-[30rem] whitespace-normal break-words border-l-2 border-line-2 pl-2 text-[11px] leading-4 text-muted">
             {activity.message}
           </p>
         ) : null}
       </Td>
-      <Td className="w-[34%] align-top">
-        <p className="max-w-[34rem] whitespace-normal break-words text-sm font-medium leading-5 text-ink-2">
-          {row.claim.summary ?? "—"}
-        </p>
-      </Td>
-      <Td className="w-[10%] align-top">
-        <AvatarStack people={row.people} max={3} />
+      <Td className="w-[16%] align-top">
+        <div className="max-w-[13rem]">
+          <PeopleCell people={row.people} max={3} />
+        </div>
       </Td>
       <Td className="w-[14%] align-top">
         <JiraChip status={row.claim.status} />
       </Td>
-      <Td className="w-[12%] align-top">
-        <p className="inline-flex max-w-[12rem] whitespace-normal break-all rounded-lg bg-subtle-2 px-2 py-1 font-mono text-[11px] font-medium text-body">
+      <Td className="w-[18%] align-top">
+        {row.serverId ? (
+          <Link
+            href={`/environments/${encodeURIComponent(row.serverId)}`}
+            className="block truncate text-xs font-semibold text-ink-2 hover:text-brand-fg hover:underline"
+          >
+            {row.env}
+          </Link>
+        ) : null}
+        <p className="mt-1 inline-flex max-w-[12rem] whitespace-normal break-all rounded-lg bg-subtle-2 px-2 py-1 font-mono text-[11px] font-medium text-body">
           {row.claim.branch ?? row.env}
         </p>
       </Td>
-      <Td className="w-[7%] align-top">
+      <Td className="w-[12%] align-top">
         {row.claim.repos.length ? (
           <ClaimRepoLinks
             repos={row.claim.repos}
@@ -366,7 +436,15 @@ export default async function DashboardPage() {
         </div>
         <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {held.length ? (
-            held.map((row) => <HeldCard key={row.id} row={row} jira_base_url={jira_base_url} />)
+            held.map((row) => (
+              <HeldCard
+                key={row.id}
+                row={row}
+                jira_base_url={jira_base_url}
+                directory={directory}
+                avatars={avatars}
+              />
+            ))
           ) : (
             <Empty message="Nothing is held — every environment is free." />
           )}
@@ -405,12 +483,11 @@ export default async function DashboardPage() {
             minWidth="min-w-[1100px]"
             head={
               <>
-                <Th className="w-[23%]">Ticket activity</Th>
-                <Th className="w-[34%]">Summary</Th>
-                <Th className="w-[10%]">Assignee</Th>
+                <Th className="w-[40%]">Ticket</Th>
+                <Th className="w-[16%]">Assignee</Th>
                 <Th className="w-[14%]">Status</Th>
-                <Th className="w-[12%]">Branch</Th>
-                <Th className="w-[7%]">Repos</Th>
+                <Th className="w-[18%]">Environment / branch</Th>
+                <Th className="w-[12%]">Repos</Th>
               </>
             }
           >

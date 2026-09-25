@@ -1,9 +1,15 @@
-import { Chip } from "@/components/ui/Chips";
+import { PeopleCell } from "@/components/ui/Avatar";
+import { JiraChip } from "@/components/ui/Chips";
+import { Icon } from "@/components/ui/Icon";
 import { TicketLink } from "@/components/ui/JiraLinks";
 import { Notice, Page, PageHead } from "@/components/ui/Layout";
 import { Table, Td, Th, Tr } from "@/components/ui/Table";
-import { getJiraSkipped } from "@/lib/db/queries/board";
+import { TicketTitle } from "@/components/ui/TicketCell";
+import { avatarVersions } from "@/lib/db/queries/avatars";
+import { getBoard, getJiraSkipped } from "@/lib/db/queries/board";
 import { describeJiraConfig } from "@/lib/jira/client";
+import { agoText } from "@/lib/shared/format";
+import { peopleOf } from "@/lib/shared/view-model";
 
 /**
  * Tickets the sync could not place, with the reason and the fix.
@@ -30,7 +36,11 @@ function fixFor(reason: string): string {
 }
 
 export default async function NotTrackedPage() {
-  const skipped = await getJiraSkipped();
+  const [skipped, { directory }, avatars] = await Promise.all([
+    getJiraSkipped(),
+    getBoard(),
+    avatarVersions(),
+  ]);
   const jiraBaseUrl = describeJiraConfig().baseUrl;
 
   return (
@@ -54,41 +64,67 @@ export default async function NotTrackedPage() {
       <Table
         isEmpty={!skipped.length}
         empty="Nothing was skipped — every ticket matched an environment."
+        minWidth="min-w-[1000px]"
         head={
           <>
-            <Th>Ticket</Th>
+            <Th className="w-[30%]">Ticket</Th>
             <Th>Status</Th>
-            <Th>Account</Th>
-            <Th>Branch</Th>
-            <Th>Why it was skipped</Th>
-            <Th>What to do</Th>
+            <Th>Assignees</Th>
+            <Th>Account / branch on the ticket</Th>
+            <Th className="w-[30%]">Why it was skipped</Th>
           </>
         }
       >
-        {skipped.map((row) => (
-          <Tr key={row.key}>
-            <Td>
-              {/* The fix for every row on this page is "correct the ticket in
-                  Jira", so the key is the way there. Everything here came out of
-                  a Jira query by definition — there are no manual claims to
-                  guard against. */}
-              <TicketLink ticketKey={row.key} jiraBaseUrl={jiraBaseUrl} />
-            </Td>
-            <Td>{row.status ? <Chip className="bg-subtle-2 text-muted">{row.status}</Chip> : "—"}</Td>
-            <Td>
-              <span className="text-sm text-body">{row.accountName || "—"}</span>
-            </Td>
-            <Td>
-              <span className="text-sm text-body">{row.branch || "—"}</span>
-            </Td>
-            <Td>
-              <span className="text-sm text-bad">{row.reason}</span>
-            </Td>
-            <Td>
-              <span className="text-xs text-muted">{fixFor(row.reason)}</span>
-            </Td>
-          </Tr>
-        ))}
+        {skipped.map((row) => {
+          const people = peopleOf([row], directory, avatars);
+
+          return (
+            <Tr key={row.key}>
+              <Td className="align-top">
+                {/* The fix for every row on this page is "correct the ticket in
+                    Jira", so the key is the way there. Everything here came out of
+                    a Jira query by definition — there are no manual claims to
+                    guard against. */}
+                <div className="max-w-[28rem]">
+                  <TicketLink
+                    ticketKey={row.key}
+                    jiraBaseUrl={jiraBaseUrl}
+                    className="text-xs font-bold text-brand-fg"
+                  />
+                  <div className="mt-1">
+                    <TicketTitle claim={{ summary: row.summary, note: null, source: "jira" }} />
+                  </div>
+                  {row.jiraUpdatedAt ? (
+                    <p className="mt-1 text-[10px] text-faint">Updated {agoText(row.jiraUpdatedAt)} ago</p>
+                  ) : null}
+                </div>
+              </Td>
+              <Td className="align-top">{row.status ? <JiraChip status={row.status} /> : "—"}</Td>
+              <Td className="align-top">
+                <div className="max-w-[13rem]">
+                  <PeopleCell people={people} />
+                </div>
+              </Td>
+              <Td className="align-top">
+                {/* Shown as typed on the ticket — exact matching means the
+                    difference between this and the real name IS the bug. */}
+                <p className="text-sm text-body">
+                  {row.accountName || <span className="italic text-bad">Account Name empty</span>}
+                </p>
+                <p className="mt-1 inline-flex rounded bg-subtle-2 px-1.5 py-0.5 font-mono text-[10px] text-body">
+                  {row.branch || <span className="italic text-bad">Branch empty</span>}
+                </p>
+              </Td>
+              <Td className="align-top">
+                <p className="text-sm font-medium text-bad">{row.reason}</p>
+                <p className="mt-1.5 flex items-start gap-1.5 text-xs text-muted">
+                  <Icon name="chevron" className="mt-0.5 h-3 w-3 shrink-0" />
+                  {fixFor(row.reason)}
+                </p>
+              </Td>
+            </Tr>
+          );
+        })}
       </Table>
     </Page>
   );

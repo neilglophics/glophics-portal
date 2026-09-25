@@ -162,7 +162,9 @@ export function personAvatarUrl(
 }
 
 export function peopleOf(
-  claims: Claim[],
+  /** Only the assignee fields are read, so anything that carries them — a
+   *  Not-tracked row, say — resolves the same way a claim does. */
+  claims: Pick<Claim, "userIds" | "rawAssignees">[],
   directory: DirectoryUser[],
   /** From avatarVersions(). Optional so a caller that renders no faces — the
    *  badge counts, say — does not have to fetch it. */

@@ -1,13 +1,13 @@
 import Link from "next/link";
-import { AvatarStack } from "@/components/ui/Avatar";
-import { JiraChip } from "@/components/ui/Chips";
-import { ClaimRepoLinks, TicketLink } from "@/components/ui/JiraLinks";
+import { PeopleCell } from "@/components/ui/Avatar";
+import { ClaimRepoLinks } from "@/components/ui/JiraLinks";
 import { Page, PageHead, StatTile } from "@/components/ui/Layout";
 import { Table, Td, Th, Tr } from "@/components/ui/Table";
+import { BookingCell, TicketCell } from "@/components/ui/TicketCell";
 import { getBoard } from "@/lib/db/queries/board";
 import { avatarVersions } from "@/lib/db/queries/avatars";
 import { describeJiraConfig } from "@/lib/jira/client";
-import { isUrgent, leftText, minutesLeft, nullsLast, peopleOf } from "@/lib/shared/view-model";
+import { isUrgent, minutesLeft, nullsLast, peopleOf } from "@/lib/shared/view-model";
 
 /**
  * One row per (claim × repository) — what "in use" actually means.
@@ -75,24 +75,20 @@ export default async function InUsePage() {
       <Table
         isEmpty={!rows.length}
         empty="Nothing is held — every repository is free."
+        minWidth="min-w-[1000px]"
         head={
           <>
-            <Th>Holders</Th>
             <Th>Repository</Th>
             <Th>Environment</Th>
-            <Th>Ticket</Th>
-            <Th>Status</Th>
+            <Th className="w-[34%]">Ticket</Th>
+            <Th>Holders</Th>
             <Th className="text-right">Frees in</Th>
           </>
         }
       >
         {rows.map((row) => (
           <Tr key={`${row.claim.id}::${row.serverId}::${row.repo}`}>
-            <Td>
-              <AvatarStack people={row.people} />
-            </Td>
-
-            <Td>
+            <Td className="align-top">
               <div className="flex items-center gap-2">
                 {/* One row is one held repository, so there is exactly one badge —
                     and it opens that repository. */}
@@ -105,7 +101,7 @@ export default async function InUsePage() {
               </div>
             </Td>
 
-            <Td>
+            <Td className="align-top">
               {row.serverId ? (
                 <Link href={`/environments/${encodeURIComponent(row.serverId)}`} className="group block min-w-0">
                   <span className="block truncate text-sm font-semibold group-hover:text-brand-fg group-hover:underline">
@@ -121,26 +117,18 @@ export default async function InUsePage() {
               )}
             </Td>
 
-            <Td>
-              <TicketLink
-                ticketKey={row.claim.id}
-                source={row.claim.source}
-                jiraBaseUrl={jiraBaseUrl}
-              />
+            <Td className="align-top">
+              <TicketCell claim={row.claim} jiraBaseUrl={jiraBaseUrl} showStatus showBranch />
             </Td>
 
-            <Td>
-              <JiraChip status={row.claim.status} />
+            <Td className="align-top">
+              <div className="max-w-[13rem]">
+                <PeopleCell people={row.people} />
+              </div>
             </Td>
 
-            <Td className="text-right">
-              <span
-                className={`whitespace-nowrap text-sm font-semibold ${
-                  isUrgent(row.minutesLeft) ? "text-warn" : "text-muted"
-                }`}
-              >
-                {leftText(row.minutesLeft)}
-              </span>
+            <Td className="align-top text-right">
+              <BookingCell claim={row.claim} minutes={row.minutesLeft} />
             </Td>
           </Tr>
         ))}

@@ -4,6 +4,7 @@ import { Chip, Dash, Muted } from "@/components/ui/Chips";
 import { Icon } from "@/components/ui/Icon";
 import { TicketLink } from "@/components/ui/JiraLinks";
 import { Table, Td, Th, Tr } from "@/components/ui/Table";
+import { TicketTitle } from "@/components/ui/TicketCell";
 import { PresenceCell } from "@/components/users/PresenceCell";
 import { AVAILABILITY } from "@/lib/shared/tokens";
 import { isUrgent, leftText } from "@/lib/shared/view-model";
@@ -66,7 +67,12 @@ function SortTh({
   );
 }
 
-/** Ticket keys, linked to Jira, with the tail summarised rather than wrapped. */
+/**
+ * Tickets, linked to Jira, each with its title on the same line, and the tail
+ * summarised rather than wrapped. One line each, not the two a ticket table
+ * gives a title: a roster row carries up to six of these, and the drill-down
+ * is one click away for the full text.
+ */
 function TicketKeys({
   rows,
   jiraBaseUrl,
@@ -79,20 +85,25 @@ function TicketKeys({
   const shown = rows.slice(0, KEYS_SHOWN);
 
   return (
-    <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+    <ul className="space-y-1">
       {shown.map((row) => (
-        <TicketLink
-          key={row.claim.id}
-          ticketKey={row.claim.id}
-          jiraBaseUrl={jiraBaseUrl}
-          source={row.claim.source}
-          icon={false}
-        />
+        <li key={row.claim.id} className="flex max-w-[20rem] items-baseline gap-2">
+          <TicketLink
+            ticketKey={row.claim.id}
+            jiraBaseUrl={jiraBaseUrl}
+            source={row.claim.source}
+            icon={false}
+            className="shrink-0 text-[11px] font-bold text-brand-fg"
+          />
+          <span className="min-w-0 flex-1">
+            <TicketTitle claim={row.claim} lines={1} className="text-[11px] text-body" />
+          </span>
+        </li>
       ))}
       {rows.length > shown.length ? (
-        <span className="text-[11px] text-faint">+{rows.length - shown.length}</span>
+        <li className="text-[11px] text-faint">+{rows.length - shown.length} more</li>
       ) : null}
-    </span>
+    </ul>
   );
 }
 

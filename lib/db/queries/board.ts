@@ -282,15 +282,35 @@ export async function getJiraIssues(): Promise<JiraIssue[]> {
   return rows.map(toJiraIssue);
 }
 
+/**
+ * The Not-tracked list, with each ticket's title and assignees.
+ *
+ * `jira_skipped` stores only what the page needs to explain the skip. The rest
+ * comes from `jira_issues` — and it is always there to join to, because the
+ * sync calls `record()` on every ticket it skips (see lib/jira/sync.ts): a
+ * skipped ticket is by definition not a claim, so it lands in the cache like
+ * any other unclaimed issue. LEFT JOIN rather than JOIN anyway, so a row written
+ * by an older sync, before that held, still shows with its reason.
+ */
 export async function getJiraSkipped(): Promise<JiraSkipped[]> {
   const rows = (await sql`
-    SELECT key, reason, status, account_name, branch FROM jira_skipped ORDER BY key
+    SELECT s.key, s.reason, s.status, s.account_name, s.branch,
+           i.summary, COALESCE(i.user_ids, '{}') AS user_ids,
+           COALESCE(i.raw_assignees, '{}') AS raw_assignees,
+           i.jira_updated_at
+      FROM jira_skipped s
+      LEFT JOIN jira_issues i ON i.key = s.key
+     ORDER BY s.key
   `) as {
     key: string;
     reason: string;
     status: string | null;
     account_name: string | null;
     branch: string | null;
+    summary: string | null;
+    user_ids: string[];
+    raw_assignees: string[];
+    jira_updated_at: string | null;
   }[];
 
   return rows.map((r) => ({
@@ -299,6 +319,10 @@ export async function getJiraSkipped(): Promise<JiraSkipped[]> {
     status: r.status,
     accountName: r.account_name,
     branch: r.branch,
+    summary: r.summary,
+    userIds: r.user_ids,
+    rawAssignees: r.raw_assignees,
+    jiraUpdatedAt: r.jira_updated_at,
   }));
 }
 

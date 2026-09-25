@@ -151,6 +151,12 @@ export interface JiraSkipped {
   status: string | null;
   accountName: string | null;
   branch: string | null;
+  /** Joined from `jira_issues` on read — see getJiraSkipped(). Null only for a
+   *  row an older sync wrote before every skipped ticket was also cached. */
+  summary: string | null;
+  userIds: DirectoryUserId[];
+  rawAssignees: string[];
+  jiraUpdatedAt: string | null;
 }
 
 // ---------- settings ----------

@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AvatarStack } from "@/components/ui/Avatar";
+import { PeopleCell } from "@/components/ui/Avatar";
 import { Dash, HealthChip, JiraChip, Muted, StatusChip } from "@/components/ui/Chips";
 import { ClaimRepoLinks, TicketLink } from "@/components/ui/JiraLinks";
 import { Card, Notice, Page, PageHead } from "@/components/ui/Layout";
 import { Table, Td, Th, Tr } from "@/components/ui/Table";
+import { BookingCell, TicketCell, TicketTitle } from "@/components/ui/TicketCell";
 import { AssignButton, ForceFreeClaimButton, ForceFreeServerButton, NoteButton } from "@/components/env/EnvActions";
 import { currentUserOrNull, can } from "@/lib/auth/require";
 import { getBoard } from "@/lib/db/queries/board";
@@ -164,21 +165,40 @@ export default async function EnvironmentDetailPage({
               <div className="mt-3.5 border-t border-line-soft pt-3.5">
                 {holders.length ? (
                   <>
-                    <div className="flex items-center gap-2.5">
-                      <AvatarStack people={people} />
-                      <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                        {holders.map((holder) => (
-                          <TicketLink
-                            key={holder.id}
-                            ticketKey={holder.id}
-                            source={holder.source}
-                            jiraBaseUrl={jiraBaseUrl}
-                            className="text-[11px] font-semibold text-brand-fg"
-                            iconClassName="h-2.5 w-2.5 opacity-60"
-                          />
-                        ))}
-                      </span>
-                    </div>
+                    <PeopleCell people={people} />
+                    <ul className="mt-3 space-y-2.5">
+                      {holders.map((holder) => {
+                        const left = minutesLeft(holder);
+                        return (
+                          <li key={holder.id} className="rounded-xl bg-subtle px-3 py-2.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <TicketLink
+                                ticketKey={holder.id}
+                                source={holder.source}
+                                jiraBaseUrl={jiraBaseUrl}
+                                className="text-[11px] font-bold text-brand-fg"
+                                iconClassName="h-2.5 w-2.5 opacity-60"
+                              />
+                              <JiraChip status={holder.status} />
+                              <span
+                                className={`ml-auto whitespace-nowrap text-[11px] font-semibold ${
+                                  left !== null && left <= 0
+                                    ? "text-bad"
+                                    : isUrgent(left)
+                                      ? "text-warn"
+                                      : "text-muted"
+                                }`}
+                              >
+                                {left === null ? "No end time" : left <= 0 ? "Overdue" : leftText(left)}
+                              </span>
+                            </div>
+                            <div className="mt-1">
+                              <TicketTitle claim={holder} lines={2} className="text-xs leading-4 text-body" />
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
                     {/* More than one claim on one repo is legal, and the legacy
                         UI called it "Shared". Worth saying out loud. */}
                     {holders.length > 1 ? (
@@ -212,12 +232,12 @@ export default async function EnvironmentDetailPage({
         <Table
           isEmpty={!row.claims.length}
           empty="Nothing is holding this environment."
-          minWidth="min-w-[760px]"
+          minWidth="min-w-[960px]"
           head={
             <>
-              <Th>Holders</Th>
-              <Th>Ticket</Th>
+              <Th className="w-[36%]">Ticket</Th>
               <Th>Status</Th>
+              <Th>Holders</Th>
               <Th>Repositories</Th>
               <Th>Booked</Th>
               <Th className="text-right">Frees in</Th>
@@ -231,24 +251,21 @@ export default async function EnvironmentDetailPage({
 
             return (
               <Tr key={claim.id}>
-                <Td>
-                  <AvatarStack people={people} />
+                <Td className="align-top">
+                  <TicketCell claim={claim} jiraBaseUrl={jiraBaseUrl} showBranch showUpdated />
                 </Td>
-                <Td>
-                  <TicketLink
-                    ticketKey={claim.id}
-                    source={claim.source}
-                    jiraBaseUrl={jiraBaseUrl}
-                  />
-                  <p className="text-[11px] text-faint">{claim.source === "jira" ? "From Jira" : "Manual"}</p>
-                </Td>
-                <Td>
+                <Td className="align-top">
                   <JiraChip status={claim.status} />
                 </Td>
-                <Td>
+                <Td className="align-top">
+                  <div className="max-w-[13rem]">
+                    <PeopleCell people={people} />
+                  </div>
+                </Td>
+                <Td className="align-top">
                   <ClaimRepoLinks repos={claim.repos} environment={env} claims={claims} />
                 </Td>
-                <Td>
+                <Td className="align-top">
                   {claim.startTime || claim.endTime ? (
                     <span className="whitespace-nowrap text-[11px] text-muted">
                       {formatDateTime(claim.startTime) ?? "—"} → {formatDateTime(claim.endTime) ?? "—"}
@@ -257,14 +274,8 @@ export default async function EnvironmentDetailPage({
                     <Dash />
                   )}
                 </Td>
-                <Td className="text-right">
-                  <span
-                    className={`whitespace-nowrap text-sm font-semibold ${
-                      isUrgent(minutes) ? "text-warn" : "text-muted"
-                    }`}
-                  >
-                    {leftText(minutes)}
-                  </span>
+                <Td className="align-top text-right">
+                  <BookingCell claim={claim} minutes={minutes} />
                 </Td>
                 {mayClaim ? (
                   <Td className="text-right">

@@ -30,7 +30,7 @@ export function Table({
       <div className="overflow-x-auto">
         <table className={`w-full ${minWidth} text-left`}>
           <thead>
-            <tr className="border-b border-line text-[10px] font-bold tracking-[0.12em] text-faint">{head}</tr>
+            <tr className="border-b border-line bg-subtle/60 text-[10px] font-bold uppercase tracking-[0.12em] text-faint">{head}</tr>
           </thead>
           <tbody className="divide-y divide-line-soft">{children}</tbody>
         </table>

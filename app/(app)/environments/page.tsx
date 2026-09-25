@@ -1,11 +1,13 @@
 import Link from "next/link";
-import { AvatarStack } from "@/components/ui/Avatar";
+import { AvatarStack, PeopleCell } from "@/components/ui/Avatar";
 import { ButtonLink } from "@/components/ui/Button";
-import { Dash, StatusChip } from "@/components/ui/Chips";
+import { Dash, JiraChip, StatusChip } from "@/components/ui/Chips";
 import { TicketLink } from "@/components/ui/JiraLinks";
 import { Page, PageHead } from "@/components/ui/Layout";
 import { RepoStrip } from "@/components/ui/RepoStrip";
 import { Table, Td, Th, Tr } from "@/components/ui/Table";
+import { BookingBar, TicketTitle } from "@/components/ui/TicketCell";
+import { formatDateTime } from "@/lib/shared/format";
 import { currentUserOrNull } from "@/lib/auth/require";
 import { getBoard } from "@/lib/db/queries/board";
 import { avatarVersions } from "@/lib/db/queries/avatars";
@@ -19,7 +21,6 @@ import {
   leftText,
   minutesLeft,
   normalizeEnvView,
-  progress,
   statusCounts,
   type EnvRow,
 } from "@/lib/shared/view-model";
@@ -48,14 +49,6 @@ function href(base: Search, patch: Search): string {
   }
   const query = params.toString();
   return query ? `/environments?${query}` : "/environments";
-}
-
-function Bar({ pct, className }: { pct: number; className: string }) {
-  return (
-    <div className="h-1.5 w-full overflow-hidden rounded-full bg-subtle-2">
-      <div className={`h-full rounded-full ${className}`} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
-    </div>
-  );
 }
 
 function StatusFilter({
@@ -89,8 +82,9 @@ function EnvironmentRow({ row, jiraBaseUrl }: { row: EnvRow; jiraBaseUrl: string
   const token = ENV_STATE[row.state];
   const minutes = row.soonest ? minutesLeft(row.soonest) : null;
   /* The first ticket is the one the row reports on; the rest are a count, and
-     the environment page lists them all. */
-  const first_claim = row.claims[0] ?? null;
+     the environment page lists them all. It is the soonest-to-free one when
+     there is one, so the Ticket and Booked-until cells describe the same claim. */
+  const first_claim = row.soonest ?? row.claims[0] ?? null;
 
   return (
     <Tr>
@@ -108,26 +102,45 @@ function EnvironmentRow({ row, jiraBaseUrl }: { row: EnvRow; jiraBaseUrl: string
 
       <Td>
         <RepoStrip env={row.env} claims={row.claims} />
+        <p className="mt-1 text-[10px] text-faint">
+          {row.freeRepos.length} of {row.repos.length} free
+        </p>
       </Td>
 
       <Td>
         <StatusChip status={row.state} />
       </Td>
 
-      <Td>{row.people.length ? <AvatarStack people={row.people} /> : <Dash />}</Td>
+      <Td>
+        <div className="max-w-[12rem]">
+          {row.people.length ? <PeopleCell people={row.people} /> : <Dash />}
+        </div>
+      </Td>
 
       <Td>
         {first_claim ? (
-          <>
-            <TicketLink
-              ticketKey={first_claim.id}
-              source={first_claim.source}
-              jiraBaseUrl={jiraBaseUrl}
-            />
-            {row.ticketIds.length > 1 ? (
-              <span className="ml-1 text-[11px] text-faint">+{row.ticketIds.length - 1}</span>
-            ) : null}
-          </>
+          <div className="max-w-[22rem]">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <TicketLink
+                ticketKey={first_claim.id}
+                source={first_claim.source}
+                jiraBaseUrl={jiraBaseUrl}
+                className="text-xs font-bold text-brand-fg"
+              />
+              <JiraChip status={first_claim.status} />
+              {row.ticketIds.length > 1 ? (
+                <span
+                  className="rounded-full bg-subtle-2 px-1.5 text-[10px] font-bold text-muted"
+                  title={row.ticketIds.slice(1).join(", ")}
+                >
+                  +{row.ticketIds.length - 1}
+                </span>
+              ) : null}
+            </div>
+            <div className="mt-1">
+              <TicketTitle claim={first_claim} lines={1} className="text-xs text-body" />
+            </div>
+          </div>
         ) : (
           <Dash />
         )}
@@ -136,12 +149,21 @@ function EnvironmentRow({ row, jiraBaseUrl }: { row: EnvRow; jiraBaseUrl: string
       <Td>
         {row.soonest ? (
           <>
-            <p className={`text-sm ${isUrgent(minutes) ? "font-semibold text-warn" : "text-body"}`}>
-              {leftText(minutes)}
+            <p
+              className={`text-sm ${
+                minutes !== null && minutes <= 0
+                  ? "font-semibold text-bad"
+                  : isUrgent(minutes)
+                    ? "font-semibold text-warn"
+                    : "text-body"
+              }`}
+            >
+              {minutes !== null && minutes <= 0 ? "Overdue" : leftText(minutes)}
             </p>
-            <div className="mt-1.5 w-24">
-              <Bar pct={progress(row.soonest)} className={token.bar} />
-            </div>
+            <BookingBar claim={row.soonest} minutes={minutes} className="mt-1.5 w-24" />
+            <p className="mt-1 whitespace-nowrap text-[10px] text-faint">
+              until {formatDateTime(row.soonest.endTime)}
+            </p>
           </>
         ) : row.claims.length ? (
           <span className="text-xs text-faint">No end time</span>
@@ -205,7 +227,7 @@ function MatrixView({
       <div className="overflow-x-auto">
         <table className="min-w-[760px] w-full text-left">
           <thead>
-            <tr className="border-b border-line text-[10px] font-bold tracking-[0.12em] text-faint">
+            <tr className="border-b border-line bg-subtle/60 text-[10px] font-bold uppercase tracking-[0.12em] text-faint">
               <Th>Account</Th>
               {orderedRepos.map((repo) => (
                 <Th key={repo}>{repoLabel(repo)}</Th>
@@ -239,14 +261,20 @@ function MatrixView({
                           <div className="space-y-2">
                             {cells.map(({ claim, envName, people }) => (
                               <div key={`${claim.id}-${repo}`} className="rounded-lg border border-line-soft bg-subtle-2 p-2">
-                                <TicketLink
-                                  ticketKey={claim.id}
-                                  source={claim.source}
-                                  jiraBaseUrl={jiraBaseUrl}
-                                  className="text-xs font-bold text-brand-fg"
-                                  iconClassName="h-2.5 w-2.5 opacity-60"
-                                />
-                                <div className="mt-1 flex items-center gap-2 min-w-0">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <TicketLink
+                                    ticketKey={claim.id}
+                                    source={claim.source}
+                                    jiraBaseUrl={jiraBaseUrl}
+                                    className="text-xs font-bold text-brand-fg"
+                                    iconClassName="h-2.5 w-2.5 opacity-60"
+                                  />
+                                  <JiraChip status={claim.status} />
+                                </div>
+                                <div className="mt-1 max-w-[16rem]">
+                                  <TicketTitle claim={claim} lines={2} className="text-[11px] leading-4 text-body" />
+                                </div>
+                                <div className="mt-1.5 flex items-center gap-2 min-w-0">
                                   {people.length ? <AvatarStack people={people} max={2} /> : null}
                                   {people.length ? (
                                     <span className="truncate text-[10px] text-faint" title={people.map((person) => person.name).join(", ")}>

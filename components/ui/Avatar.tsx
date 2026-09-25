@@ -68,6 +68,45 @@ export function Avatar({
   );
 }
 
+/**
+ * Faces AND names. The stack alone answers "how many", not "who": most of the
+ * board has no uploaded picture, so the faces are initials that only mean
+ * something to people who already know. A label that matched nobody in the
+ * directory is said in amber, the same as the roster does.
+ */
+export function PeopleCell({
+  people,
+  max = 3,
+  empty = "Unassigned",
+}: {
+  people: (AvatarPerson & { unmatched?: boolean })[];
+  max?: number;
+  empty?: string;
+}) {
+  if (!people.length) return <span className="text-xs text-faint">{empty}</span>;
+
+  const names = people.slice(0, 2);
+  const rest = people.length - names.length;
+  const unmatched = people.some((person) => person.unmatched);
+
+  return (
+    <div className="flex min-w-0 items-center gap-2.5" title={people.map((person) => person.name).join(", ")}>
+      <div className="flex shrink-0 -space-x-2">
+        {people.slice(0, max).map((person) => (
+          <Avatar key={person.id} person={person} size="h-7 w-7" />
+        ))}
+      </div>
+      <div className="min-w-0">
+        <p className="truncate text-xs font-semibold text-ink-2">
+          {names.map((person) => person.name).join(", ")}
+          {rest > 0 ? <span className="font-medium text-faint"> +{rest}</span> : null}
+        </p>
+        {unmatched ? <p className="truncate text-[10px] text-warn">Name not in the directory</p> : null}
+      </div>
+    </div>
+  );
+}
+
 export function AvatarStack({ people, max = 3 }: { people: AvatarPerson[]; max?: number }) {
   if (!people.length) return <span className="text-sm text-faintest">—</span>;
 
