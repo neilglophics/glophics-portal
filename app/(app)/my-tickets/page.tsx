@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { RefreshTickets } from "@/components/tickets/RefreshTickets";
 import { TicketTable } from "@/components/TicketTable";
+import { TicketKanban } from "@/components/tickets/TicketKanban";
 import { FilterLink } from "@/components/ui/Chips";
 import { Notice, Page, PageHead } from "@/components/ui/Layout";
 import { Pagination } from "@/components/ui/Pagination";
@@ -61,12 +62,27 @@ import { boardRows, claimRows } from "@/lib/shared/view-model";
  */
 export const metadata = { title: "My tickets · Glophics Portal" };
 
-type Search = { page?: string; status?: string };
+type Search = { page?: string; status?: string; view?: string };
 
-/** Page 1 and "every status" drop their parameter, so the default view has a
- *  clean URL — the rule the Health and Environments pages already follow. */
-function ticketsHref({ status, page }: { status?: string | null; page?: number }): string {
+/** The board shows the whole list in one go. The Jira cache is hard-capped at
+ *  500 rows (MAX_PAGES in lib/jira/sync.ts), so this is "everything" rather than
+ *  a second page size to keep in step. */
+const BOARD_LIMIT = 500;
+
+/** Page 1, "every status" and the table view drop their parameter, so the
+ *  default view has a clean URL — the rule the Health and Environments pages
+ *  already follow. */
+function ticketsHref({
+  status,
+  page,
+  view,
+}: {
+  status?: string | null;
+  page?: number;
+  view?: "board" | null;
+}): string {
   const params = new URLSearchParams();
+  if (view === "board") params.set("view", "board");
   if (status) params.set("status", status);
   if (page && page > 1) params.set("page", String(page));
 
@@ -93,12 +109,17 @@ export default async function MyTicketsPage({ searchParams }: { searchParams: Pr
   // Normalised here as well as inside the query, because the chips compare
   // against it: `?status=IN%20PROGRESS` must light the same chip that
   // `?status=in progress` does, and both must be the one the query filtered on.
-  const selected = search.status ? statusKey(search.status) : null;
+  // The board is every status side by side, so a status filter or a page number
+  // would only make a column lie about what is in it — both are ignored there.
+  const board = search.view === "board";
+  const selected = !board && search.status ? statusKey(search.status) : null;
   const page = await getTicketPage({
-    page: pageNumber(search.page),
+    page: board ? 1 : pageNumber(search.page),
+    perPage: board ? BOARD_LIMIT : undefined,
     mine: [...values],
     status: selected,
   });
+  const viewParam = board ? "board" : null;
 
   const rows = [
     ...claimRows(environments, accounts, page.claims, directory, avatars),
@@ -149,7 +170,13 @@ export default async function MyTicketsPage({ searchParams }: { searchParams: Pr
       {/* One status is not a choice, so the row would be noise — the same reason
           the pager hides itself on a single page. It still renders while a
           filter is on, or a narrowed view could have no way back. */}
-      {page.statuses.length > 1 || selected ? (
+      <div className="flex items-center gap-2 pb-3">
+        <span className="text-[11px] font-semibold text-faint">View</span>
+        <FilterLink href={ticketsHref({})} label="Table" active={!board} />
+        <FilterLink href={ticketsHref({ view: "board" })} label="Board" active={board} />
+      </div>
+
+      {!board && (page.statuses.length > 1 || selected) ? (
         <div className="flex flex-wrap items-center gap-2 pb-3">
           <FilterLink href={ticketsHref({})} label="All" count={total} active={!selected} />
           {page.statuses.map((entry) => (
@@ -188,26 +215,38 @@ export default async function MyTicketsPage({ searchParams }: { searchParams: Pr
         cache to find.
       </p>
 
-      <TicketTable
-        rows={rows}
-        showHolding
-        environments={environments}
-        claims={claims}
-        jiraBaseUrl={jiraBaseUrl}
-        empty={
-          selected
-            ? `Nothing of yours is at ${statusLabel}.`
-            : "Nothing on the board is assigned to you."
-        }
-      />
-      <Pagination
-        {...page.position}
-        label="tickets"
-        // The status rides along, or page 2 would silently widen back to
-        // everything.
-        href={(n) => ticketsHref({ status: selected, page: n })}
-        window={pageWindow(page.position.page, page.position.pageCount)}
-      />
+      {board ? (
+        <TicketKanban
+          rows={rows}
+          statuses={page.statuses}
+          environments={environments}
+          claims={claims}
+          jiraBaseUrl={jiraBaseUrl}
+        />
+      ) : (
+        <>
+          <TicketTable
+            rows={rows}
+            showHolding
+            environments={environments}
+            claims={claims}
+            jiraBaseUrl={jiraBaseUrl}
+            empty={
+              selected
+                ? `Nothing of yours is at ${statusLabel}.`
+                : "Nothing on the board is assigned to you."
+            }
+          />
+          <Pagination
+            {...page.position}
+            label="tickets"
+            // The status rides along, or page 2 would silently widen back to
+            // everything.
+            href={(n) => ticketsHref({ status: selected, page: n, view: viewParam })}
+            window={pageWindow(page.position.page, page.position.pageCount)}
+          />
+        </>
+      )}
     </Page>
   );
 }
