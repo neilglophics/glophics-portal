@@ -36,7 +36,13 @@
  */
 
 import { sql } from "@/lib/db/client";
-import { HEALTH_CHECK_TIMEOUT_MS, isTooRecent, newestCheck, probeHealth } from "@/lib/shared/health";
+import {
+  HEALTH_CHECK_TIMEOUT_MS,
+  answeredByGateway,
+  isTooRecent,
+  newestCheck,
+  probeHealth,
+} from "@/lib/shared/health";
 import type { RepoHealth } from "@/lib/types";
 
 /**
@@ -170,6 +176,9 @@ export async function runHealthChecks({ force = false } = {}): Promise<HealthPas
 /**
  * One probe. Never throws — a probe failing IS the result, and one unreachable
  * host must not abort the pass for the other ninety.
+ *
+ * Any answer counts as reachable unless the load balancer wrote it itself — see
+ * answeredByGateway() for why a 404 from `awselb` is not an environment.
  */
 async function isReachable(url: string): Promise<boolean> {
   try {
@@ -185,7 +194,7 @@ async function isReachable(url: string): Promise<boolean> {
     // Nothing reads the body, and an unconsumed one holds its socket open until
     // the GC gets to it — with 16 in flight that is a slow leak across a pass.
     await response.body?.cancel().catch(() => {});
-    return true;
+    return !answeredByGateway(response.status, response.headers.get("server"));
   } catch {
     return false;
   }

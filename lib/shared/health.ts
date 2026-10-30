@@ -71,6 +71,33 @@ export function probeHealth(url: string | null | undefined, reachable: boolean):
   return reachable ? "online" : "offline";
 }
 
+/** The statuses a gateway sends on its own behalf: nothing routed (404) and
+ *  nothing behind the route answering (502/503/504). */
+const GATEWAY_OWN_STATUSES = new Set([404, 502, 503, 504]);
+
+/**
+ * Did the response come from the load balancer rather than from anything behind it?
+ *
+ * The one exception to "any response counts", and it exists because of how the
+ * shared dev environments are hosted. Every `shared-dev-*` hostname resolves,
+ * by wildcard DNS, to the same AWS Application Load Balancer. A hostname with no
+ * environment deployed under it still connects and still gets an answer — the
+ * ALB's default rule, `404 Not found`, nine bytes of text/plain with
+ * `Server: awselb/2.0`. Under the plain rule that read as `online`, and 21 of the
+ * 35 green repositories on the board were exactly that: a green light on an
+ * environment that did not exist.
+ *
+ * It is narrow on purpose, so the reasoning above still holds. The app's own
+ * 404 on `/` comes back through the ALB with the app's `Server` header (nginx),
+ * not the ALB's, so it is untouched; so is the API's 403 on `/`, which is a
+ * running Laravel app declining an anonymous request. Only an answer the ALB
+ * wrote itself — nothing routed, or no healthy target — means "the box is not
+ * there". Another fronting gateway would be one more pattern here.
+ */
+export function answeredByGateway(status: number, server: string | null | undefined): boolean {
+  return GATEWAY_OWN_STATUSES.has(status) && /^awselb\b/i.test(server ?? "");
+}
+
 /** The most recent of a set of check timestamps, or null when none has run. */
 export function newestCheck(times: (string | null | undefined)[]): string | null {
   let newest: string | null = null;

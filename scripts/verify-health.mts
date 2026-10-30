@@ -45,7 +45,9 @@ if (pass.changed.length) {
 if (pass.offline) {
   console.log(
     "\n  Offline means the request could not complete at all — DNS, refused, TLS or timeout.\n" +
-      "  A 404 or a 500 still counts as online, because the box answered. If everything\n" +
+      "  It also covers the load balancer answering for a hostname with nothing deployed\n" +
+      "  behind it (`Server: awselb`, 404/502/503/504). An app's own 404 or 500 still\n" +
+      "  counts as online, because the box answered. If everything\n" +
       "  above is offline, suspect the network this ran from before suspecting the boxes.",
   );
 }

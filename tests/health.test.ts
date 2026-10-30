@@ -11,6 +11,7 @@ import {
   msUntilDue,
   newestCheck,
   probeHealth,
+  answeredByGateway,
 } from "../lib/shared/health.ts";
 
 /**
@@ -41,6 +42,36 @@ describe("probeHealth", () => {
     assert.equal(probeHealth("", false), "unconfigured");
     assert.equal(probeHealth(null, false), "unconfigured");
     assert.equal(probeHealth(undefined, true), "unconfigured");
+  });
+});
+
+describe("answeredByGateway", () => {
+  it("catches the ALB's own 404 for a hostname with nothing deployed", () => {
+    // What shared-dev-static-sf-2.musticker.com answered when it read green:
+    // 404, `Server: awselb/2.0`, body "Not found".
+    assert.equal(answeredByGateway(404, "awselb/2.0"), true);
+  });
+
+  it("catches the ALB reporting no healthy target", () => {
+    for (const status of [502, 503, 504]) assert.equal(answeredByGateway(status, "awselb/2.0"), true);
+  });
+
+  it("leaves the app's own answers alone, however unwelcome", () => {
+    // These came back through the same ALB, but the app wrote them.
+    assert.equal(answeredByGateway(404, "nginx"), false);
+    assert.equal(answeredByGateway(403, "nginx"), false);
+    assert.equal(answeredByGateway(500, "nginx"), false);
+    assert.equal(answeredByGateway(200, "nginx"), false);
+  });
+
+  it("does not treat a working route as dead just because the ALB is in front", () => {
+    assert.equal(answeredByGateway(200, "awselb/2.0"), false);
+    assert.equal(answeredByGateway(301, "awselb/2.0"), false);
+  });
+
+  it("does not guess when there is no Server header", () => {
+    assert.equal(answeredByGateway(404, null), false);
+    assert.equal(answeredByGateway(404, undefined), false);
   });
 });
 
