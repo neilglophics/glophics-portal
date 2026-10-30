@@ -69,9 +69,12 @@ type Search = { page?: string; status?: string; view?: string };
  *  a second page size to keep in step. */
 const BOARD_LIMIT = 500;
 
-/** Page 1, "every status" and the table view drop their parameter, so the
+/** Page 1, "every status" and the board view drop their parameter, so the
  *  default view has a clean URL — the rule the Health and Environments pages
- *  already follow. */
+ *  already follow. The board is the default because "where is each of my
+ *  tickets" is the question this page is opened to answer; the table is the
+ *  view you switch to for filtering and paging, so it is the one that carries
+ *  `?view=table` — and every link made in it has to pass that on. */
 function ticketsHref({
   status,
   page,
@@ -79,10 +82,10 @@ function ticketsHref({
 }: {
   status?: string | null;
   page?: number;
-  view?: "board" | null;
+  view?: "table" | null;
 }): string {
   const params = new URLSearchParams();
-  if (view === "board") params.set("view", "board");
+  if (view === "table") params.set("view", "table");
   if (status) params.set("status", status);
   if (page && page > 1) params.set("page", String(page));
 
@@ -111,7 +114,7 @@ export default async function MyTicketsPage({ searchParams }: { searchParams: Pr
   // `?status=in progress` does, and both must be the one the query filtered on.
   // The board is every status side by side, so a status filter or a page number
   // would only make a column lie about what is in it — both are ignored there.
-  const board = search.view === "board";
+  const board = search.view !== "table";
   const selected = !board && search.status ? statusKey(search.status) : null;
   const page = await getTicketPage({
     page: board ? 1 : pageNumber(search.page),
@@ -119,7 +122,6 @@ export default async function MyTicketsPage({ searchParams }: { searchParams: Pr
     mine: [...values],
     status: selected,
   });
-  const viewParam = board ? "board" : null;
 
   const rows = [
     ...claimRows(environments, accounts, page.claims, directory, avatars),
@@ -172,19 +174,19 @@ export default async function MyTicketsPage({ searchParams }: { searchParams: Pr
           filter is on, or a narrowed view could have no way back. */}
       <div className="flex items-center gap-2 pb-3">
         <span className="text-[11px] font-semibold text-faint">View</span>
-        <FilterLink href={ticketsHref({})} label="Table" active={!board} />
-        <FilterLink href={ticketsHref({ view: "board" })} label="Board" active={board} />
+        <FilterLink href={ticketsHref({})} label="Board" active={board} />
+        <FilterLink href={ticketsHref({ view: "table" })} label="Table" active={!board} />
       </div>
 
       {!board && (page.statuses.length > 1 || selected) ? (
         <div className="flex flex-wrap items-center gap-2 pb-3">
-          <FilterLink href={ticketsHref({})} label="All" count={total} active={!selected} />
+          <FilterLink href={ticketsHref({ view: "table" })} label="All" count={total} active={!selected} />
           {page.statuses.map((entry) => (
             <FilterLink
               key={entry.key}
               // No page number: a different status is a different list, and page
               // 4 of the old one is not a place in the new one.
-              href={ticketsHref({ status: entry.key })}
+              href={ticketsHref({ status: entry.key, view: "table" })}
               label={entry.status}
               count={entry.total}
               active={selected === entry.key}
@@ -192,7 +194,7 @@ export default async function MyTicketsPage({ searchParams }: { searchParams: Pr
           ))}
           {selected ? (
             <Link
-              href="/my-tickets"
+              href={ticketsHref({ view: "table" })}
               className="ml-1 text-[11px] font-semibold text-brand-fg hover:underline"
             >
               Reset
@@ -242,7 +244,7 @@ export default async function MyTicketsPage({ searchParams }: { searchParams: Pr
             label="tickets"
             // The status rides along, or page 2 would silently widen back to
             // everything.
-            href={(n) => ticketsHref({ status: selected, page: n, view: viewParam })}
+            href={(n) => ticketsHref({ status: selected, page: n, view: "table" })}
             window={pageWindow(page.position.page, page.position.pageCount)}
           />
         </>
